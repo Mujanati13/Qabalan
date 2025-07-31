@@ -32,6 +32,8 @@ import {
 import { useLanguage } from '../contexts/LanguageContext'
 import notificationsService from '../services/notificationsService'
 import EnhancedNotificationModal from '../components/common/EnhancedNotificationModal'
+import ExportButton from '../components/common/ExportButton'
+import { useExportConfig } from '../hooks/useExportConfig'
 import dayjs from 'dayjs'
 
 const { Title, Text } = Typography
@@ -39,6 +41,7 @@ const { Option } = Select
 
 const Notifications = () => {
   const { t, language, isRTL } = useLanguage()
+  const { getNotificationsExportConfig } = useExportConfig()
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState('send')
   
@@ -588,6 +591,10 @@ const Notifications = () => {
                     <Button icon={<ReloadOutlined />} onClick={() => loadNotifications()}>
                       {language === 'ar' ? 'تحديث' : 'Refresh'}
                     </Button>
+                    <ExportButton
+                      {...getNotificationsExportConfig(notifications, notificationsColumns)}
+                      showFormats={['csv', 'excel']}
+                    />
                   </Space>
                 </div>
 

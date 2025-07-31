@@ -12,6 +12,8 @@ const {
   validatePointsUsage,
   validateBulkOperation
 } = require('../middleware/orderValidation');
+const shippingService = require('../services/shippingService');
+const NotificationService = require('../services/NotificationService');
 
 const router = express.Router();
 
@@ -44,19 +46,86 @@ const generateOrderNumber = async () => {
 };
 
 /**
- * Calculate delivery fee based on area
+ * Calculate delivery fee using enhanced shipping system
+ * Supports both legacy area-based and new distance-based calculation
  */
-const calculateDeliveryFee = async (areaId, orderType = 'delivery') => {
+const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderAmount = 0) => {
   if (orderType === 'pickup') {
-    return 0;
+    return { 
+      delivery_fee: 0, 
+      calculation_method: 'pickup',
+      free_shipping_applied: false
+    };
   }
-  
-  const [area] = await executeQuery(
-    'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
-    [areaId]
-  );
-  
-  return area ? parseFloat(area.delivery_fee) : 0;
+
+  try {
+    // Enhanced shipping calculation with coordinates
+    if (customerData.latitude && customerData.longitude && customerData.branch_id) {
+      const calculation = await shippingService.calculateShipping(
+        customerData.latitude,
+        customerData.longitude,
+        customerData.branch_id,
+        orderAmount
+      );
+      
+      return {
+        delivery_fee: calculation.total_shipping_cost,
+        calculation_method: 'distance_based',
+        distance_km: calculation.distance_km,
+        zone_name: calculation.zone?.name_en,
+        free_shipping_applied: calculation.free_shipping_applied,
+        shipping_calculation_id: calculation.calculation_id
+      };
+    }
+
+    // Fallback to legacy area-based calculation
+    if (customerData.area_id) {
+      const [area] = await executeQuery(
+        'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
+        [customerData.area_id]
+      );
+      
+      const areaFee = area ? parseFloat(area.delivery_fee) : 0;
+      
+      return {
+        delivery_fee: areaFee,
+        calculation_method: 'area_based',
+        free_shipping_applied: false
+      };
+    }
+
+    // No delivery location provided
+    return {
+      delivery_fee: 0,
+      calculation_method: 'unknown',
+      free_shipping_applied: false
+    };
+
+  } catch (error) {
+    console.error('Error calculating delivery fee:', error);
+    
+    // Fallback to area-based if distance calculation fails
+    if (customerData.area_id) {
+      const [area] = await executeQuery(
+        'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
+        [customerData.area_id]
+      );
+      
+      const areaFee = area ? parseFloat(area.delivery_fee) : 0;
+      
+      return {
+        delivery_fee: areaFee,
+        calculation_method: 'area_based_fallback',
+        free_shipping_applied: false
+      };
+    }
+
+    return {
+      delivery_fee: 0,
+      calculation_method: 'error_fallback',
+      free_shipping_applied: false
+    };
+  }
 };
 
 /**
@@ -225,6 +294,85 @@ const validStatusTransitions = {
  */
 const isValidStatusTransition = (currentStatus, newStatus) => {
   return validStatusTransitions[currentStatus]?.includes(newStatus) || false;
+};
+
+// =============================================================================
+// NOTIFICATION SERVICE
+// =============================================================================
+
+const notificationService = require('../services/NotificationService');
+
+/**
+ * Send order status change notification to customer
+ */
+const sendOrderStatusNotification = async (order, newStatus, oldStatus) => {
+  try {
+    if (!order.user_id || newStatus === oldStatus) {
+      return;
+    }
+
+    // Define notification messages for each status
+    const statusMessages = {
+      confirmed: {
+        title_en: 'Order Confirmed',
+        title_ar: 'تم تأكيد الطلب',
+        message_en: `Your order #${order.order_number} has been confirmed and is being prepared.`,
+        message_ar: `تم تأكيد طلبك رقم #${order.order_number} وجاري تحضيره.`,
+        type: 'order_confirmed'
+      },
+      preparing: {
+        title_en: 'Order Being Prepared',
+        title_ar: 'جاري تحضير الطلب',
+        message_en: `Your order #${order.order_number} is being prepared in our kitchen.`,
+        message_ar: `جاري تحضير طلبك رقم #${order.order_number} في مطبخنا.`,
+        type: 'order_preparing'
+      },
+      ready_for_pickup: {
+        title_en: 'Order Ready for Pickup',
+        title_ar: 'الطلب جاهز للاستلام',
+        message_en: `Your order #${order.order_number} is ready for pickup!`,
+        message_ar: `طلبك رقم #${order.order_number} جاهز للاستلام!`,
+        type: 'order_ready'
+      },
+      out_for_delivery: {
+        title_en: 'Order Out for Delivery',
+        title_ar: 'الطلب في الطريق',
+        message_en: `Your order #${order.order_number} is out for delivery and will arrive soon.`,
+        message_ar: `طلبك رقم #${order.order_number} في الطريق وسيصل قريباً.`,
+        type: 'order_out_for_delivery'
+      },
+      delivered: {
+        title_en: 'Order Delivered',
+        title_ar: 'تم توصيل الطلب',
+        message_en: `Your order #${order.order_number} has been delivered. Enjoy your meal!`,
+        message_ar: `تم توصيل طلبك رقم #${order.order_number}. نتمنى لك وجبة شهية!`,
+        type: 'order_delivered'
+      },
+      cancelled: {
+        title_en: 'Order Cancelled',
+        title_ar: 'تم إلغاء الطلب',
+        message_en: `Your order #${order.order_number} has been cancelled.`,
+        message_ar: `تم إلغاء طلبك رقم #${order.order_number}.`,
+        type: 'order_cancelled'
+      }
+    };
+
+    const notification = statusMessages[newStatus];
+    if (notification) {
+      const data = {
+        order_id: order.id.toString(),
+        order_number: order.order_number,
+        status: newStatus,
+        old_status: oldStatus
+      };
+
+      await notificationService.sendToUser(order.user_id, notification, data);
+      console.log(`Order status notification sent to user ${order.user_id} for order ${order.order_number}: ${oldStatus} -> ${newStatus}`);
+    }
+  } catch (error) {
+    console.error('Error sending order status notification:', error);
+    // Don't throw error to avoid breaking order status update
+  }
 };
 
 // =============================================================================
@@ -455,22 +603,49 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
     const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items);
 
     // Calculate delivery fee
-    let deliveryFee = 0;
+    let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
+    
     if (order_type === 'delivery') {
-      if (isGuestOrder) {
-        // For guest orders, use a default delivery fee or calculate based on default area
-        deliveryFee = await calculateDeliveryFee(null, order_type);
+      if (isGuestOrder && guest_delivery_address) {
+        // Handle both string and object formats for guest_delivery_address
+        if (typeof guest_delivery_address === 'object' && guest_delivery_address.latitude && guest_delivery_address.longitude) {
+          // For guest orders with address coordinates (object format)
+          const customerData = {
+            latitude: guest_delivery_address.latitude,
+            longitude: guest_delivery_address.longitude,
+            branch_id: guest_delivery_address.branch_id,
+            area_id: guest_delivery_address.area_id
+          };
+          deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
+        } else {
+          // For guest orders with text address only (string format) - use default delivery fee
+          console.log('Guest delivery address is text format, using default delivery fee');
+          deliveryCalculation = await calculateDeliveryFee({}, order_type, subtotal);
+        }
       } else if (delivery_address_id) {
-        const [address] = await executeQuery(
-          'SELECT area_id FROM user_addresses WHERE id = ? AND user_id = ?',
-          [delivery_address_id, req.user.id]
-        );
+        // For registered user orders
+        const [address] = await executeQuery(`
+          SELECT area_id, latitude, longitude, shipping_zone_id
+          FROM user_addresses 
+          WHERE id = ? AND user_id = ?
+        `, [delivery_address_id, req.user.id]);
         
         if (address) {
-          deliveryFee = await calculateDeliveryFee(address.area_id, order_type);
+          const customerData = {
+            latitude: address.latitude,
+            longitude: address.longitude,
+            branch_id: null, // Will use nearest branch
+            area_id: address.area_id
+          };
+          deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
         }
+      } else {
+        // Fallback for legacy orders without address coordinates
+        deliveryCalculation = await calculateDeliveryFee({}, order_type, subtotal);
       }
     }
+    
+    const deliveryFee = deliveryCalculation.delivery_fee;
 
     // Apply promo code if provided
     let discountAmount = 0;
@@ -536,6 +711,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       branch_id,
       delivery_address_id,
       guest_delivery_address,
+      customer_id, // For admin-created orders
       customer_name,
       customer_phone,
       customer_email,
@@ -548,6 +724,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     } = req.body;
 
     const isGuestOrder = is_guest || !req.user;
+    const isAdminOrder = req.user && customer_id; // Admin creating order for customer
 
     // Basic validation
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -584,18 +761,31 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     let addressAreaId = null;
     if (order_type === 'delivery') {
       if (isGuestOrder) {
-        // For guest users, require guest_delivery_address
-        if (!guest_delivery_address || !guest_delivery_address.trim()) {
+        // Debug: Log the guest delivery address data
+        console.log('🔍 Guest delivery validation debug:', {
+          guest_delivery_address,
+          type: typeof guest_delivery_address,
+          isString: typeof guest_delivery_address === 'string',
+          stringTrimmed: typeof guest_delivery_address === 'string' ? guest_delivery_address.trim() : 'N/A',
+          isEmpty: typeof guest_delivery_address === 'string' ? !guest_delivery_address.trim() : 'N/A'
+        });
+        
+        // For guest users, require guest_delivery_address (can be string or object)
+        if (!guest_delivery_address || 
+            (typeof guest_delivery_address === 'string' && !guest_delivery_address.trim()) ||
+            (typeof guest_delivery_address === 'object' && (!guest_delivery_address.address || !guest_delivery_address.address.trim()))) {
+          console.log('❌ Guest delivery address validation failed');
           return res.status(400).json({
             success: false,
             message: 'Delivery address is required for delivery orders',
             message_ar: 'عنوان التوصيل مطلوب لطلبات التوصيل'
           });
         }
+        console.log('✅ Guest delivery address validation passed');
         // For guest orders, use default area or no area-specific delivery fee
         addressAreaId = null;
       } else {
-        // For authenticated users, require delivery_address_id
+        // For authenticated users or admin orders, require delivery_address_id
         if (!delivery_address_id) {
           return res.status(400).json({
             success: false,
@@ -604,9 +794,12 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           });
         }
 
+        // Determine which user ID to validate against
+        const userIdToCheck = isAdminOrder ? customer_id : req.user.id;
+
         const [address] = await executeQuery(
           'SELECT area_id FROM user_addresses WHERE id = ? AND user_id = ? AND is_active = 1',
-          [delivery_address_id, req.user.id]
+          [delivery_address_id, userIdToCheck]
         );
 
         if (!address) {
@@ -624,8 +817,35 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     // Calculate order totals
     const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items);
 
-    // Calculate delivery fee
-    const deliveryFee = await calculateDeliveryFee(addressAreaId, order_type);
+    // Calculate delivery fee using enhanced shipping system
+    let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
+    
+    if (order_type === 'delivery' && addressAreaId) {
+      // Try to get coordinates from the address
+      const userIdForAddress = isGuestOrder ? null : (isAdminOrder ? customer_id : req.user.id);
+      const [addressDetails] = await executeQuery(`
+        SELECT ua.latitude, ua.longitude, ua.area_id, a.delivery_fee 
+        FROM user_addresses ua
+        LEFT JOIN areas a ON ua.area_id = a.id
+        WHERE ua.id = ? AND ua.user_id = ?
+      `, [delivery_address_id, userIdForAddress]);
+
+      if (addressDetails) {
+        const customerData = {
+          latitude: addressDetails.latitude,
+          longitude: addressDetails.longitude,
+          branch_id: null, // Will find nearest branch
+          area_id: addressDetails.area_id
+        };
+        deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
+      } else {
+        // Fallback to area-based calculation
+        const customerData = { area_id: addressAreaId };
+        deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
+      }
+    }
+
+    const deliveryFee = deliveryCalculation.delivery_fee;
 
     // Apply promo code
     let discountAmount = 0;
@@ -649,6 +869,14 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     const orderNumber = await generateOrderNumber();
 
     // Create order and items in transaction
+    const orderUserId = isGuestOrder && !isAdminOrder ? null : (isAdminOrder ? customer_id : req.user.id);
+    
+    console.log('🔍 Order creation debug:');
+    console.log('  isGuestOrder:', isGuestOrder);
+    console.log('  isAdminOrder:', isAdminOrder);
+    console.log('  req.user:', req.user ? `{id: ${req.user.id}}` : 'null');
+    console.log('  orderUserId:', orderUserId);
+    
     const queries = [
       {
         query: `
@@ -656,14 +884,15 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
             order_number, user_id, branch_id, delivery_address_id,
             customer_name, customer_phone, customer_email, order_type, payment_method,
             subtotal, delivery_fee, tax_amount, discount_amount, total_amount,
-            points_used, points_earned, promo_code_id, special_instructions
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            points_used, points_earned, promo_code_id, special_instructions,
+            guest_delivery_address, is_guest
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           orderNumber, 
-          isGuestOrder ? null : req.user.id, 
+          orderUserId, 
           branch_id, 
-          isGuestOrder ? null : delivery_address_id,
+          (isGuestOrder && !isAdminOrder) ? null : delivery_address_id,
           customer_name, 
           customer_phone, 
           customer_email || null, 
@@ -677,37 +906,15 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           isGuestOrder ? 0 : points_to_use, 
           isGuestOrder ? 0 : pointsEarned, 
           promoCodeId, 
-          special_instructions || null
+          special_instructions || null,
+          isGuestOrder && guest_delivery_address ? 
+            (typeof guest_delivery_address === 'string' ? guest_delivery_address : JSON.stringify(guest_delivery_address)) : null,
+          isGuestOrder ? 1 : 0
         ]
       }
     ];
 
-    // Add order items queries
-    validatedItems.forEach(item => {
-      queries.push({
-        query: `
-          INSERT INTO order_items (
-            order_id, product_id, variant_id, quantity, unit_price, total_price,
-            points_earned, special_instructions
-          ) VALUES (LAST_INSERT_ID(), ?, ?, ?, ?, ?, ?, ?)
-        `,
-        params: [
-          item.product_id, item.variant_id, item.quantity, item.unit_price,
-          item.total_price, item.points_earned, item.special_instructions
-        ]
-      });
-    });
-
-    // Add status history entry
-    queries.push({
-      query: `
-        INSERT INTO order_status_history (order_id, status, note, changed_by)
-        VALUES (LAST_INSERT_ID(), 'pending', 'Order created', ?)
-      `,
-      params: [isGuestOrder ? null : req.user.id]
-    });
-
-    // Update promo code usage if applied
+    // Add promo code usage update to the first transaction if applied
     if (promoCodeId) {
       queries.push({
         query: `
@@ -715,22 +922,54 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         `,
         params: [promoCodeId]
       });
-
-      // Only track user-specific usage for authenticated users
-      if (!isGuestOrder) {
-        queries.push({
-          query: `
-            INSERT INTO promo_code_usages (promo_code_id, user_id, order_id, discount_amount)
-            VALUES (?, ?, LAST_INSERT_ID(), ?)
-          `,
-          params: [promoCodeId, req.user.id, discountAmount]
-        });
-      }
     }
 
-    // Execute transaction
+    // Execute transaction with proper ID handling
     const results = await executeTransaction(queries);
     const orderId = results[0].insertId;
+
+    // Now insert order items with the actual order ID
+    const orderItemsQueries = [];
+    validatedItems.forEach(item => {
+      orderItemsQueries.push({
+        query: `
+          INSERT INTO order_items (
+            order_id, product_id, variant_id, quantity, unit_price, total_price,
+            points_earned, special_instructions
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        params: [
+          orderId, // Use the actual order ID instead of LAST_INSERT_ID()
+          item.product_id, item.variant_id, item.quantity, item.unit_price,
+          item.total_price, item.points_earned, item.special_instructions
+        ]
+      });
+    });
+
+    // Add status history entry with actual order ID
+    orderItemsQueries.push({
+      query: `
+        INSERT INTO order_status_history (order_id, status, note, changed_by)
+        VALUES (?, 'pending', 'Order created', ?)
+      `,
+      params: [orderId, isGuestOrder ? null : req.user.id]
+    });
+
+    // Add promo code usage with actual order ID if needed
+    if (promoCodeId && !isGuestOrder) {
+      orderItemsQueries.push({
+        query: `
+          INSERT INTO promo_code_usages (promo_code_id, user_id, order_id, discount_amount)
+          VALUES (?, ?, ?, ?)
+        `,
+        params: [promoCodeId, req.user.id, orderId, discountAmount]
+      });
+    }
+
+    // Execute the order items and related data
+    if (orderItemsQueries.length > 0) {
+      await executeTransaction(orderItemsQueries);
+    }
 
     // Get the created order
     const [newOrder] = await executeQuery(`
@@ -967,6 +1206,9 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       WHERE o.id = ?
     `, [req.params.id]);
 
+    // Send notification to customer about status change
+    await sendOrderStatusNotification(updatedOrder, status, currentOrder.order_status);
+
     res.json({
       success: true,
       message: 'Order status updated successfully',
@@ -1076,6 +1318,9 @@ router.delete('/:id', authenticate, validateId, async (req, res, next) => {
     }
 
     await executeTransaction(queries);
+
+    // Send notification to customer about order cancellation
+    await sendOrderStatusNotification(currentOrder, 'cancelled', currentOrder.order_status);
 
     res.json({
       success: true,
@@ -1730,6 +1975,9 @@ router.post('/:id/cancel', authenticate, validateId, async (req, res, next) => {
 
     await executeTransaction(queries);
 
+    // Send notification to customer about order cancellation
+    await sendOrderStatusNotification(currentOrder, 'cancelled', currentOrder.order_status);
+
     res.json({
       success: true,
       message: 'Order cancelled successfully',
@@ -1918,6 +2166,26 @@ router.post('/bulk-status-update', authenticate, authorize('admin', 'staff'), va
     });
 
     await executeTransaction(queries);
+
+    // Send notifications for bulk status update
+    for (const order of currentOrders) {
+      try {
+        // Get the full order details for notification
+        const [fullOrder] = await executeQuery(`
+          SELECT o.*, u.first_name, u.last_name
+          FROM orders o
+          LEFT JOIN users u ON o.user_id = u.id
+          WHERE o.id = ?
+        `, [order.id]);
+        
+        if (fullOrder) {
+          await sendOrderStatusNotification(fullOrder, status, order.order_status);
+        }
+      } catch (error) {
+        console.error(`Error sending notification for order ${order.id}:`, error);
+        // Continue with other notifications even if one fails
+      }
+    }
 
     res.json({
       success: true,

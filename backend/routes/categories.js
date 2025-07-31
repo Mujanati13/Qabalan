@@ -231,21 +231,58 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadCategoryImage,
       });
     }
 
-    // Generate slug if not provided
-    const categorySlug = slug || (title_en || title_ar || 'category').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-');
+    // Generate unique slug if not provided or empty
+    let categorySlug = slug;
+    if (!categorySlug || categorySlug.trim() === '') {
+      // Auto-generate from title
+      const baseSlug = (title_en || title_ar || 'category')
+        .toLowerCase()
+        .replace(/[^a-z0-9\u0600-\u06FF\s]/g, '') // Allow Arabic characters
+        .replace(/\s+/g, '-')
+        .trim();
+      
+      // Find unique slug by adding counter if needed
+      let finalSlug = baseSlug;
+      let counter = 1;
+      
+      while (true) {
+        const [existingSlug] = await executeQuery(
+          'SELECT id FROM categories WHERE slug = ?',
+          [finalSlug]
+        );
+        
+        if (!existingSlug) {
+          categorySlug = finalSlug;
+          break;
+        }
+        
+        finalSlug = `${baseSlug}-${counter}`;
+        counter++;
+        
+        // Prevent infinite loop
+        if (counter > 1000) {
+          categorySlug = `${baseSlug}-${Date.now()}`;
+          break;
+        }
+      }
+    } else {
+      // User provided a slug - check if it already exists
+      const [existingSlug] = await executeQuery(
+        'SELECT id FROM categories WHERE slug = ?',
+        [categorySlug]
+      );
 
-    // Check if slug already exists
-    const [existingSlug] = await executeQuery(
-      'SELECT id FROM categories WHERE slug = ?',
-      [categorySlug]
-    );
-
-    if (existingSlug) {
-      return res.status(400).json({
-        success: false,
-        message: 'Category slug already exists',
-        message_ar: 'رابط التصنيف موجود مسبقاً'
-      });
+      if (existingSlug) {
+        // Suggest an alternative slug
+        const suggestedSlug = `${categorySlug}-${Date.now()}`;
+        return res.status(400).json({
+          success: false,
+          message: `Category slug '${categorySlug}' already exists. Try: '${suggestedSlug}'`,
+          message_ar: `رابط التصنيف '${categorySlug}' موجود مسبقاً. جرب: '${suggestedSlug}'`,
+          suggestedSlug: suggestedSlug,
+          originalSlug: categorySlug
+        });
+      }
     }
 
     // Validate parent category if provided
@@ -341,19 +378,57 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       });
     }
 
-    // Check if slug already exists (excluding current category)
+    // Handle slug validation and generation
+    let categorySlug = slug;
     if (slug) {
+      // Check if provided slug already exists (excluding current category)
       const [existingSlug] = await executeQuery(
         'SELECT id FROM categories WHERE slug = ? AND id != ?',
         [slug, req.params.id]
       );
 
       if (existingSlug) {
+        // Suggest an alternative slug
+        const suggestedSlug = `${slug}-${Date.now()}`;
         return res.status(400).json({
           success: false,
-          message: 'Category slug already exists',
-          message_ar: 'رابط التصنيف موجود مسبقاً'
+          message: `Category slug '${slug}' already exists. Try: '${suggestedSlug}'`,
+          message_ar: `رابط التصنيف '${slug}' موجود مسبقاً. جرب: '${suggestedSlug}'`,
+          suggestedSlug: suggestedSlug,
+          originalSlug: slug
         });
+      }
+    } else if (title_en || title_ar) {
+      // Generate slug from title if not provided
+      const baseSlug = (title_en || title_ar)
+        .toLowerCase()
+        .replace(/[^a-z0-9\u0600-\u06FF\s]/g, '') // Allow Arabic characters
+        .replace(/\s+/g, '-')
+        .trim();
+      
+      // Check if base slug exists and add suffix if needed
+      let finalSlug = baseSlug;
+      let counter = 1;
+      
+      while (true) {
+        const [existingSlug] = await executeQuery(
+          'SELECT id FROM categories WHERE slug = ? AND id != ?',
+          [finalSlug, req.params.id]
+        );
+        
+        if (!existingSlug) {
+          categorySlug = finalSlug;
+          break;
+        }
+        
+        finalSlug = `${baseSlug}-${counter}`;
+        counter++;
+        
+        // Prevent infinite loop
+        if (counter > 1000) {
+          categorySlug = `${baseSlug}-${Date.now()}`;
+          break;
+        }
       }
     }
 

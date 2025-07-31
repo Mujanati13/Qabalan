@@ -9,6 +9,7 @@ import { Toaster } from 'react-hot-toast'
 import App from './App.jsx'
 import { AuthProvider } from './contexts/AuthContext'
 import { LanguageProvider } from './contexts/LanguageContext'
+import { NotificationProvider } from './contexts/NotificationContext'
 
 import 'antd/dist/reset.css'
 import './styles/index.css'
@@ -53,17 +54,19 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <ConfigProvider theme={theme}>
           <LanguageProvider>
             <AuthProvider>
-              <App />
-              <Toaster
-                position="top-right"
-                toastOptions={{
-                  duration: 4000,
-                  style: {
-                    background: '#363636',
-                    color: '#fff',
-                  },
-                }}
-              />
+              <NotificationProvider>
+                <App />
+                <Toaster
+                  position="top-right"
+                  toastOptions={{
+                    duration: 4000,
+                    style: {
+                      background: '#363636',
+                      color: '#fff',
+                    },
+                  }}
+                />
+              </NotificationProvider>
             </AuthProvider>
           </LanguageProvider>
         </ConfigProvider>

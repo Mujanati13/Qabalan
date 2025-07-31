@@ -275,11 +275,11 @@ router.post('/', authenticate, authorize('admin', 'staff'), validatePromoCode, a
     }
 
     // Validate discount type
-    if (!['percentage', 'fixed_amount'].includes(discount_type)) {
+    if (!['percentage', 'fixed_amount', 'free_shipping', 'bxgy'].includes(discount_type)) {
       return res.status(400).json({
         success: false,
-        message: 'Discount type must be either percentage or fixed_amount',
-        message_ar: 'نوع الخصم يجب أن يكون نسبة مئوية أو مبلغ ثابت'
+        message: 'Discount type must be percentage, fixed_amount, free_shipping, or bxgy',
+        message_ar: 'نوع الخصم يجب أن يكون نسبة مئوية أو مبلغ ثابت أو شحن مجاني أو اشتر واحصل'
       });
     }
 
@@ -414,11 +414,11 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, valida
     }
 
     // Validate discount type
-    if (discount_type && !['percentage', 'fixed_amount'].includes(discount_type)) {
+    if (discount_type && !['percentage', 'fixed_amount', 'free_shipping', 'bxgy'].includes(discount_type)) {
       return res.status(400).json({
         success: false,
-        message: 'Discount type must be either percentage or fixed_amount',
-        message_ar: 'نوع الخصم يجب أن يكون نسبة مئوية أو مبلغ ثابت'
+        message: 'Discount type must be percentage, fixed_amount, free_shipping, or bxgy',
+        message_ar: 'نوع الخصم يجب أن يكون نسبة مئوية أو مبلغ ثابت أو شحن مجاني أو اشتر واحصل'
       });
     }
 
@@ -851,6 +851,631 @@ router.get('/usage-report', authenticate, authorize('admin', 'staff'), validateD
         summary: summary[0],
         usage_details: usageReport
       }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/promos/:id/shipping-conditions
+ * @desc    Add shipping conditions for free shipping promo
+ * @access  Private (Admin)
+ */
+router.post('/:id/shipping-conditions', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { conditions, logic_operator = 'AND' } = req.body;
+
+    // Validate that this is a free shipping promo
+    const [promo] = await executeQuery(
+      'SELECT id, discount_type FROM promo_codes WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!promo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Promo code not found',
+        message_ar: 'رمز العرض غير موجود'
+      });
+    }
+
+    if (promo.discount_type !== 'free_shipping') {
+      return res.status(400).json({
+        success: false,
+        message: 'Shipping conditions can only be added to free shipping promos',
+        message_ar: 'يمكن إضافة شروط الشحن فقط لعروض الشحن المجاني'
+      });
+    }
+
+    if (!Array.isArray(conditions) || conditions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'At least one condition is required',
+        message_ar: 'مطلوب شرط واحد على الأقل'
+      });
+    }
+
+    // Use transaction to ensure data consistency
+    await executeTransaction(async (connection) => {
+      // Create condition group
+      const groupResult = await executeQuery(
+        'INSERT INTO promo_condition_groups (promo_code_id, group_name, logic_operator) VALUES (?, ?, ?)',
+        [req.params.id, 'Shipping Conditions', logic_operator],
+        connection
+      );
+
+      const groupId = groupResult.insertId;
+
+      // Add conditions
+      for (const condition of conditions) {
+        const {
+          condition_type,
+          condition_operator = '>=',
+          condition_value,
+          condition_value_numeric = null
+        } = condition;
+
+        if (!condition_type || !condition_value) {
+          throw new Error('condition_type and condition_value are required');
+        }
+
+        await executeQuery(
+          `INSERT INTO promo_shipping_conditions 
+           (promo_code_id, group_id, condition_type, condition_operator, condition_value, condition_value_numeric) 
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [req.params.id, groupId, condition_type, condition_operator, condition_value, condition_value_numeric],
+          connection
+        );
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shipping conditions added successfully',
+      message_ar: 'تم إضافة شروط الشحن بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/promos/:id/shipping-conditions
+ * @desc    Get shipping conditions for a promo
+ * @access  Private (Admin)
+ */
+router.get('/:id/shipping-conditions', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const conditions = await executeQuery(`
+      SELECT 
+        g.id as group_id, g.group_name, g.logic_operator, g.sort_order,
+        c.id as condition_id, c.condition_type, c.condition_operator, 
+        c.condition_value, c.condition_value_numeric, c.is_active
+      FROM promo_condition_groups g
+      LEFT JOIN promo_shipping_conditions c ON g.id = c.group_id
+      WHERE g.promo_code_id = ? AND g.is_active = 1
+      ORDER BY g.sort_order, c.id
+    `, [req.params.id]);
+
+    // Group conditions by group
+    const groupedConditions = {};
+    conditions.forEach(row => {
+      if (!groupedConditions[row.group_id]) {
+        groupedConditions[row.group_id] = {
+          group_id: row.group_id,
+          group_name: row.group_name,
+          logic_operator: row.logic_operator,
+          sort_order: row.sort_order,
+          conditions: []
+        };
+      }
+
+      if (row.condition_id) {
+        groupedConditions[row.group_id].conditions.push({
+          condition_id: row.condition_id,
+          condition_type: row.condition_type,
+          condition_operator: row.condition_operator,
+          condition_value: row.condition_value,
+          condition_value_numeric: row.condition_value_numeric,
+          is_active: row.is_active
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      data: Object.values(groupedConditions)
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/promos/:id/shipping-conditions/:groupId
+ * @desc    Update shipping conditions group
+ * @access  Private (Admin)
+ */
+router.put('/:id/shipping-conditions/:groupId', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { conditions, logic_operator } = req.body;
+
+    // Use transaction for consistency
+    await executeTransaction(async (connection) => {
+      // Update group logic operator if provided
+      if (logic_operator) {
+        await executeQuery(
+          'UPDATE promo_condition_groups SET logic_operator = ? WHERE id = ? AND promo_code_id = ?',
+          [logic_operator, req.params.groupId, req.params.id],
+          connection
+        );
+      }
+
+      // Delete existing conditions for this group
+      await executeQuery(
+        'DELETE FROM promo_shipping_conditions WHERE group_id = ?',
+        [req.params.groupId],
+        connection
+      );
+
+      // Add new conditions
+      if (Array.isArray(conditions)) {
+        for (const condition of conditions) {
+          const {
+            condition_type,
+            condition_operator = '>=',
+            condition_value,
+            condition_value_numeric = null
+          } = condition;
+
+          await executeQuery(
+            `INSERT INTO promo_shipping_conditions 
+             (promo_code_id, group_id, condition_type, condition_operator, condition_value, condition_value_numeric) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [req.params.id, req.params.groupId, condition_type, condition_operator, condition_value, condition_value_numeric],
+            connection
+          );
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Shipping conditions updated successfully',
+      message_ar: 'تم تحديث شروط الشحن بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/promos/:id/shipping-conditions/:groupId
+ * @desc    Delete shipping conditions group
+ * @access  Private (Admin)
+ */
+router.delete('/:id/shipping-conditions/:groupId', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    await executeQuery(
+      'UPDATE promo_condition_groups SET is_active = 0 WHERE id = ? AND promo_code_id = ?',
+      [req.params.groupId, req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Shipping conditions group deleted successfully',
+      message_ar: 'تم حذف مجموعة شروط الشحن بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/promos/validate-shipping
+ * @desc    Validate if order qualifies for free shipping
+ * @access  Public
+ */
+router.post('/validate-shipping', async (req, res, next) => {
+  try {
+    const { 
+      promo_code, 
+      order_total, 
+      items = [], 
+      user_type = 'guest',
+      location = null 
+    } = req.body;
+
+    if (!promo_code || order_total === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Promo code and order total are required',
+        message_ar: 'رمز العرض وإجمالي الطلب مطلوبان'
+      });
+    }
+
+    // Get promo code details
+    const [promo] = await executeQuery(`
+      SELECT * FROM promo_codes 
+      WHERE code = ? AND is_active = 1 AND discount_type = 'free_shipping'
+      AND valid_from <= NOW() AND valid_until >= NOW()
+    `, [promo_code]);
+
+    if (!promo) {
+      return res.status(404).json({
+        success: false,
+        message: 'Free shipping promo code not found or not valid',
+        message_ar: 'رمز عرض الشحن المجاني غير موجود أو غير صالح'
+      });
+    }
+
+    // Get all condition groups for this promo
+    const conditionGroups = await executeQuery(`
+      SELECT 
+        g.id as group_id, g.logic_operator,
+        c.condition_type, c.condition_operator, c.condition_value, c.condition_value_numeric
+      FROM promo_condition_groups g
+      LEFT JOIN promo_shipping_conditions c ON g.id = c.group_id
+      WHERE g.promo_code_id = ? AND g.is_active = 1 AND c.is_active = 1
+      ORDER BY g.sort_order
+    `, [promo.id]);
+
+    if (conditionGroups.length === 0) {
+      // If no conditions, free shipping applies
+      return res.json({
+        success: true,
+        qualifies: true,
+        message: 'Order qualifies for free shipping',
+        message_ar: 'الطلب مؤهل للشحن المجاني'
+      });
+    }
+
+    // Group conditions by group_id
+    const groupedConditions = {};
+    conditionGroups.forEach(row => {
+      if (!groupedConditions[row.group_id]) {
+        groupedConditions[row.group_id] = {
+          logic_operator: row.logic_operator,
+          conditions: []
+        };
+      }
+      groupedConditions[row.group_id].conditions.push(row);
+    });
+
+    // Evaluate each group
+    let qualifies = false;
+    for (const group of Object.values(groupedConditions)) {
+      const groupResult = evaluateConditionGroup(group, { order_total, items, user_type, location });
+      
+      // For now, we'll use OR logic between groups (any group that passes qualifies the order)
+      if (groupResult) {
+        qualifies = true;
+        break;
+      }
+    }
+
+    res.json({
+      success: true,
+      qualifies,
+      message: qualifies ? 'Order qualifies for free shipping' : 'Order does not qualify for free shipping',
+      message_ar: qualifies ? 'الطلب مؤهل للشحن المجاني' : 'الطلب غير مؤهل للشحن المجاني'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Helper function to evaluate condition groups
+function evaluateConditionGroup(group, orderData) {
+  const { conditions, logic_operator } = group;
+  const { order_total, items, user_type, location } = orderData;
+
+  let results = [];
+  
+  for (const condition of conditions) {
+    let result = false;
+    
+    switch (condition.condition_type) {
+      case 'min_order_amount':
+        result = evaluateNumericCondition(order_total, condition.condition_operator, condition.condition_value_numeric);
+        break;
+        
+      case 'min_quantity':
+        const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        result = evaluateNumericCondition(totalQuantity, condition.condition_operator, condition.condition_value_numeric);
+        break;
+        
+      case 'specific_category':
+        const categoryIds = condition.condition_value.split(',').map(id => parseInt(id.trim()));
+        result = items.some(item => categoryIds.includes(item.category_id));
+        break;
+        
+      case 'specific_product':
+        const productIds = condition.condition_value.split(',').map(id => parseInt(id.trim()));
+        result = items.some(item => productIds.includes(item.product_id));
+        break;
+        
+      case 'user_type':
+        const allowedUserTypes = condition.condition_value.split(',').map(type => type.trim());
+        result = allowedUserTypes.includes(user_type);
+        break;
+        
+      case 'location':
+        if (location) {
+          const allowedLocations = condition.condition_value.split(',').map(loc => loc.trim().toLowerCase());
+          result = allowedLocations.includes(location.toLowerCase());
+        }
+        break;
+        
+      default:
+        result = false;
+    }
+    
+    results.push(result);
+  }
+
+  // Apply logic operator
+  if (logic_operator === 'AND') {
+    return results.every(result => result === true);
+  } else {
+    return results.some(result => result === true);
+  }
+}
+
+// Helper function to evaluate numeric conditions
+function evaluateNumericCondition(value, operator, target) {
+  const numericValue = parseFloat(value);
+  const numericTarget = parseFloat(target);
+  
+  switch (operator) {
+    case '>=':
+      return numericValue >= numericTarget;
+    case '<=':
+      return numericValue <= numericTarget;
+    case '=':
+      return numericValue === numericTarget;
+    case '!=':
+      return numericValue !== numericTarget;
+    default:
+      return false;
+  }
+}
+
+/**
+ * @route   POST /api/promos/:id/bxgy-conditions
+ * @desc    Create BXGY conditions for a promo code
+ * @access  Admin, Staff
+ */
+router.post('/:id/bxgy-conditions', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const promoId = req.params.id;
+    const {
+      buy_quantity,
+      get_quantity,
+      buy_type,
+      get_type,
+      buy_product_ids,
+      buy_category_ids,
+      get_product_ids,
+      get_category_ids,
+      max_applications_per_order,
+      max_applications_per_customer,
+      apply_to_cheapest,
+      customer_chooses_free_item,
+      min_buy_amount,
+      max_get_amount
+    } = req.body;
+
+    // Validate promo exists and is BXGY type
+    const promoQuery = 'SELECT * FROM promo_codes WHERE id = ? AND discount_type = "bxgy"';
+    const [promoResult] = await executeQuery(promoQuery, [promoId]);
+    
+    if (!promoResult.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'BXGY promo code not found'
+      });
+    }
+
+    // Validate quantities
+    if (!buy_quantity || buy_quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Buy quantity must be greater than 0'
+      });
+    }
+
+    if (!get_quantity || get_quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Get quantity must be greater than 0'
+      });
+    }
+
+    // Insert BXGY condition
+    const insertQuery = `
+      INSERT INTO promo_bxgy_conditions (
+        promo_code_id, buy_quantity, get_quantity, buy_type, get_type,
+        buy_product_ids, buy_category_ids, get_product_ids, get_category_ids,
+        max_applications_per_order, max_applications_per_customer,
+        apply_to_cheapest, customer_chooses_free_item,
+        min_buy_amount, max_get_amount
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const insertParams = [
+      promoId,
+      buy_quantity,
+      get_quantity,
+      buy_type || 'any',
+      get_type || 'same_product',
+      buy_product_ids ? JSON.stringify(buy_product_ids) : null,
+      buy_category_ids ? JSON.stringify(buy_category_ids) : null,
+      get_product_ids ? JSON.stringify(get_product_ids) : null,
+      get_category_ids ? JSON.stringify(get_category_ids) : null,
+      max_applications_per_order || null,
+      max_applications_per_customer || null,
+      apply_to_cheapest || false,
+      customer_chooses_free_item || false,
+      min_buy_amount || null,
+      max_get_amount || null
+    ];
+
+    const [result] = await executeQuery(insertQuery, insertParams);
+
+    // Fetch the created condition
+    const selectQuery = 'SELECT * FROM promo_bxgy_conditions WHERE id = ?';
+    const [conditionResult] = await executeQuery(selectQuery, [result.insertId]);
+
+    res.status(201).json({
+      success: true,
+      message: 'BXGY condition created successfully',
+      data: conditionResult[0]
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/promos/:id/bxgy-conditions
+ * @desc    Get BXGY conditions for a promo code
+ * @access  Admin, Staff
+ */
+router.get('/:id/bxgy-conditions', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const promoId = req.params.id;
+
+    const query = `
+      SELECT 
+        bc.*,
+        pc.code as promo_code,
+        pc.title_en,
+        pc.title_ar
+      FROM promo_bxgy_conditions bc
+      JOIN promo_codes pc ON bc.promo_code_id = pc.id
+      WHERE bc.promo_code_id = ? AND bc.is_active = 1
+      ORDER BY bc.created_at DESC
+    `;
+
+    const [conditions] = await executeQuery(query, [promoId]);
+
+    // Parse JSON fields
+    const parsedConditions = conditions.map(condition => ({
+      ...condition,
+      buy_product_ids: condition.buy_product_ids ? JSON.parse(condition.buy_product_ids) : null,
+      buy_category_ids: condition.buy_category_ids ? JSON.parse(condition.buy_category_ids) : null,
+      get_product_ids: condition.get_product_ids ? JSON.parse(condition.get_product_ids) : null,
+      get_category_ids: condition.get_category_ids ? JSON.parse(condition.get_category_ids) : null
+    }));
+
+    res.json({
+      success: true,
+      data: parsedConditions
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/promos/:promoId/bxgy-conditions/:conditionId
+ * @desc    Update BXGY condition
+ * @access  Admin, Staff
+ */
+router.put('/:promoId/bxgy-conditions/:conditionId', authenticate, authorize('admin', 'staff'), async (req, res, next) => {
+  try {
+    const { promoId, conditionId } = req.params;
+    const updateData = req.body;
+
+    // Validate condition exists
+    const checkQuery = 'SELECT * FROM promo_bxgy_conditions WHERE id = ? AND promo_code_id = ?';
+    const [existing] = await executeQuery(checkQuery, [conditionId, promoId]);
+
+    if (!existing.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'BXGY condition not found'
+      });
+    }
+
+    // Build update query
+    const updateFields = [];
+    const updateParams = [];
+
+    Object.keys(updateData).forEach(key => {
+      if (['buy_product_ids', 'buy_category_ids', 'get_product_ids', 'get_category_ids'].includes(key)) {
+        updateFields.push(`${key} = ?`);
+        updateParams.push(updateData[key] ? JSON.stringify(updateData[key]) : null);
+      } else if (key !== 'id' && key !== 'promo_code_id' && key !== 'created_at') {
+        updateFields.push(`${key} = ?`);
+        updateParams.push(updateData[key]);
+      }
+    });
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields to update'
+      });
+    }
+
+    updateFields.push('updated_at = NOW()');
+    updateParams.push(conditionId);
+
+    const updateQuery = `UPDATE promo_bxgy_conditions SET ${updateFields.join(', ')} WHERE id = ?`;
+    await executeQuery(updateQuery, updateParams);
+
+    // Fetch updated condition
+    const [updated] = await executeQuery(checkQuery, [conditionId, promoId]);
+
+    res.json({
+      success: true,
+      message: 'BXGY condition updated successfully',
+      data: updated[0]
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/promos/:promoId/bxgy-conditions/:conditionId
+ * @desc    Delete BXGY condition
+ * @access  Admin, Staff
+ */
+router.delete('/:promoId/bxgy-conditions/:conditionId', authenticate, authorize('admin', 'staff'), async (req, res, next) => {
+  try {
+    const { promoId, conditionId } = req.params;
+
+    // Validate condition exists
+    const checkQuery = 'SELECT * FROM promo_bxgy_conditions WHERE id = ? AND promo_code_id = ?';
+    const [existing] = await executeQuery(checkQuery, [conditionId, promoId]);
+
+    if (!existing.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'BXGY condition not found'
+      });
+    }
+
+    // Soft delete
+    const deleteQuery = 'UPDATE promo_bxgy_conditions SET is_active = 0, updated_at = NOW() WHERE id = ?';
+    await executeQuery(deleteQuery, [conditionId]);
+
+    res.json({
+      success: true,
+      message: 'BXGY condition deleted successfully'
     });
 
   } catch (error) {

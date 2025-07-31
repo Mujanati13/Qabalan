@@ -127,15 +127,25 @@ router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
       });
     }
 
+    // Convert undefined values to null for database compatibility
+    const sanitizedValues = [
+      title_ar || null,
+      title_en || null,
+      phone || null,
+      email || null,
+      address_ar || null,
+      address_en || null,
+      latitude !== undefined ? latitude : null,
+      longitude !== undefined ? longitude : null,
+      working_hours ? JSON.stringify(working_hours) : null
+    ];
+
     const result = await executeQuery(`
       INSERT INTO branches (
         title_ar, title_en, phone, email, address_ar, address_en,
         latitude, longitude, working_hours
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [
-      title_ar, title_en, phone, email, address_ar, address_en,
-      latitude, longitude, JSON.stringify(working_hours)
-    ]);
+    `, sanitizedValues);
 
     const [newBranch] = await executeQuery(
       'SELECT * FROM branches WHERE id = ?',
@@ -174,6 +184,15 @@ router.put('/:id', authenticate, authorize('admin'), validateId, async (req, res
       is_active
     } = req.body;
 
+    // Validate required fields for update
+    if (!title_ar || !title_en) {
+      return res.status(400).json({
+        success: false,
+        message: 'Title in both Arabic and English is required',
+        message_ar: 'العنوان باللغتين العربية والإنجليزية مطلوب'
+      });
+    }
+
     // Check if branch exists
     const [existingBranch] = await executeQuery(
       'SELECT id FROM branches WHERE id = ?',
@@ -188,11 +207,26 @@ router.put('/:id', authenticate, authorize('admin'), validateId, async (req, res
       });
     }
 
+    // Convert undefined values to null for database compatibility
+    const sanitizedValues = [
+      title_ar || null,
+      title_en || null,
+      phone || null,
+      email || null,
+      address_ar || null,
+      address_en || null,
+      latitude !== undefined ? latitude : null,
+      longitude !== undefined ? longitude : null,
+      working_hours ? JSON.stringify(working_hours) : null,
+      is_active !== undefined ? is_active : null,
+      req.params.id
+    ];
+
     // Update branch
     await executeQuery(`
       UPDATE branches SET
-        title_ar = COALESCE(?, title_ar),
-        title_en = COALESCE(?, title_en),
+        title_ar = ?,
+        title_en = ?,
         phone = ?,
         email = ?,
         address_ar = ?,
@@ -203,11 +237,7 @@ router.put('/:id', authenticate, authorize('admin'), validateId, async (req, res
         is_active = COALESCE(?, is_active),
         updated_at = NOW()
       WHERE id = ?
-    `, [
-      title_ar, title_en, phone, email, address_ar, address_en,
-      latitude, longitude, working_hours ? JSON.stringify(working_hours) : null,
-      is_active, req.params.id
-    ]);
+    `, sanitizedValues);
 
     const [updatedBranch] = await executeQuery(
       'SELECT * FROM branches WHERE id = ?',
@@ -218,6 +248,60 @@ router.put('/:id', authenticate, authorize('admin'), validateId, async (req, res
       success: true,
       message: 'Branch updated successfully',
       message_ar: 'تم تحديث الفرع بنجاح',
+      data: { branch: updatedBranch }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PATCH /api/branches/:id/status
+ * @desc    Update branch status only
+ * @access  Private (Admin only)
+ */
+router.patch('/:id/status', authenticate, authorize('admin'), validateId, async (req, res, next) => {
+  try {
+    const { is_active } = req.body;
+
+    if (is_active === undefined || is_active === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'is_active field is required',
+        message_ar: 'حقل الحالة مطلوب'
+      });
+    }
+
+    // Check if branch exists
+    const [existingBranch] = await executeQuery(
+      'SELECT id, title_en FROM branches WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!existingBranch) {
+      return res.status(404).json({
+        success: false,
+        message: 'Branch not found',
+        message_ar: 'الفرع غير موجود'
+      });
+    }
+
+    // Update branch status
+    await executeQuery(
+      'UPDATE branches SET is_active = ?, updated_at = NOW() WHERE id = ?',
+      [is_active, req.params.id]
+    );
+
+    const [updatedBranch] = await executeQuery(
+      'SELECT * FROM branches WHERE id = ?',
+      [req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: `Branch ${is_active ? 'activated' : 'deactivated'} successfully`,
+      message_ar: `تم ${is_active ? 'تفعيل' : 'إلغاء تفعيل'} الفرع بنجاح`,
       data: { branch: updatedBranch }
     });
 

@@ -1,35 +1,76 @@
-// Simple notification sound utility
-// You can replace this with a real audio file in the public directory
+// Enhanced notification sound utility for new orders
+// Creates a distinctive audio alert that's pleasant but attention-grabbing
 
 export const createNotificationSound = () => {
-  // Create a simple beep sound using Web Audio API
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  // Create a pleasant notification sound using Web Audio API
+  let audioContext;
+  let isPlaying = false;
+  
+  const initAudioContext = () => {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioContext;
+  };
   
   const playSound = () => {
+    // Prevent overlapping sounds
+    if (isPlaying) {
+      return Promise.resolve();
+    }
+    
     try {
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
+      const ctx = initAudioContext();
+      isPlaying = true;
       
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      // Create a pleasant two-tone notification sound
+      const playTone = (frequency, startTime, duration, volume = 0.3) => {
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        oscillator.frequency.value = frequency;
+        oscillator.type = 'sine';
+        
+        // Smooth attack and decay
+        gainNode.gain.setValueAtTime(0, startTime);
+        gainNode.gain.linearRampToValueAtTime(volume, startTime + 0.05);
+        gainNode.gain.linearRampToValueAtTime(volume * 0.7, startTime + duration * 0.7);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+        
+        oscillator.start(startTime);
+        oscillator.stop(startTime + duration);
+        
+        return oscillator;
+      };
       
-      oscillator.frequency.value = 800; // Frequency in Hz
-      oscillator.type = 'sine';
+      const now = ctx.currentTime;
       
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      // First tone (higher pitch)
+      playTone(880, now, 0.3, 0.25);
       
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
+      // Second tone (lower pitch) - slight overlap for harmony
+      playTone(660, now + 0.15, 0.4, 0.2);
+      
+      // Reset playing flag after sound completes
+      setTimeout(() => {
+        isPlaying = false;
+      }, 600);
       
       return Promise.resolve();
     } catch (error) {
+      isPlaying = false;
       console.error('Failed to play notification sound:', error);
       return Promise.reject(error);
     }
   };
   
-  return { play: playSound };
+  return { 
+    play: playSound,
+    isPlaying: () => isPlaying
+  };
 };
 
 // Alternative: Use HTML5 Audio with data URL

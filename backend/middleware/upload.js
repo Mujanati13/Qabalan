@@ -12,6 +12,8 @@ const createUploadDirs = async () => {
     path.join(__dirname, '../uploads/products/thumbnails'),
     path.join(__dirname, '../uploads/categories'),
     path.join(__dirname, '../uploads/banners'),
+    path.join(__dirname, '../uploads/offers'),
+    path.join(__dirname, '../uploads/offers/thumbnails'),
     path.join(__dirname, '../uploads/temp')
   ];
 
@@ -221,5 +223,7 @@ module.exports = {
   uploadProductImages: uploadMultiple('images', 5, 'products'),
   // Category-specific middleware
   uploadCategoryImage: uploadSingle('image', 'categories'),
-  uploadCategoryImages: uploadMultiple('images', 3, 'categories')
+  uploadCategoryImages: uploadMultiple('images', 3, 'categories'),
+  // Offers-specific middleware
+  uploadOfferImage: uploadSingle('featured_image', 'offers')
 };

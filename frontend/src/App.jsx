@@ -19,6 +19,12 @@ import Support from './pages/Support'
 import InvoiceManagement from './pages/InvoiceManagement'
 import StaffManagement from './pages/StaffManagement'
 import Settings from './pages/Settings'
+import ShippingZoneManagement from './pages/ShippingZoneManagement'
+import NotificationTestPage from './pages/NotificationTestPage'
+import Branches from './pages/Branches'
+import URLGeneratorDemo from './pages/URLGeneratorDemo'
+import OffersManagement from './pages/OffersManagement'
+import WebClientConfiguration from './pages/WebClientConfiguration'
 
 // Placeholder pages
 const Inventory = () => <div>Inventory Page - Coming Soon</div>
@@ -126,10 +132,26 @@ function App() {
           </ProtectedRoute>
         } />
 
+        <Route path="/offers" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <OffersManagement />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
         <Route path="/notifications" element={
           <ProtectedRoute>
             <AdminLayout>
               <Notifications />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/notification-test" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <NotificationTestPage />
             </AdminLayout>
           </ProtectedRoute>
         } />
@@ -186,6 +208,38 @@ function App() {
           <ProtectedRoute>
             <AdminLayout>
               <StaffManagement />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/shipping-zones" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <ShippingZoneManagement />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/branches" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <Branches />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/url-generator-demo" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <URLGeneratorDemo />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/web-client-config" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <WebClientConfiguration />
             </AdminLayout>
           </ProtectedRoute>
         } />

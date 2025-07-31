@@ -43,10 +43,7 @@ const validateUserRegistration = [
     .trim()
     .isLength({ min: 2, max: 50 })
     .withMessage('Last name must be between 2 and 50 characters'),
-  body('phone')
-    .optional()
-    .isMobilePhone()
-    .withMessage('Valid phone number is required'),
+  // Phone validation removed - accepting any phone format
   handleValidationErrors
 ];
 
@@ -105,10 +102,7 @@ const validateUserUpdate = [
     .isEmail()
     .withMessage('Valid email is required')
     .normalizeEmail(),
-  body('phone')
-    .optional()
-    .isMobilePhone()
-    .withMessage('Valid phone number is required'),
+  // Phone validation removed - accepting any phone format
   body('birth_date')
     .optional()
     .isISO8601()
@@ -137,14 +131,12 @@ const validateUserCreation = [
     .withMessage('Valid email is required')
     .normalizeEmail(),
   body('password')
+    .optional()
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters')
     .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
     .withMessage('Password must contain at least one lowercase letter, one uppercase letter, and one number'),
-  body('phone')
-    .optional()
-    .isMobilePhone()
-    .withMessage('Valid phone number is required'),
+  // Phone validation removed - accepting any phone format
   body('user_type')
     .optional()
     .isIn(['customer', 'admin', 'staff'])
@@ -166,8 +158,8 @@ const validatePagination = [
     .withMessage('Page must be a positive integer'),
   query('limit')
     .optional()
-    .isInt({ min: 1, max: 100 })
-    .withMessage('Limit must be between 1 and 100'),
+    .isInt({ min: 1, max: 1000 })
+    .withMessage('Limit must be between 1 and 1000'),
   handleValidationErrors
 ];
 

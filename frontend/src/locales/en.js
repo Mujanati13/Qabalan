@@ -12,11 +12,13 @@ export const en = {
     create: 'Create',
     update: 'Update',
     refresh: 'Refresh',
+    export: 'Export',
     yes: 'Yes',
     no: 'No',
     search: 'Search',
     filter: 'Filter',
     clear: 'Clear',
+    clear_selection: 'Clear Selection',
     actions: 'Actions',
     status: 'Status',
     name: 'Name',
@@ -28,10 +30,18 @@ export const en = {
     totalItems: '{total} items total',
     required: 'This field is required',
     invalidEmail: 'Please enter a valid email',
+    invalidPhone: 'Please enter a valid phone number',
+    validationFailed: 'Validation Failed',
+    networkError: 'Network Error',
+    serverError: 'Server Error',
+    error: 'Error',
     minLength: 'Minimum {min} characters required',
+    maxLength: 'Maximum {max} characters allowed',
     view_details: 'View Details',
     activate: 'Activate',
-    deactivate: 'Deactivate'
+    deactivate: 'Deactivate',
+    next: 'Next',
+    previous: 'Previous'
   },
 
   // Navigation
@@ -43,11 +53,14 @@ export const en = {
     invoices: 'Invoices',
     users: 'Users',
     promos: 'Promo Codes',
+    offers: 'Offers & Promotions',
     notifications: 'Notifications',
     support: 'Support',
     staff: 'Staff & Roles',
     inventory: 'Inventory',
     reports: 'Reports',
+    shipping_zones: 'Shipping Zones',
+    branches: 'Branches',
     settings: 'Settings',
     profile: 'Profile',
     logout: 'Logout'
@@ -101,6 +114,11 @@ export const en = {
     thisWeek: 'This Week',
     thisMonth: 'This Month',
     thisYear: 'This Year',
+    customRange: 'Custom Range',
+    startDate: 'Start Date',
+    endDate: 'End Date',
+    clearFilters: 'Clear Filters',
+    clear: 'Clear',
     day: 'Daily',
     week: 'Weekly', 
     month: 'Monthly',
@@ -115,6 +133,9 @@ export const en = {
     status_delivered: 'Delivered',
     status_cancelled: 'Cancelled',
     status_refunded: 'Refunded',
+    stock_in_stock: 'In Stock',
+    stock_out_of_stock: 'Out of Stock',
+    stock_limited: 'Limited Stock',
     // ...existing dashboard content...
   },
 
@@ -172,6 +193,8 @@ export const en = {
     imageUrl: 'Image URL',
     yes: 'Yes',
     no: 'No',
+    active: 'Active',
+    inactive: 'Inactive',
     search: 'Search products...',
     filterByCategory: 'Filter by category',
     showInactive: 'Show Inactive',
@@ -197,7 +220,21 @@ export const en = {
     statusUpdated: 'Product status updated successfully',
     statusUpdateError: 'Failed to update product status',
     english: 'English',
-    arabic: 'Arabic'
+    arabic: 'Arabic',
+    
+    // Bulk Actions
+    selected_count: '{count} product(s) selected',
+    bulk_activate: 'Activate Selected',
+    bulk_deactivate: 'Deactivate Selected',
+    bulk_delete_confirm_title: 'Delete Selected Products',
+    bulk_delete_confirm_message: 'Are you sure you want to delete {count} selected product(s)? This action cannot be undone.',
+    bulk_deleted_successfully: '{count} product(s) deleted successfully',
+    bulk_delete_error: 'Failed to delete selected products',
+    bulk_status_update_confirm_title: 'Update Status for Selected Products',
+    bulk_status_update_confirm_message: 'Are you sure you want to change {count} product(s) to {status}?',
+    bulk_status_updated_successfully: '{count} product(s) status updated successfully',
+    bulk_status_update_error: 'Failed to update status for selected products',
+    exported_successfully: '{count} product(s) exported successfully'
   },
 
   // Categories
@@ -276,7 +313,33 @@ export const en = {
     available_products: 'Available Products',
     assigned_products: 'Assigned Products',
     products_assigned_successfully: 'Products assigned successfully',
-    products_assignment_failed: 'Failed to assign products'
+    products_assignment_failed: 'Failed to assign products',
+    
+    // Error messages
+    slug_already_exists: 'Category slug already exists. Please choose a different slug.',
+    slug_auto_generated: 'Slug will be auto-generated from title if left empty',
+    slug_suggestion_title: 'Use suggested slug?',
+    slug_suggestion_content: 'Would you like to use the suggested slug: "{slug}"?',
+    slug_suggestion_yes: 'Yes, use suggested slug',
+    slug_suggestion_no: 'No, I\'ll choose another',
+    slug_updated_message: 'Slug updated. Please try submitting again.',
+    title_required_error: 'Please enter at least one title (Arabic or English)',
+    parent_category_invalid: 'Invalid or non-existent parent category',
+    save_failed: 'Failed to save category',
+    
+    // Bulk Actions
+    selected_count: '{count} category(s) selected',
+    bulk_activate: 'Activate Selected',
+    bulk_deactivate: 'Deactivate Selected',
+    bulk_delete_confirm_title: 'Delete Selected Categories',
+    bulk_delete_confirm_message: 'Are you sure you want to delete {count} selected category(s)? This action cannot be undone.',
+    bulk_deleted_successfully: '{count} category(s) deleted successfully',
+    bulk_delete_error: 'Failed to delete selected categories',
+    bulk_status_update_confirm_title: 'Update Status for Selected Categories',
+    bulk_status_update_confirm_message: 'Are you sure you want to change {count} category(s) to {status}?',
+    bulk_status_updated_successfully: '{count} category(s) status updated successfully',
+    bulk_status_update_error: 'Failed to update status for selected categories',
+    exported_successfully: '{count} category(s) exported successfully'
   },
 
   // Orders
@@ -330,6 +393,10 @@ export const en = {
     pickup: 'Pickup',
     
     // Payment Methods
+    paymentMethod: 'Payment Method',
+    cash: 'Cash',
+    card: 'Card',
+    online: 'Online',
     payment_cash: 'Cash',
     payment_card: 'Card',
     payment_online: 'Online',
@@ -381,6 +448,9 @@ export const en = {
     order_summary: 'Order Summary',
     subtotal: 'Subtotal',
     delivery_fee: 'Delivery Fee',
+    deliveryFee: 'Delivery Fee',
+    clickToEditDeliveryFee: 'Click to edit delivery fee',
+    resetDeliveryFee: 'Reset to calculated fee',
     tax_amount: 'Tax Amount',
     discount_amount: 'Discount Amount',
     discount: 'Discount',
@@ -401,10 +471,151 @@ export const en = {
     cancel_confirm_title: 'Cancel Order',
     cancel_confirm_message: 'Are you sure you want to cancel this order? This action cannot be undone.',
     
+    // Bulk Actions
+    selected_count: '{count} item(s) selected',
+    bulk_update_status: 'Update Status',
+    bulk_delete_confirm_title: 'Delete Selected Orders',
+    bulk_delete_confirm_message: 'Are you sure you want to delete {count} selected order(s)? This action cannot be undone.',
+    bulk_deleted_successfully: '{count} order(s) deleted successfully',
+    bulk_delete_error: 'Failed to delete selected orders',
+    bulk_status_update_confirm_title: 'Update Status for Selected Orders',
+    bulk_status_update_confirm_message: 'Are you sure you want to update {count} order(s) to status: {status}?',
+    bulk_status_updated_successfully: '{count} order(s) status updated successfully',
+    bulk_status_update_error: 'Failed to update status for selected orders',
+    exported_successfully: '{count} order(s) exported successfully',
+    
+    // Create Order Modal
+    createOrder: 'Create Order',
+    createCustomer: 'Create Customer',
+    createNewCustomer: 'Create New Customer',
+    customerCreatedSuccess: 'Customer created successfully',
+    customerCreateError: 'Failed to create customer',
+    loadCustomersError: 'Failed to load customers',
+    loadAddressesError: 'Failed to load addresses',
+    loadProductsError: 'Failed to load products',
+    loadBranchesError: 'Failed to load branches',
+    selectBranch: 'Select Branch',
+    selectBranchPlaceholder: 'Select a branch...',
+    branchAndCustomer: 'Branch & Customer',
+    branchesAvailable: '{count} branches available',
+    selectCustomer: 'Select Customer',
+    searchCustomer: 'Search for customer...',
+    customer: 'Customer',
+    address: 'Address',
+    products: 'Products',
+    existingAddresses: 'Existing Addresses',
+    newAddress: 'New Address',
+    selectedAddress: 'Selected Address',
+    selectAddress: 'Select Address',
+    addNewAddress: 'Add New Address',
+    noAddressesFound: 'No addresses found',
+    selectAddressHint: 'Select an existing address or create a new one',
+    addProducts: 'Add Products',
+    searchProducts: 'Search for products...',
+    custom_range: 'Custom Range',
+    start_date: 'Start Date',
+    end_date: 'End Date',
+    items: 'items',
+    custom_range: 'Custom Range',
+    start_date: 'Start Date',
+    end_date: 'End Date',
+    createCustomer: 'Create Customer',
+    createNewCustomer: 'Create New Customer',
+    customerCreatedSuccess: 'Customer created successfully',
+    customerCreateError: 'Failed to create customer',
+    addressCreatedSuccess: 'Address created successfully',
+    addressCreateError: 'Failed to create address',
+    selectCustomerFirst: 'Please select a customer first',
+    locationDataRequired: 'At least one form of location data is required',
+    selectedProducts: 'Selected Products',
+    noProductsSelected: 'No products selected',
+    productsHint: 'Search and select products to add to the order',
+    product: 'Product',
+    price: 'Price',
+    quantity: 'Quantity',
+    total: 'Total',
+    
+    // Validation Messages
+    selectBranchRequired: 'Please select a branch',
+    selectCustomerRequired: 'Please select a customer',
+    selectAddressRequired: 'Please select an address or create a new one',
+    selectProductsRequired: 'Please add at least one product',
+    addressNameRequired: 'Address name is required',
+    loadBranchesError: 'Failed to load branches',
+    
+    // Loading Messages
+    loadCustomersError: 'Failed to load customers',
+    loadAddressesError: 'Failed to load addresses',
+    loadProductsError: 'Failed to load products',
+    
+    // Location Matching
+    locationMatched: 'Location matched',
+    cityMatched: 'City matched: {city}. Please select area manually.',
+    noLocationMatch: 'No matching city found. Please select location manually.',
+    locationMatchError: 'Error matching location. Please select manually.',
+    completeLocationManually: '(Complete remaining fields manually if needed)',
+    locationSavedFromMap: 'Location saved from map. You can optionally select city/area/street manually.',
+    addressReadyForOrder: 'Address details saved and ready for order creation',
+    selectCustomerFirst: 'Please select a customer first',
+    addressCreatedSuccess: 'Address created successfully',
+    addressCreateError: 'Failed to create address',
+    
+    // Success Messages
+    createSuccess: 'Order created successfully',
+    createError: 'Failed to create order',
+    newAddress: 'New Address',
+    selectedAddress: 'Selected Address',
+    selectAddress: 'Select Address',
+    selectAddressHint: 'Select an existing address or create a new one',
+    addNewAddress: 'Add New Address',
+    addProducts: 'Add Products',
+    searchProducts: 'Search for products...',
+    selectedProducts: 'Selected Products',
+    productsHint: 'Search and select products to add to the order',
+    noProductsSelected: 'No products selected',
+    product: 'Product',
+    price: 'Price',
+    quantity: 'Quantity',
+    total: 'Total',
+    selectCustomerRequired: 'Please select a customer',
+    selectAddressRequired: 'Please select an address or create a new one',
+    selectProductsRequired: 'Please add at least one product',
+    noAddressesFound: 'No addresses found',
+    loadCustomersError: 'Failed to load customers',
+    loadAddressesError: 'Failed to load addresses',
+    loadProductsError: 'Failed to load products',
+    createSuccess: 'Order created successfully',
+    createError: 'Failed to create order',
+    
     // Errors
     fetch_failed: 'Failed to fetch orders',
     update_failed: 'Failed to update order',
     cancel_failed: 'Failed to cancel order'
+  },
+
+  // Notifications
+  notifications: {
+    // Real-time notifications
+    new_orders_received: '{count} new order(s) received',
+    single_new_order_title: '🛍️ New Order Received!',
+    multiple_new_orders_title: '🛍️ {count} New Orders Received!',
+    single_new_order_desc: 'Order #{orderNumber} from {customerName} - {amount}',
+    multiple_new_orders_desc: '{count} new orders are pending your attention.',
+    
+    // Controls
+    auto_refresh_enabled: 'Auto-refresh is enabled',
+    auto_refresh_disabled: 'Auto-refresh is disabled',
+    sound_enabled: 'Sound notifications enabled',
+    sound_disabled: 'Sound notifications disabled',
+    test_sound: 'Test notification sound',
+    refresh_now: 'Refresh notifications now',
+    pending_orders: 'Pending Orders',
+    
+    // Status messages
+    checking_new_orders: 'Checking for new orders...',
+    no_new_orders: 'No new orders',
+    connection_restored: 'Connection restored',
+    connection_lost: 'Connection lost'
   },
 
   // Branches
@@ -436,6 +647,8 @@ export const en = {
     longitude: 'Longitude',
     latitudePlaceholder: 'Enter latitude',
     longitudePlaceholder: 'Enter longitude',
+    latitudeInvalid: 'Latitude must be between -90 and 90',
+    longitudeInvalid: 'Longitude must be between -180 and 180',
     searchPlaceholder: 'Search branches...',
     fetchError: 'Failed to fetch branches',
     createSuccess: 'Branch created successfully',
@@ -447,7 +660,17 @@ export const en = {
     minStockLevel: 'Min Stock Level',
     reservedQuantity: 'Reserved Quantity',
     availableQuantity: 'Available Quantity',
-    updateInventory: 'Update Inventory'
+    updateInventory: 'Update Inventory',
+    // Statistics
+    totalBranches: 'Total Branches',
+    activeBranches: 'Active Branches',
+    inactiveBranches: 'Inactive Branches',
+    list: 'branches',
+    // Form sections
+    generalInfo: 'General Information',
+    contactInfo: 'Contact Information',
+    locationInfo: 'Location Information',
+    coordinates: 'Coordinates (Optional)'
   },
 
   // Profile
@@ -510,15 +733,43 @@ export const en = {
     firstName: 'First Name',
     lastName: 'Last Name',
     fullName: 'Full Name',
+    name: 'Name',
     email: 'Email',
     phone: 'Phone',
     userType: 'User Type',
+    type: 'Type',
     birthDate: 'Birth Date',
     avatar: 'Avatar',
     joinDate: 'Join Date',
+    registrationDate: 'Registration Date',
     lastLogin: 'Last Login',
     isVerified: 'Verified',
     isActive: 'Active',
+    
+    // Customer form fields
+    first_name: 'First Name',
+    last_name: 'Last Name',
+    date_of_birth: 'Date of Birth',
+    first_name_required: 'First name is required',
+    last_name_required: 'Last name is required',
+    email_required: 'Email is required',
+    email_invalid: 'Please enter a valid email',
+    phone_required: 'Phone is required',
+    phone_invalid_length: 'Phone number must be at least 9 digits',
+    phone_invalid_format: 'Please enter a valid phone number format',
+    phone_too_long: 'Phone number is too long (max 15 digits)',
+    first_name_placeholder: 'Enter first name',
+    last_name_placeholder: 'Enter last name',
+    email_placeholder: 'Enter email address',
+    phone_placeholder: 'Enter phone number (e.g., 0791234567)',
+    date_of_birth_placeholder: 'Select date of birth',
+    create_customer: 'Create Customer',
+    
+    // Address form fields
+    addressNameRequired: 'Address name is required',
+    addressNameMinLength: 'Address name must be at least 2 characters',
+    addressNamePlaceholder: 'e.g., Home, Office, etc.',
+    locationDataRequired: 'At least one form of location data is required (city/area/street, coordinates, or address details)',
     
     // Customer Types
     customer: 'Customer',
@@ -563,6 +814,9 @@ export const en = {
     buildingNo: 'Building Number',
     floorNo: 'Floor Number',
     apartmentNo: 'Apartment Number',
+    streetDetails: 'Street Details',
+    streetDetailsPlaceholder: 'Street name and number',
+    detailsPlaceholder: 'Landmark, special instructions, etc.',
     details: 'Additional Details',
     deliveryFee: 'Delivery Fee',
     
@@ -627,7 +881,31 @@ export const en = {
     newPassword: 'New Password',
     confirmPassword: 'Confirm Password',
     passwordMismatch: 'Passwords do not match',
-    passwordRequirements: 'Password must contain at least 8 characters, including uppercase, lowercase, and numbers'
+    passwordRequirements: 'Password must contain at least 8 characters, including uppercase, lowercase, and numbers',
+    
+    // Bulk Actions
+    bulk_actions: {
+      select_all: 'Select All',
+      deselect_all: 'Deselect All',
+      selected_count: '{count} customer(s) selected',
+      delete_selected: 'Delete Selected',
+      update_status: 'Update Status',
+      export_selected: 'Export Selected',
+      activate: 'Activate',
+      deactivate: 'Deactivate',
+      confirm_delete: 'Delete Selected Customers',
+      delete_warning: 'Are you sure you want to delete {count} selected customer(s)? This action cannot be undone.',
+      confirm_status_update: 'Update Customer Status',
+      status_update_warning: 'Are you sure you want to update the status of {count} selected customer(s)?',
+      deleting: 'Deleting...',
+      updating_status: 'Updating status...',
+      exporting: 'Exporting...',
+      delete_success: 'Selected customers deleted successfully',
+      status_update_success: 'Customer status updated successfully',
+      export_success: 'Selected customers exported successfully',
+      operation_failed: 'Operation failed',
+      no_selection: 'Please select customers first'
+    }
   },
 
   // Promo Codes
@@ -659,6 +937,8 @@ export const en = {
     type: 'Type',
     typePercentage: 'Percentage',
     typeFixedAmount: 'Fixed Amount',
+    typeFreeShipping: 'Free Shipping',
+    typeBXGY: 'Buy X Get Y',
     
     // Form Fields
     code: 'Promo Code',
@@ -677,8 +957,37 @@ export const en = {
     discountType: 'Discount Type',
     discountValue: 'Discount Value',
     discountValuePlaceholder: 'Enter discount value',
-    discountPercentage: 'Percentage (%)',
+    discountPercentage: 'Discount Percentage',
     discountAmount: 'Fixed Amount ($)',
+    
+    // BXGY Fields
+    buyQuantity: 'Buy Quantity',
+    buyQuantityPlaceholder: 'Number of items to buy',
+    buyQuantityRequired: 'Buy quantity is required',
+    getQuantity: 'Get Quantity',
+    getQuantityPlaceholder: 'Number of items to get free',
+    getQuantityRequired: 'Get quantity is required',
+    bxgyConfiguration: 'BXGY Configuration',
+    
+    buyType: 'Buy Type',
+    selectBuyType: 'Select buy type',
+    buyTypeAny: 'Any Product',
+    buyTypeSpecificProducts: 'Specific Products',
+    buyTypeSpecificCategories: 'Specific Categories',
+    buyTypeMixed: 'Mixed Products & Categories',
+    
+    getType: 'Get Type',
+    selectGetType: 'Select get type',
+    getTypeSameProduct: 'Same Product',
+    getTypeSpecificProducts: 'Specific Products',
+    getTypeSpecificCategories: 'Specific Categories',
+    getTypeCheapestFromBuy: 'Cheapest from Buy Items',
+    getTypeCustomerChoice: 'Customer Choice',
+    
+    maxApplicationsPerOrder: 'Max Applications per Order',
+    maxApplicationsPlaceholder: 'Maximum times per order',
+    applyToCheapest: 'Apply to Cheapest Items',
+    customerChoosesFreeItem: 'Customer Chooses Free Item',
     
     minOrderAmount: 'Minimum Order Amount',
     minOrderAmountPlaceholder: 'Enter minimum order amount',
@@ -1028,5 +1337,102 @@ export const en = {
     
     // Other
     noOrders: 'No orders found for this customer'
+  },
+
+  // Export functionality
+  export: {
+    export: 'Export',
+    exporting: 'Exporting...',
+    export_csv: 'Export CSV',
+    export_excel: 'Export Excel',
+    export_pdf: 'Export PDF',
+    csv_description: 'Comma separated values',
+    excel_description: 'Excel spreadsheet',
+    pdf_description: 'PDF document',
+    export_success: '{format} file exported successfully',
+    export_failed: 'Failed to export {format} file',
+    no_data_to_export: 'No data available to export',
+    preparing_export: 'Preparing export...',
+  },
+
+  // Dashboard
+  dashboard: {
+    title: 'Dashboard',
+    subtitle: 'Welcome back! Here\'s your business overview',
+    totalOrders: 'Total Orders',
+    totalRevenue: 'Total Revenue',
+    totalCustomers: 'Total Customers',
+    averageOrder: 'Average Order Value',
+    orders: 'Orders',
+    revenue: 'Revenue',
+    date: 'Date',
+    period: 'Period',
+    today: 'Today',
+    thisWeek: 'This Week',
+    thisMonth: 'This Month',
+    thisYear: 'This Year',
+    customRange: 'Custom Range',
+    startDate: 'Start Date',
+    endDate: 'End Date',
+    clear: 'Clear',
+    clearFilters: 'Clear Filters',
+    orderFlow: 'Order Flow',
+    salesRevenue: 'Sales Revenue',
+    recentOrders: 'Recent Orders',
+    topProducts: 'Top Products',
+    orderStatusDistribution: 'Order Status Distribution',
+    inventoryAlerts: 'Inventory Alerts',
+    orderId: 'Order ID',
+    customer: 'Customer',
+    amount: 'Amount',
+    status: 'Status',
+    product: 'Product',
+    sold: 'Sold',
+    stock: 'Stock',
+    viewAll: 'View All',
+    noData: 'No data available',
+    noAlerts: 'No alerts',
+    status_pending: 'Pending',
+    status_confirmed: 'Confirmed',
+    status_preparing: 'Preparing',
+    status_ready: 'Ready',
+    status_out_for_delivery: 'Out for Delivery',
+    status_delivered: 'Delivered',
+    status_cancelled: 'Cancelled'
+  },
+
+  // Map & Location
+  map: {
+    selectLocation: 'Select Location',
+    locationSelected: 'Location Selected',
+    currentLocation: 'Current Location',
+    clickToSelect: 'Click on the map to select a location',
+    coordinates: 'Coordinates',
+    gettingAddress: 'Getting address...',
+    geocodingFailed: 'Could not get address for this location',
+    geocodingError: 'Error getting address information',
+    geolocationNotSupported: 'Geolocation is not supported by this browser',
+    geolocationError: 'Error getting your location',
+    geolocationDenied: 'Location access was denied',
+    geolocationUnavailable: 'Location information is unavailable',
+    geolocationTimeout: 'Location request timed out',
+    loadError: 'Map Loading Error',
+    addressAutoFilled: 'Address fields auto-filled from map location',
+    pleaseSelectLocation: 'Please select a location on the map first',
+    autoFilledFromMap: 'Auto-filled from map location',
+    selectOnMap: 'Select on Map',
+    addressDetails: 'Address Details',
+    selectedCoordinates: 'Selected Coordinates',
+    selectLocationFirst: 'Select location on map first',
+    selectLocationForDeliveryFee: 'Select location on map for accurate delivery fee',
+    manualEntryNote: 'You can still manually enter address information in the Address Details tab.',
+    
+    // Navigation
+    previous: 'Previous',
+    next: 'Next',
+    back: 'Back',
+    continue: 'Continue',
+    finish: 'Finish',
+    step: 'Step'
   }
 };

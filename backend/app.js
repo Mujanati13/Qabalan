@@ -8,6 +8,9 @@ const cookieParser = require('cookie-parser');
 const path = require('path');
 require('dotenv').config();
 
+// Initialize global disable scheduler
+const globalDisableScheduler = require('./services/globalDisableScheduler');
+
 // Import routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -15,19 +18,23 @@ const addressRoutes = require('./routes/addresses');
 const productRoutes = require('./routes/products');
 const categoryRoutes = require('./routes/categories');
 const branchRoutes = require('./routes/branches');
+const deliveryAreasRoutes = require('./routes/delivery-areas');
 const orderRoutes = require('./routes/orders');
 const adminRoutes = require('./routes/admin');
 const uploadRoutes = require('./routes/upload');
 const locationRoutes = require('./routes/locations');
 const promoRoutes = require('./routes/promos');
+const offersRoutes = require('./routes/offers');
 const notificationRoutes = require('./routes/notifications');
 const supportRoutes = require('./routes/support');
 const invoiceRoutes = require('./routes/invoice');
+const newsRoutes = require('./routes/news');
 const staffRoleRoutes = require('./routes/staffRole');
 const dashboardRoutes = require('./routes/dashboard');
 const debugRoutes = require('./routes/debug');
 const reviewRoutes = require('./routes/reviews');
 const settingsRoutes = require('./routes/settings');
+const shippingRoutes = require('./routes/shipping');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -92,19 +99,23 @@ app.use('/api/addresses', addressRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/branches', branchRoutes);
+app.use('/api/delivery-areas', deliveryAreasRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/promos', promoRoutes);
+app.use('/api/offers', offersRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/news', newsRoutes);
 app.use('/api/invoice', invoiceRoutes);
 app.use('/api/staff-roles', staffRoleRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/debug', debugRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/shipping', shippingRoutes);
 
 // 404 handler
 app.use(notFound);

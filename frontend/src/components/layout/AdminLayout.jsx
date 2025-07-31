@@ -1,6 +1,15 @@
-import { useState, useEffect } from 'react'
-import { Layout, Menu, Button, Dropdown, Avatar, Space, Switch, Breadcrumb } from 'antd'
-import { 
+import { useState, useEffect } from "react";
+import {
+  Layout,
+  Menu,
+  Button,
+  Dropdown,
+  Avatar,
+  Space,
+  Switch,
+  Breadcrumb,
+} from "antd";
+import {
   DashboardOutlined,
   ShoppingOutlined,
   AppstoreOutlined,
@@ -15,210 +24,339 @@ import {
   GlobalOutlined,
   ProfileOutlined,
   TagOutlined,
+  GiftOutlined,
   MessageOutlined,
   TeamOutlined,
   FileDoneOutlined,
   ShopOutlined,
-  CalculatorOutlined
-} from '@ant-design/icons'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../../hooks/useAuth'
-import { useLanguage } from '../../contexts/LanguageContext'
-import NotificationBell from '../common/NotificationBell'
+  CalculatorOutlined,
+  TruckOutlined,
+  ToolOutlined,
+  CrownOutlined,
+  DatabaseOutlined,
+  PercentageOutlined,
+} from "@ant-design/icons";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../../hooks/useAuth";
+import { useLanguage } from "../../contexts/LanguageContext";
+import NotificationBell from "../common/NotificationBell";
+import OrdersBadge from "../notifications/OrdersBadge";
+import "./AdminLayout.css";
 
-const { Header, Sider, Content } = Layout
+const { Header, Sider, Content } = Layout;
 
 const AdminLayout = ({ children }) => {
-  const [collapsed, setCollapsed] = useState(false)
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const [isMobile, setIsMobile] = useState(false)
-  const { user, logout, hasPermission, hasAnyPermission } = useAuth()
-  const { language, changeLanguage, t, isRTL } = useLanguage()
-  const location = useLocation()
-  const navigate = useNavigate()
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const { user, logout, hasPermission, hasAnyPermission } = useAuth();
+  const { language, changeLanguage, t, isRTL } = useLanguage();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   // Check if screen is mobile
   useEffect(() => {
     const checkMobile = () => {
-      const mobile = window.innerWidth < 992
-      setIsMobile(mobile)
+      const mobile = window.innerWidth < 992;
+      setIsMobile(mobile);
       if (mobile) {
-        setCollapsed(false)
-        setMobileOpen(false)
+        setCollapsed(false);
+        setMobileOpen(false);
       }
-    }
+    };
 
-    checkMobile()
-    window.addEventListener('resize', checkMobile)
-    return () => window.removeEventListener('resize', checkMobile)
-  }, [])
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   const handleLogout = async () => {
-    await logout()
-    navigate('/login')
-  }
+    await logout();
+    navigate("/login");
+  };
 
   const handleLanguageChange = (checked) => {
-    changeLanguage(checked ? 'ar' : 'en')
-  }
+    changeLanguage(checked ? "ar" : "en");
+  };
 
   const toggleMobileMenu = () => {
-    setMobileOpen(!mobileOpen)
-  }
+    setMobileOpen(!mobileOpen);
+  };
 
   const closeMobileMenu = () => {
-    setMobileOpen(false)
-  }
+    setMobileOpen(false);
+  };
 
   // Menu items with permission checks
   const getMenuItems = () => {
     const items = [
       // Dashboard - Always visible
       {
-        key: '/dashboard',
+        key: "/dashboard",
         icon: <DashboardOutlined />,
-        label: <Link to="/dashboard">{t('nav.dashboard')}</Link>,
-        show: true
-      }
+        label: <Link to="/dashboard">{t("nav.dashboard")}</Link>,
+        show: true,
+      },
     ];
 
     // E-COMMERCE SECTION
-    const ecommerceItems = [];
-    
+    const ecommerceChildren = [];
+
     // Products & Categories
-    if (user?.user_type === 'admin' || hasAnyPermission(['products.view', 'categories.view'])) {
-      ecommerceItems.push({
-        key: 'products-group',
-        icon: <ShopOutlined />,
-        label: t('nav.products'),
-        show: true,
-        children: [
-          {
-            key: '/products',
-            label: <Link to="/products">{t('nav.products')}</Link>,
-            show: user?.user_type === 'admin' || hasAnyPermission(['products.view', 'products.create', 'products.edit', 'products.delete'])
-          },
-          {
-            key: '/categories',
-            label: <Link to="/categories">{t('nav.categories')}</Link>,
-            show: user?.user_type === 'admin' || hasAnyPermission(['categories.view', 'categories.create', 'categories.edit', 'categories.delete'])
-          }
-        ]
-      });
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission(["products.view", "categories.view"])
+    ) {
+      if (
+        user?.user_type === "admin" ||
+        hasAnyPermission([
+          "products.view",
+          "products.create",
+          "products.edit",
+          "products.delete",
+        ])
+      ) {
+        ecommerceChildren.push({
+          key: "/products",
+          icon: <AppstoreOutlined />,
+          label: <Link to="/products">{t("nav.products")}</Link>,
+        });
+      }
+
+      if (
+        user?.user_type === "admin" ||
+        hasAnyPermission([
+          "categories.view",
+          "categories.create",
+          "categories.edit",
+          "categories.delete",
+        ])
+      ) {
+        ecommerceChildren.push({
+          key: "/categories",
+          icon: <TagOutlined />,
+          label: <Link to="/categories">{t("nav.categories")}</Link>,
+        });
+      }
     }
 
     // Orders
-    if (user?.user_type === 'admin' || hasAnyPermission(['orders.view', 'orders.edit', 'orders.delete'])) {
-      ecommerceItems.push({
-        key: '/orders',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission(["orders.view", "orders.edit", "orders.delete"])
+    ) {
+      ecommerceChildren.push({
+        key: "/orders",
         icon: <FileTextOutlined />,
-        label: <Link to="/orders">{t('nav.orders')}</Link>,
-        show: true
+        label: <OrdersBadge><Link to="/orders">{t("nav.orders")}</Link></OrdersBadge>,
       });
     }
 
     // Invoices
-    if (user?.user_type === 'admin' || hasAnyPermission(['invoices.view', 'invoices.generate', 'invoices.export'])) {
-      ecommerceItems.push({
-        key: '/invoices',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission([
+        "invoices.view",
+        "invoices.generate",
+        "invoices.export",
+      ])
+    ) {
+      ecommerceChildren.push({
+        key: "/invoices",
         icon: <CalculatorOutlined />,
-        label: <Link to="/invoices">{t('nav.invoices')}</Link>,
-        show: true
+        label: <Link to="/invoices">{t("nav.invoices")}</Link>,
       });
     }
 
-    // Add e-commerce items to main menu
-    items.push(...ecommerceItems);
+    // Add E-commerce Group if has children
+    if (ecommerceChildren.length > 0) {
+      items.push({
+        key: "ecommerce-group",
+        icon: <ShoppingOutlined />,
+        label: "E-commerce",
+        children: ecommerceChildren,
+      });
+    }
 
     // CUSTOMER MANAGEMENT SECTION
-    const customerItems = [];
+    const customerChildren = [];
 
     // Users/Customers
-    if (user?.user_type === 'admin' || hasAnyPermission(['users.view', 'users.create', 'users.edit', 'users.delete'])) {
-      customerItems.push({
-        key: '/users',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission([
+        "users.view",
+        "users.create",
+        "users.edit",
+        "users.delete",
+      ])
+    ) {
+      customerChildren.push({
+        key: "/users",
         icon: <UserOutlined />,
-        label: <Link to="/users">{t('nav.users')}</Link>,
-        show: true
+        label: <Link to="/users">{t("nav.users")}</Link>,
       });
     }
 
     // Support
-    if (user?.user_type === 'admin' || hasAnyPermission(['support.view', 'support.respond', 'support.manage'])) {
-      customerItems.push({
-        key: '/support',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission(["support.view", "support.respond", "support.manage"])
+    ) {
+      customerChildren.push({
+        key: "/support",
         icon: <MessageOutlined />,
-        label: <Link to="/support">{t('nav.support')}</Link>,
-        show: true
+        label: <Link to="/support">{t("nav.support")}</Link>,
       });
     }
 
-    // Add customer management items
-    items.push(...customerItems);
+    // Add Customer Management Group if has children
+    if (customerChildren.length > 0) {
+      items.push({
+        key: "customer-group",
+        icon: <CrownOutlined />,
+        label: "Customer Management",
+        children: customerChildren,
+      });
+    }
 
     // MARKETING SECTION
-    const marketingItems = [];
+    const marketingChildren = [];
 
     // Promo codes
-    if (user?.user_type === 'admin' || hasAnyPermission(['promos.view', 'promos.create', 'promos.edit', 'promos.delete'])) {
-      marketingItems.push({
-        key: '/promos',
-        icon: <TagOutlined />,
-        label: <Link to="/promos">{t('nav.promos')}</Link>,
-        show: true
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission([
+        "promos.view",
+        "promos.create",
+        "promos.edit",
+        "promos.delete",
+      ])
+    ) {
+      marketingChildren.push({
+        key: "/promos",
+        icon: <PercentageOutlined />,
+        label: <Link to="/promos">{t("nav.promos")}</Link>,
+      });
+    }
+
+    // Offers Management
+    if (user?.user_type === "admin" || hasAnyPermission(["offers.view", "offers.create", "offers.edit", "offers.delete"])) {
+      marketingChildren.push({
+        key: "/offers",
+        icon: <GiftOutlined />,
+        label: <Link to="/offers">{t("nav.offers")}</Link>,
       });
     }
 
     // Notifications
-    if (user?.user_type === 'admin' || hasAnyPermission(['notifications.view', 'notifications.create', 'notifications.send'])) {
-      marketingItems.push({
-        key: '/notifications',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission([
+        "notifications.view",
+        "notifications.create",
+        "notifications.send",
+      ])
+    ) {
+      marketingChildren.push({
+        key: "/notifications",
         icon: <BellOutlined />,
-        label: <Link to="/notifications">{t('nav.notifications')}</Link>,
-        show: true
+        label: <Link to="/notifications">{t("nav.notifications")}</Link>,
       });
     }
 
-    // Add marketing items
-    items.push(...marketingItems);
+    // Add Marketing Group if has children
+    if (marketingChildren.length > 0) {
+      items.push({
+        key: "marketing-group",
+        icon: <BarChartOutlined />,
+        label: "Marketing",
+        children: marketingChildren,
+      });
+    }
 
-    // ADMINISTRATION SECTION
-    const adminItems = [];
+    // SYSTEM ADMINISTRATION SECTION
+    const systemChildren = [];
 
     // Staff Management - Only for admins or users with staff permissions
-    if (user?.user_type === 'admin' || hasAnyPermission(['staff.view', 'staff.create', 'staff.edit', 'roles.view', 'roles.create', 'roles.edit'])) {
-      adminItems.push({
-        key: '/staff',
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission([
+        "staff.view",
+        "staff.create",
+        "staff.edit",
+        "roles.view",
+        "roles.create",
+        "roles.edit",
+      ])
+    ) {
+      systemChildren.push({
+        key: "/staff",
         icon: <TeamOutlined />,
-        label: <Link to="/staff">{t('nav.staff')}</Link>,
-        show: true
+        label: <Link to="/staff">{t("nav.staff")}</Link>,
       });
     }
 
+    // Shipping Zones - Only for admins
+    if (user?.user_type === "admin") {
+      systemChildren.push({
+        key: "/shipping-zones",
+        icon: <TruckOutlined />,
+        label: <Link to="/shipping-zones">{t("nav.shipping_zones")}</Link>,
+      });
+    }
 
+    // Branches - Only for admins
+    if (user?.user_type === "admin") {
+      systemChildren.push({
+        key: "/branches",
+        icon: <ShopOutlined />,
+        label: <Link to="/branches">{t("nav.branches")}</Link>,
+      });
+    }
 
-    // Settings
-    if (user?.user_type === 'admin' || hasAnyPermission(['settings.view', 'settings.edit'])) {
-      adminItems.push({
-        key: '/settings',
+    // Add System Administration Group if has children
+    if (systemChildren.length > 0) {
+      items.push({
+        key: "system-group",
+        icon: <DatabaseOutlined />,
+        label: "System Administration",
+        children: systemChildren,
+      });
+    }
+
+    // CONFIGURATION SECTION (Only for admins)
+    const configChildren = [];
+
+    // Settings - Only for admins
+    if (user?.user_type === "admin") {
+      configChildren.push({
+        key: "/settings",
+        icon: <ToolOutlined />,
+        label: <Link to="/settings">{t("nav.settings")}</Link>,
+      });
+    }
+
+    // Web Client Configuration - Only for admins
+    if (user?.user_type === "admin") {
+      configChildren.push({
+        key: "/web-client-config",
+        icon: <GlobalOutlined />,
+        label: <Link to="/web-client-config">Web Client Config</Link>,
+      });
+    }
+
+    // Add Configuration Group if has children
+    if (configChildren.length > 0) {
+      items.push({
+        key: "config-group",
         icon: <SettingOutlined />,
-        label: <Link to="/settings">{t('nav.settings')}</Link>,
-        show: true
+        label: "Configuration",
+        children: configChildren,
       });
     }
 
-    // Add admin items
-    items.push(...adminItems);
-
-    // Filter items based on show property and handle children
-    return items.filter(item => item.show).map(item => {
-      if (item.children) {
-        const visibleChildren = item.children.filter(child => child.show);
-        if (visibleChildren.length === 0) return null;
-        return { ...item, children: visibleChildren };
-      }
-      return item;
-    }).filter(Boolean);
+    return items.filter(Boolean);
   };
 
   const menuItems = getMenuItems();
@@ -226,151 +364,178 @@ const AdminLayout = ({ children }) => {
   // User dropdown menu
   const userMenuItems = [
     {
-      key: 'profile',
+      key: "profile",
       icon: <ProfileOutlined />,
-      label: <Link to="/profile">{t('nav.profile')}</Link>,
+      label: <Link to="/profile">{t("nav.profile")}</Link>,
     },
     {
-      key: 'divider',
-      type: 'divider',
+      key: "divider",
+      type: "divider",
     },
     {
-      key: 'logout',
+      key: "logout",
       icon: <LogoutOutlined />,
-      label: t('nav.logout'),
+      label: t("nav.logout"),
       onClick: handleLogout,
     },
-  ]
+  ];
 
-  // Get current menu key
+  // Get current menu key and open keys for submenus
   const getCurrentKey = () => {
-    if (location.pathname.startsWith('/categories')) return '/categories'
-    if (location.pathname.startsWith('/products')) return '/products'
-    return location.pathname
-  }
+    return location.pathname;
+  };
+
+  // Get default open keys for submenus based on current path
+  const getDefaultOpenKeys = () => {
+    const path = location.pathname;
+    const openKeys = [];
+
+    // E-commerce routes
+    if (["/products", "/categories", "/orders", "/invoices"].includes(path)) {
+      openKeys.push("ecommerce-group");
+    }
+    // Customer management routes
+    else if (["/users", "/support"].includes(path)) {
+      openKeys.push("customer-group");
+    }
+    // Marketing routes
+    else if (["/promos", "/offers", "/notifications"].includes(path)) {
+      openKeys.push("marketing-group");
+    }
+    // System administration routes
+    else if (["/staff", "/shipping-zones", "/branches"].includes(path)) {
+      openKeys.push("system-group");
+    }
+    // Configuration routes
+    else if (["/settings", "/web-client-config"].includes(path)) {
+      openKeys.push("config-group");
+    }
+
+    return openKeys;
+  };
 
   // Generate breadcrumb items
   const getBreadcrumbItems = () => {
-    const pathSegments = location.pathname.split('/').filter(Boolean)
+    const pathSegments = location.pathname.split("/").filter(Boolean);
     const breadcrumbItems = [
       {
-        title: <Link to="/dashboard">{t('nav.dashboard')}</Link>,
+        title: <Link to="/dashboard">{t("nav.dashboard")}</Link>,
       },
-    ]
+    ];
 
     if (pathSegments.length > 1) {
       pathSegments.forEach((segment, index) => {
-        if (segment !== 'dashboard') {
-          const path = '/' + pathSegments.slice(0, index + 1).join('/')
+        if (segment !== "dashboard") {
+          const path = "/" + pathSegments.slice(0, index + 1).join("/");
           breadcrumbItems.push({
             title: <Link to={path}>{t(`nav.${segment}`)}</Link>,
-          })
+          });
         }
-      })
+      });
     }
 
-    return breadcrumbItems
-  }
+    return breadcrumbItems;
+  };
 
   const layoutStyle = {
-    minHeight: '100vh',
-    direction: isRTL ? 'rtl' : 'ltr'
-  }
+    minHeight: "100vh",
+    direction: isRTL ? "rtl" : "ltr",
+  };
 
   const headerStyle = {
-    padding: '0 16px',
-    background: '#fff',
-    borderBottom: '1px solid #f0f0f0',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'sticky',
+    padding: "0 16px",
+    background: "#fff",
+    borderBottom: "1px solid #f0f0f0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    position: "sticky",
     top: 0,
-    zIndex: 1000
-  }
+    zIndex: 1000,
+  };
 
   const headerLeftStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px'
-  }
+    display: "flex",
+    alignItems: "center",
+    gap: "16px",
+  };
 
   const headerRightStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px'
-  }
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+  };
 
   const logoStyle = {
-    fontSize: '18px',
-    fontWeight: 'bold',
-    color: '#1890ff',
-    margin: 0
-  }
+    fontSize: "18px",
+    fontWeight: "bold",
+    color: "#1890ff",
+    margin: 0,
+  };
 
   const siderStyle = {
-    position: isMobile ? 'fixed' : 'relative',
-    left: isMobile && !mobileOpen ? '-256px' : '0',
-    top: isMobile ? '0' : '0',
-    height: isMobile ? '100%' : '100%',
-    zIndex: isMobile ? 1001 : 'auto',
-    transition: 'left 0.3s ease',
-    overflow: 'auto'
-  }
+    position: isMobile ? "fixed" : "relative",
+    left: isMobile && !mobileOpen ? "-256px" : "0",
+    top: isMobile ? "0" : "0",
+    height: isMobile ? "100%" : "100%",
+    zIndex: isMobile ? 1001 : "auto",
+    transition: "left 0.3s ease",
+    overflow: "auto",
+  };
 
   const contentStyle = {
-    padding: '24px',
-    background: '#f5f5f5',
-    minHeight: '100%',
-    overflow: 'auto'
-  }
+    padding: "24px",
+    background: "#f5f5f5",
+    minHeight: "100%",
+    overflow: "auto",
+  };
 
   const overlayStyle = {
-    position: 'fixed',
-    top: '64px',
+    position: "fixed",
+    top: "64px",
     left: 0,
     right: 0,
     bottom: 0,
-    background: 'rgba(0, 0, 0, 0.5)',
+    background: "rgba(0, 0, 0, 0.5)",
     zIndex: 1000,
-    display: isMobile && mobileOpen ? 'block' : 'none'
-  }
+    display: isMobile && mobileOpen ? "block" : "none",
+  };
 
   const siderHeaderStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '64px',
-    background: '#ffffff',
-    color: '#1890ff',
-    fontSize: '18px',
-    fontWeight: 'bold',
-    borderBottom: '1px solid #f0f0f0'
-  }
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "64px",
+    background: "#ffffff",
+    color: "#1890ff",
+    fontSize: "18px",
+    fontWeight: "bold",
+    borderBottom: "1px solid #f0f0f0",
+  };
 
   const languageSwitchStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  }
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  };
 
   const userInfoStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    cursor: 'pointer'
-  }
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+  };
 
   const mobileMenuButtonStyle = {
-    border: 'none',
-    background: 'transparent',
-    fontSize: '18px',
-    cursor: 'pointer',
-    padding: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  }
+    border: "none",
+    background: "transparent",
+    fontSize: "18px",
+    cursor: "pointer",
+    padding: "8px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  };
 
   return (
     <Layout style={layoutStyle}>
@@ -381,7 +546,7 @@ const AdminLayout = ({ children }) => {
       <Header style={headerStyle}>
         <div style={headerLeftStyle}>
           {isMobile ? (
-            <button 
+            <button
               style={mobileMenuButtonStyle}
               onClick={toggleMobileMenu}
               aria-label="Toggle menu"
@@ -396,15 +561,13 @@ const AdminLayout = ({ children }) => {
               size="large"
             />
           )}
-          
-          <h1 style={logoStyle}>
-            Qabalan Admin
-          </h1>
-          
+
+          <h1 style={logoStyle}>Qabalan Admin</h1>
+
           {!isMobile && (
             <Breadcrumb
               items={getBreadcrumbItems()}
-              style={{ marginLeft: '24px' }}
+              style={{ marginLeft: "24px" }}
             />
           )}
         </div>
@@ -412,13 +575,13 @@ const AdminLayout = ({ children }) => {
         <div style={headerRightStyle}>
           {/* Language Switch */}
           <div style={languageSwitchStyle}>
-            {!isMobile && <span style={{ fontSize: '14px' }}>EN</span>}
+            {!isMobile && <span style={{ fontSize: "14px" }}>EN</span>}
             <Switch
-              checked={language === 'ar'}
+              checked={language === "ar"}
               onChange={handleLanguageChange}
               size="small"
             />
-            {!isMobile && <span style={{ fontSize: '14px' }}>عربي</span>}
+            {!isMobile && <span style={{ fontSize: "14px" }}>عربي</span>}
           </div>
 
           {/* Notifications */}
@@ -427,16 +590,12 @@ const AdminLayout = ({ children }) => {
           {/* User Dropdown */}
           <Dropdown
             menu={{ items: userMenuItems }}
-            placement={isRTL ? 'bottomLeft' : 'bottomRight'}
+            placement={isRTL ? "bottomLeft" : "bottomRight"}
           >
             <div style={userInfoStyle}>
-              <Avatar 
-                size="small" 
-                icon={<UserOutlined />}
-                src={user?.avatar}
-              />
+              <Avatar size="small" icon={<UserOutlined />} src={user?.avatar} />
               {!isMobile && (
-                <span style={{ fontSize: '14px', fontWeight: 500 }}>
+                <span style={{ fontSize: "14px", fontWeight: 500 }}>
                   {user?.first_name} {user?.last_name}
                 </span>
               )}
@@ -446,22 +605,22 @@ const AdminLayout = ({ children }) => {
       </Header>
 
       {/* Main Layout with Sidebar and Content */}
-      <Layout style={{ height: 'calc(100vh - 64px)' }}>
+      <Layout style={{ height: "calc(100vh - 64px)" }}>
         {/* Sidebar */}
-        <Sider 
-          trigger={null} 
-          collapsible 
+        <Sider
+          trigger={null}
+          collapsible
           collapsed={!isMobile && collapsed}
           theme="light"
           style={siderStyle}
           width={256}
           collapsedWidth={isMobile ? 256 : 80}
         >
-         
           <Menu
             theme="light"
             mode="inline"
             selectedKeys={[getCurrentKey()]}
+            defaultOpenKeys={getDefaultOpenKeys()}
             items={menuItems}
             style={{ border: 0 }}
             onClick={isMobile ? closeMobileMenu : undefined}
@@ -469,12 +628,10 @@ const AdminLayout = ({ children }) => {
         </Sider>
 
         {/* Content */}
-        <Content style={contentStyle}>
-          {children}
-        </Content>
+        <Content style={contentStyle}>{children}</Content>
       </Layout>
     </Layout>
-  )
-}
+  );
+};
 
-export default AdminLayout
+export default AdminLayout;

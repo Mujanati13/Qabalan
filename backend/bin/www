@@ -108,4 +108,10 @@ function onListening() {
     : 'port ' + addr.port;
   console.log('🚀 Server listening on ' + bind);
   debug('Listening on ' + bind);
+  
+  // Initialize global disable scheduler after server starts
+  const globalDisableScheduler = require('../services/globalDisableScheduler');
+  globalDisableScheduler.initialize().catch(error => {
+    console.error('Failed to initialize global disable scheduler:', error);
+  });
 }

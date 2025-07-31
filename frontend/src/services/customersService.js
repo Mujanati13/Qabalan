@@ -81,6 +81,16 @@ const customersService = {
     }
   },
 
+  // Deactivate customer
+  deactivateCustomer: async (id) => {
+    try {
+      const response = await api.post(`/users/${id}/deactivate`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to deactivate customer');
+    }
+  },
+
   // Get customer orders
   getCustomerOrders: async (id, params = {}) => {
     try {

@@ -38,6 +38,8 @@ import dayjs from 'dayjs';
 import { useLanguage } from '../contexts/LanguageContext';
 import invoiceService from '../services/invoiceService';
 import orderService from '../services/orderService';
+import ExportButton from '../components/common/ExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
@@ -45,6 +47,7 @@ const { RangePicker } = DatePicker;
 
 const InvoiceManagement = () => {
   const { t } = useLanguage();
+  const { getInvoicesExportConfig } = useExportConfig();
   const [orders, setOrders] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -296,7 +299,7 @@ const InvoiceManagement = () => {
     {
       title: t('invoices.actions'),
       key: 'actions',
-      width: 140,
+      width: 120,
       render: (_, record) => (
         <Space size="small">
           <Tooltip title={t('invoices.preview_tooltip')}>
@@ -307,15 +310,28 @@ const InvoiceManagement = () => {
               onClick={() => handlePreviewInvoice(record.id)}
             />
           </Tooltip>
-          <Tooltip title={t('invoices.download_tooltip')}>
+          <Dropdown
+            overlay={
+              <Menu>
+                <Menu.Item 
+                  key="download_pdf" 
+                  icon={<FilePdfOutlined />}
+                  onClick={() => handleGeneratePDF(record.id)}
+                  disabled={pdfLoading[record.id]}
+                >
+                  {pdfLoading[record.id] ? t('invoices.generating') : t('invoices.download_pdf')}
+                </Menu.Item>
+              </Menu>
+            }
+            trigger={['click']}
+          >
             <Button
               type="text"
               size="small"
-              icon={<FilePdfOutlined />}
+              icon={<MoreOutlined />}
               loading={pdfLoading[record.id]}
-              onClick={() => handleGeneratePDF(record.id)}
             />
-          </Tooltip>
+          </Dropdown>
         </Space>
       ),
     },
@@ -416,32 +432,23 @@ const InvoiceManagement = () => {
           </Col>
           <Col xs={24} lg={8}>
             <Space wrap style={{ width: '100%', justifyContent: 'flex-start' }}>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => {
-                  fetchOrders();
-                  fetchStatistics();
-                }}
-                loading={loading}
-                title={t('invoices.refresh')}
-              >
-                {t('invoices.refresh')}
-              </Button>
-              
               <Dropdown
                 overlay={
                   <Menu>
                     <Menu.Item 
-                      key="excel"
-                      icon={<FileExcelOutlined />}
-                      onClick={handleExportExcel}
-                      disabled={exportLoading}
+                      key="refresh" 
+                      icon={<ReloadOutlined />}
+                      onClick={() => {
+                        fetchOrders();
+                        fetchStatistics();
+                      }}
+                      disabled={loading}
                     >
-                      {t('invoices.export_excel')}
+                      {t('invoices.refresh')}
                     </Menu.Item>
                     <Menu.Divider />
                     <Menu.Item 
-                      key="clear"
+                      key="clear_filters" 
                       icon={<FilterOutlined />}
                       onClick={() => {
                         setFilters({
@@ -458,16 +465,19 @@ const InvoiceManagement = () => {
                   </Menu>
                 }
                 trigger={['click']}
-                placement="bottomRight"
               >
-                <Button 
-                  type="primary" 
+                <Button
                   icon={<MoreOutlined />}
-                  loading={exportLoading}
+                  loading={loading}
                 >
-                  {t('invoices.actions')} <DownloadOutlined />
+                  {t('common.actions')}
                 </Button>
               </Dropdown>
+              
+              <ExportButton
+                {...getInvoicesExportConfig(orders, orderColumns)}
+                showFormats={['csv', 'excel', 'pdf']}
+              />
             </Space>
           </Col>
         </Row>

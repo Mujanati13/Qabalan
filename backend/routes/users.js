@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { executeQuery, executeTransaction, getPaginatedResults } = require('../config/database');
 const { authenticate, authorize } = require('../middleware/auth');
-const { validateId, validatePagination, validatePasswordChange, validateUserFilters } = require('../middleware/validation');
+const { validateId, validatePagination, validatePasswordChange, validateUserFilters, validateUserCreation } = require('../middleware/validation');
 
 const router = express.Router();
 
@@ -50,9 +50,7 @@ const validateUserData = (req, res, next) => {
   if (email !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errors.push('Valid email is required');
   }
-  if (phone !== undefined && phone && !/^\+?[1-9]\d{1,14}$/.test(phone.replace(/\s/g, ''))) {
-    errors.push('Valid phone number is required');
-  }
+  // Phone validation removed - accepting any phone format
   if (user_type !== undefined && !['customer', 'admin', 'staff'].includes(user_type)) {
     errors.push('User type must be customer, admin, or staff');
   }
@@ -413,7 +411,7 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
  * @desc    Create new user (Admin/Staff only)
  * @access  Private (Admin/Staff)
  */
-router.post('/', authenticate, authorize('admin', 'staff'), validateUserData, validatePassword, async (req, res, next) => {
+router.post('/', authenticate, authorize('admin', 'staff'), async (req, res, next) => {
   try {
     const {
       first_name,
@@ -441,11 +439,14 @@ router.post('/', authenticate, authorize('admin', 'staff'), validateUserData, va
       });
     }
 
+    // Generate default password if none provided (for customer creation from admin)
+    const userPassword = password || `temp${Math.random().toString(36).slice(-8)}`;
+
     // Hash password
-    const passwordHash = await bcrypt.hash(password, 12);
+    const passwordHash = await bcrypt.hash(userPassword, 12);
 
     // Create user
-    const [result] = await executeQuery(`
+    const result = await executeQuery(`
       INSERT INTO users (
         first_name, last_name, email, phone, password_hash, user_type,
         birth_date, avatar, is_verified, is_active, notification_promo, notification_orders,
@@ -816,6 +817,49 @@ router.post('/:id/activate', authenticate, authorize('admin', 'staff'), validate
       success: true,
       message: 'User activated successfully',
       message_ar: 'تم تفعيل المستخدم بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/users/:id/deactivate
+ * @desc    Deactivate user (Admin/Staff only)
+ * @access  Private (Admin/Staff)
+ */
+router.post('/:id/deactivate', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+
+    // Check if user exists
+    const [user] = await executeQuery('SELECT id, is_active FROM users WHERE id = ?', [userId]);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        message_ar: 'المستخدم غير موجود'
+      });
+    }
+
+    if (!user.is_active) {
+      return res.status(400).json({
+        success: false,
+        message: 'User is already inactive',
+        message_ar: 'المستخدم غير مفعل مسبقاً'
+      });
+    }
+
+    // Deactivate user
+    await executeQuery(`
+      UPDATE users SET is_active = 0, updated_at = NOW() WHERE id = ?
+    `, [userId]);
+
+    res.json({
+      success: true,
+      message: 'User deactivated successfully',
+      message_ar: 'تم إلغاء تفعيل المستخدم بنجاح'
     });
 
   } catch (error) {

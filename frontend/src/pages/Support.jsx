@@ -24,7 +24,12 @@ import {
   Drawer,
   Typography,
   Progress,
-  Alert
+  Alert,
+  Menu,
+  Dropdown,
+  DatePicker,
+  Switch,
+  Checkbox
 } from 'antd';
 import {
   PlusOutlined,
@@ -49,18 +54,25 @@ import {
   SmileOutlined,
   EllipsisOutlined,
   FilterOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  MoreOutlined,
+  CalendarOutlined
 } from '@ant-design/icons';
 import supportService from '../services/supportService';
 import { useTranslation } from 'react-i18next';
+import ExportButton from '../components/common/ExportButton';
+import EnhancedExportButton from '../components/common/EnhancedExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
 
 const { TabPane } = Tabs;
 const { TextArea } = Input;
 const { Option } = Select;
 const { Title, Text, Paragraph } = Typography;
+const { RangePicker } = DatePicker;
 
 const Support = () => {
   const { t } = useTranslation();
+  const { getSupportTicketsExportConfig, getFeedbackExportConfig } = useExportConfig();
   const [loading, setLoading] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [feedback, setFeedback] = useState([]);
@@ -70,6 +82,11 @@ const Support = () => {
   const [replyVisible, setReplyVisible] = useState(false);
   const [feedbackVisible, setFeedbackVisible] = useState(false);
   const [selectedFeedback, setSelectedFeedback] = useState(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [lastError, setLastError] = useState(null);
+  const [replyLoading, setReplyLoading] = useState(false);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [statusUpdateLoading, setStatusUpdateLoading] = useState({});
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 20,
@@ -79,12 +96,66 @@ const Support = () => {
     status: '',
     priority: '',
     category: '',
-    search: ''
+    search: '',
+    date_from: '',
+    date_to: ''
   });
   const [activeTab, setActiveTab] = useState('tickets');
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(null);
   const [form] = Form.useForm();
   const [replyForm] = Form.useForm();
   const [feedbackForm] = Form.useForm();
+  const [quickReplyTemplates] = useState([
+    {
+      id: 1,
+      title: 'Order Status Update',
+      message: 'Thank you for contacting us. We have updated your order status and you should receive a notification shortly. If you have any other questions, please feel free to ask.'
+    },
+    {
+      id: 2,
+      title: 'Refund Process',
+      message: 'We understand your concern and have initiated the refund process. The refund will be processed within 3-5 business days and will appear in your original payment method.'
+    },
+    {
+      id: 3,
+      title: 'Delivery Delay',
+      message: 'We apologize for the delay in your order delivery. Due to unforeseen circumstances, there has been a slight delay. We expect your order to be delivered within the next 2-3 business days.'
+    },
+    {
+      id: 4,
+      title: 'Order Modification',
+      message: 'We have processed your order modification request. The changes have been updated in our system and you will receive a confirmation email shortly.'
+    },
+    {
+      id: 5,
+      title: 'General Support',
+      message: 'Thank you for reaching out to us. We have reviewed your inquiry and our team will get back to you with a detailed response within 24 hours.'
+    }
+  ]);
+
+  // Retry mechanism for failed requests
+  const handleRetry = async (retryFunction, maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await retryFunction();
+        setRetryCount(0);
+        setLastError(null);
+        return;
+      } catch (error) {
+        console.error(`Attempt ${attempt} failed:`, error);
+        
+        if (attempt === maxRetries) {
+          setRetryCount(attempt);
+          setLastError(error);
+          throw error;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+      }
+    }
+  };
 
   useEffect(() => {
     if (activeTab === 'tickets') {
@@ -95,6 +166,26 @@ const Support = () => {
       fetchStatistics();
     }
   }, [activeTab, pagination.current, pagination.pageSize, filters]);
+
+  // Auto-refresh effect
+  useEffect(() => {
+    if (autoRefresh && ticketDetailsVisible && selectedTicket) {
+      const interval = setInterval(() => {
+        handleTicketDetails({ id: selectedTicket.ticket.id });
+      }, 30000); // Refresh every 30 seconds
+      
+      setRefreshInterval(interval);
+      
+      return () => {
+        if (interval) {
+          clearInterval(interval);
+        }
+      };
+    } else if (refreshInterval) {
+      clearInterval(refreshInterval);
+      setRefreshInterval(null);
+    }
+  }, [autoRefresh, ticketDetailsVisible, selectedTicket]);
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -116,9 +207,82 @@ const Support = () => {
         total: response.pagination.total
       }));
     } catch (error) {
-      message.error('Failed to fetch tickets');
+      console.error('Error fetching tickets:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Failed to load tickets:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to fetch tickets');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to fetch tickets');
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAllFilteredTickets = async () => {
+    try {
+      const params = {
+        limit: 10000, // Get all tickets
+        ...filters
+      };
+      
+      Object.keys(params).forEach(key => {
+        if (!params[key]) delete params[key];
+      });
+
+      const response = await supportService.getAdminTickets(params);
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching tickets for export:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Export failed:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to fetch tickets for export');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to fetch tickets for export');
+      }
+      return [];
     }
   };
 
@@ -137,7 +301,34 @@ const Support = () => {
         total: response.pagination.total
       }));
     } catch (error) {
-      message.error('Failed to fetch feedback');
+      console.error('Error fetching feedback:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Failed to load feedback:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to fetch feedback');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to fetch feedback');
+      }
     } finally {
       setLoading(false);
     }
@@ -149,7 +340,34 @@ const Support = () => {
       const response = await supportService.getSupportStatistics();
       setStatistics(response.data);
     } catch (error) {
-      message.error('Failed to fetch statistics');
+      console.error('Error fetching statistics:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Failed to load statistics:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to fetch statistics');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to fetch statistics');
+      }
     } finally {
       setLoading(false);
     }
@@ -161,12 +379,44 @@ const Support = () => {
       setSelectedTicket(response.data);
       setTicketDetailsVisible(true);
     } catch (error) {
-      message.error('Failed to fetch ticket details');
+      console.error('Error fetching ticket details:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Failed to load ticket details:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else if (error.response.status === 404) {
+          message.error('Ticket not found or has been deleted');
+        } else if (error.response.status === 403) {
+          message.error('You do not have permission to view this ticket');
+        } else {
+          message.error(errorMessage || error.message || 'Failed to fetch ticket details');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to fetch ticket details');
+      }
     }
   };
 
   const handleStatusUpdate = async (ticketId, status) => {
     try {
+      setStatusUpdateLoading(prev => ({ ...prev, [ticketId]: true }));
       await supportService.updateTicketStatus(ticketId, status);
       message.success('Ticket status updated successfully');
       fetchTickets();
@@ -174,16 +424,114 @@ const Support = () => {
         handleTicketDetails({ id: ticketId });
       }
     } catch (error) {
-      message.error('Failed to update ticket status');
+      console.error('Error updating ticket status:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>Failed to update status:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else if (error.response.status === 404) {
+          message.error('Ticket not found or has been deleted');
+        } else if (error.response.status === 403) {
+          message.error('You do not have permission to update this ticket');
+        } else if (error.response.status === 409) {
+          message.error('Cannot update ticket status due to a conflict. Please refresh and try again.');
+        } else {
+          message.error(errorMessage || error.message || 'Failed to update ticket status');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to update ticket status');
+      }
+    } finally {
+      setStatusUpdateLoading(prev => ({ ...prev, [ticketId]: false }));
     }
+  };
+
+  const handleExportWithFilters = async () => {
+    try {
+      message.loading('Preparing export data...', 0);
+      const allTickets = await fetchAllFilteredTickets();
+      message.destroy();
+      
+      if (allTickets.length === 0) {
+        message.warning('No tickets found matching current filters');
+        return;
+      }
+
+      // Get export config with all filtered data
+      const exportConfig = getSupportTicketsExportConfig(allTickets, ticketColumns);
+      
+      // Add filter info to filename
+      const filterSuffix = [];
+      if (filters.status) filterSuffix.push(`status-${filters.status}`);
+      if (filters.priority) filterSuffix.push(`priority-${filters.priority}`);
+      if (filters.category) filterSuffix.push(`category-${filters.category}`);
+      if (filters.date_from || filters.date_to) filterSuffix.push('date-filtered');
+      
+      const enhancedConfig = {
+        ...exportConfig,
+        filename: filterSuffix.length > 0 
+          ? `${exportConfig.filename}-${filterSuffix.join('-')}` 
+          : exportConfig.filename,
+        title: `${exportConfig.title} - ${allTickets.length} tickets`
+      };
+
+      return enhancedConfig;
+    } catch (error) {
+      message.destroy();
+      message.error('Failed to prepare export data');
+      throw error;
+    }
+  };
+
+  const handleDateRangeChange = (dates) => {
+    setFilters(prev => ({
+      ...prev,
+      date_from: dates?.[0]?.format('YYYY-MM-DD') || '',
+      date_to: dates?.[1]?.format('YYYY-MM-DD') || ''
+    }));
   };
 
   const handleReplySubmit = async (values) => {
     try {
-      const { message: replyMessage, is_internal_note, attachments } = values;
+      setReplyLoading(true);
+      console.log('Form values received:', values); // Debug log
+      
+      const { message: messageText, is_internal_note, attachments } = values;
+      
+      // Client-side validation
+      if (!messageText || messageText.trim().length === 0) {
+        message.error('Please enter a message before submitting');
+        return;
+      }
+      
+      if (messageText.trim().length < 1 || messageText.trim().length > 5000) {
+        message.error('Message must be between 1 and 5000 characters');
+        return;
+      }
+      
+      console.log('Sending message:', messageText); // Debug log
+      console.log('Internal note:', is_internal_note); // Debug log
+      
       await supportService.addAdminReply(
         selectedTicket.ticket.id,
-        replyMessage,
+        messageText,
         is_internal_note || false,
         attachments?.fileList?.map(file => file.originFileObj) || []
       );
@@ -193,20 +541,108 @@ const Support = () => {
       setReplyVisible(false);
       handleTicketDetails({ id: selectedTicket.ticket.id });
     } catch (error) {
-      message.error('Failed to add reply');
+      console.error('Error adding reply:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          // Handle validation errors
+          const validationErrors = errors.map(err => {
+            if (err.path === 'message') {
+              return `Message: ${err.msg}`;
+            }
+            return `${err.path}: ${err.msg}`;
+          });
+          
+          message.error({
+            content: (
+              <div>
+                <strong>Validation Failed:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {validationErrors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to add reply');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to add reply');
+      }
+    } finally {
+      setReplyLoading(false);
     }
+  };
+
+  const insertQuickReply = (template) => {
+    replyForm.setFieldsValue({
+      message: template.message
+    });
   };
 
   const handleFeedbackResponse = async (values) => {
     try {
+      setFeedbackLoading(true);
       const { response, status } = values;
+      
+      // Client-side validation
+      if (!response || response.trim().length === 0) {
+        message.error('Please enter a response before submitting');
+        return;
+      }
+      
       await supportService.respondToFeedback(selectedFeedback.id, response, status);
       message.success('Feedback response added successfully');
       feedbackForm.resetFields();
       setFeedbackVisible(false);
       fetchFeedback();
     } catch (error) {
-      message.error('Failed to respond to feedback');
+      console.error('Error responding to feedback:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          // Handle validation errors
+          const validationErrors = errors.map(err => {
+            if (err.path === 'response') {
+              return `Response: ${err.msg}`;
+            }
+            return `${err.path}: ${err.msg}`;
+          });
+          
+          message.error({
+            content: (
+              <div>
+                <strong>Validation Failed:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {validationErrors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to respond to feedback');
+        }
+      } else if (error.code === 'NETWORK_ERROR') {
+        message.error('Network error. Please check your connection and try again.');
+      } else {
+        message.error(error.message || 'Failed to respond to feedback');
+      }
+    } finally {
+      setFeedbackLoading(false);
     }
   };
 
@@ -359,6 +795,7 @@ const Support = () => {
             size="small"
             value={record.status}
             style={{ width: 120 }}
+            loading={statusUpdateLoading[record.id]}
             onChange={(status) => handleStatusUpdate(record.id, status)}
           >
             <Option value="open">Open</Option>
@@ -576,6 +1013,16 @@ const Support = () => {
         onClose={() => setTicketDetailsVisible(false)}
         extra={
           <Space wrap>
+            <Tooltip title="Auto-refresh conversation every 30 seconds">
+              <Space>
+                <Text style={{ fontSize: 12 }}>Auto-refresh</Text>
+                <Switch 
+                  size="small"
+                  checked={autoRefresh}
+                  onChange={setAutoRefresh}
+                />
+              </Space>
+            </Tooltip>
             <Button
               type="primary"
               icon={<MessageOutlined />}
@@ -588,6 +1035,7 @@ const Support = () => {
               value={ticket.status}
               style={{ width: 120 }}
               size="small"
+              loading={statusUpdateLoading[ticket.id]}
               onChange={(status) => handleStatusUpdate(ticket.id, status)}
             >
               <Option value="open">Open</Option>
@@ -695,11 +1143,48 @@ const Support = () => {
 
   return (
     <div style={{ padding: '16px' }}>
+      {/* Error Recovery Banner */}
+      {lastError && retryCount > 0 && (
+        <Alert
+          message="Connection Issues"
+          description={
+            <div>
+              <p>We're experiencing connectivity issues. Some features may not work properly.</p>
+              <Button 
+                size="small" 
+                type="primary"
+                onClick={() => {
+                  setLastError(null);
+                  setRetryCount(0);
+                  if (activeTab === 'tickets') {
+                    fetchTickets();
+                  } else if (activeTab === 'feedback') {
+                    fetchFeedback();
+                  } else if (activeTab === 'statistics') {
+                    fetchStatistics();
+                  }
+                }}
+              >
+                Retry Connection
+              </Button>
+            </div>
+          }
+          type="warning"
+          showIcon
+          closable
+          onClose={() => {
+            setLastError(null);
+            setRetryCount(0);
+          }}
+          style={{ marginBottom: 16 }}
+        />
+      )}
+
       <Tabs activeKey={activeTab} onChange={setActiveTab}>
         <TabPane tab="Support Tickets" key="tickets">
           <Card>
             <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-              <Col xs={24} md={12} lg={8}>
+              <Col xs={24} md={12} lg={6}>
                 <Input.Search
                   placeholder="Search tickets..."
                   allowClear
@@ -735,14 +1220,73 @@ const Support = () => {
                   <Option value="urgent">Urgent</Option>
                 </Select>
               </Col>
-              <Col xs={24} sm={8} md={6} lg={4}>
-                <Button 
-                  icon={<ReloadOutlined />} 
-                  onClick={fetchTickets}
+              <Col xs={12} sm={8} md={6} lg={4}>
+                <Select
+                  placeholder="Category"
+                  allowClear
                   style={{ width: '100%' }}
+                  value={filters.category || undefined}
+                  onChange={(value) => setFilters(prev => ({ ...prev, category: value }))}
                 >
-                  Refresh
-                </Button>
+                  <Option value="complaint">Complaint</Option>
+                  <Option value="inquiry">Inquiry</Option>
+                  <Option value="order_modification">Order Modification</Option>
+                </Select>
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={6}>
+                <RangePicker
+                  style={{ width: '100%' }}
+                  placeholder={['Start Date', 'End Date']}
+                  onChange={handleDateRangeChange}
+                  format="YYYY-MM-DD"
+                />
+              </Col>
+            </Row>
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+              <Col xs={24} md={12} lg={8}>
+                <Space>
+                  <Button 
+                    icon={<FilterOutlined />} 
+                    onClick={() => setFilters({
+                      status: '',
+                      priority: '',
+                      category: '',
+                      search: '',
+                      date_from: '',
+                      date_to: ''
+                    })}
+                  >
+                    Clear Filters
+                  </Button>
+                  <Button 
+                    icon={<ReloadOutlined />} 
+                    onClick={fetchTickets}
+                  >
+                    Refresh
+                  </Button>
+                </Space>
+              </Col>
+              <Col xs={24} md={12} lg={16}>
+                <div style={{ textAlign: 'right' }}>
+                  <Space>
+                    <EnhancedExportButton
+                      onDataFetch={fetchAllFilteredTickets}
+                      columns={ticketColumns}
+                      baseFilename="support-tickets"
+                      title="Support Tickets"
+                      currentFilters={filters}
+                      totalCount={pagination.total}
+                      customPDFConfig={getSupportTicketsExportConfig([], ticketColumns).customPDFConfig}
+                      showFormats={['csv', 'excel', 'pdf']}
+                    />
+                    <Button 
+                      icon={<ReloadOutlined />} 
+                      onClick={fetchTickets}
+                    >
+                      Refresh
+                    </Button>
+                  </Space>
+                </div>
               </Col>
             </Row>
 
@@ -779,12 +1323,32 @@ const Support = () => {
                 <Title level={4} style={{ margin: 0 }}>Customer Feedback</Title>
               </Col>
               <Col xs={24} md={12} style={{ textAlign: 'right' }}>
-                <Button 
-                  icon={<ReloadOutlined />} 
-                  onClick={fetchFeedback}
-                >
-                  Refresh
-                </Button>
+                <Space.Compact>
+                  <ExportButton
+                    {...getFeedbackExportConfig(feedback, feedbackColumns)}
+                    showFormats={['csv', 'excel', 'pdf']}
+                  />
+                  <Dropdown
+                    overlay={
+                      <Menu>
+                        <Menu.Item 
+                          key="refresh" 
+                          icon={<ReloadOutlined />}
+                          onClick={fetchFeedback}
+                        >
+                          Refresh
+                        </Menu.Item>
+                      </Menu>
+                    }
+                    trigger={['click']}
+                  >
+                    <Button
+                      icon={<MoreOutlined />}
+                    >
+                      Actions
+                    </Button>
+                  </Dropdown>
+                </Space.Compact>
               </Col>
             </Row>
 
@@ -827,9 +1391,44 @@ const Support = () => {
         open={replyVisible}
         onCancel={() => setReplyVisible(false)}
         footer={null}
+      
         width="90%"
-        style={{ maxWidth: 600 }}
+        style={{ maxWidth: 800 }}
       >
+        {/* Quick Reply Templates */}
+        <Card 
+          title="Quick Reply Templates" 
+          size="small" 
+          style={{ marginBottom: 16 }}
+          extra={
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              Click any template to insert into message
+            </Text>
+          }
+        >
+          <Row gutter={[8, 8]}>
+            {quickReplyTemplates.map((template) => (
+              <Col xs={24} sm={12} md={8} lg={6} key={template.id}>
+                <Button
+                  size="small"
+                  style={{ 
+                    width: '100%', 
+                    height: 'auto', 
+                    textAlign: 'left',
+                    whiteSpace: 'normal',
+                    padding: '8px 12px'
+                  }}
+                  onClick={() => insertQuickReply(template)}
+                >
+                  <Text strong style={{ fontSize: 11 }}>
+                    {template.title}
+                  </Text>
+                </Button>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+
         <Form
           form={replyForm}
           layout="vertical"
@@ -838,14 +1437,25 @@ const Support = () => {
           <Form.Item
             name="message"
             label="Message"
-            rules={[{ required: true, message: 'Please enter a message' }]}
+            rules={[
+              { required: true, message: 'Please enter a message' },
+              { min: 1, message: 'Message must be at least 1 character long' },
+              { max: 5000, message: 'Message must not exceed 5000 characters' },
+              { whitespace: true, message: 'Message cannot be empty or contain only whitespace' }
+            ]}
           >
-            <TextArea rows={4} placeholder="Enter your reply..." />
+            <TextArea 
+              rows={6} 
+              placeholder="Enter your reply..." 
+              showCount 
+              maxLength={5000}
+            />
           </Form.Item>
 
           <Form.Item name="is_internal_note" valuePropName="checked">
-            <input type="checkbox" style={{ marginRight: 8 }} />
-            <Text>Internal note (not visible to customer)</Text>
+            <Checkbox>
+              Internal note (not visible to customer)
+            </Checkbox>
           </Form.Item>
 
           <Form.Item name="attachments" label="Attachments">
@@ -860,10 +1470,10 @@ const Support = () => {
 
           <Form.Item>
             <Space wrap>
-              <Button type="primary" htmlType="submit">
+              <Button type="primary" htmlType="submit" loading={replyLoading}>
                 Send Reply
               </Button>
-              <Button onClick={() => setReplyVisible(false)}>
+              <Button onClick={() => setReplyVisible(false)} disabled={replyLoading}>
                 Cancel
               </Button>
             </Space>
@@ -913,9 +1523,19 @@ const Support = () => {
               <Form.Item
                 name="response"
                 label="Response"
-                rules={[{ required: true, message: 'Please enter a response' }]}
+                rules={[
+                  { required: true, message: 'Please enter a response' },
+                  { min: 1, message: 'Response must be at least 1 character long' },
+                  { max: 2000, message: 'Response must not exceed 2000 characters' },
+                  { whitespace: true, message: 'Response cannot be empty or contain only whitespace' }
+                ]}
               >
-                <TextArea rows={4} placeholder="Enter your response..." />
+                <TextArea 
+                  rows={4} 
+                  placeholder="Enter your response..." 
+                  showCount 
+                  maxLength={2000}
+                />
               </Form.Item>
 
               <Form.Item name="status" label="Status">
@@ -928,10 +1548,10 @@ const Support = () => {
 
               <Form.Item>
                 <Space wrap>
-                  <Button type="primary" htmlType="submit">
+                  <Button type="primary" htmlType="submit" loading={feedbackLoading}>
                     Send Response
                   </Button>
-                  <Button onClick={() => setFeedbackVisible(false)}>
+                  <Button onClick={() => setFeedbackVisible(false)} disabled={feedbackLoading}>
                     Cancel
                   </Button>
                 </Space>

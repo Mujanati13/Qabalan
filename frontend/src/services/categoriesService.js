@@ -43,7 +43,8 @@ const categoriesService = {
       const response = await api.post('/categories', categoryData, config);
       return response.data;
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to create category');
+      // Preserve the original error response for detailed error handling
+      throw error;
     }
   },
 
@@ -57,7 +58,8 @@ const categoriesService = {
       const response = await api.put(`/categories/${id}`, categoryData, config);
       return response.data;
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to update category');
+      // Preserve the original error response for detailed error handling
+      throw error;
     }
   },
 

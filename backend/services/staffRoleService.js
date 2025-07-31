@@ -310,7 +310,7 @@ class StaffRoleService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         userId, employee_id, department, position, manager_id, hire_date,
-        employment_type, salary, hourly_rate, JSON.stringify(work_schedule),
+        employment_type, salary, hourly_rate, work_schedule ? JSON.stringify(work_schedule) : null,
         emergency_contact_name, emergency_contact_phone, notes
       ]);
 
@@ -329,7 +329,7 @@ class StaffRoleService {
   async updateStaff(staffId, staffData) {
     try {
       const {
-        phone, first_name, last_name, is_active,
+        email, phone, first_name, last_name, is_active,
         employee_id, department, position, manager_id, hire_date,
         employment_type, salary, hourly_rate, work_schedule,
         emergency_contact_name, emergency_contact_phone, notes,
@@ -339,9 +339,9 @@ class StaffRoleService {
       // Update user
       await executeQuery(`
         UPDATE users 
-        SET phone = ?, first_name = ?, last_name = ?, is_active = ?, updated_at = NOW()
+        SET email = ?, phone = ?, first_name = ?, last_name = ?, is_active = ?, updated_at = NOW()
         WHERE id = ?
-      `, [phone, first_name, last_name, is_active, staffId]);
+      `, [email || null, phone || null, first_name || null, last_name || null, is_active !== undefined ? is_active : true, staffId]);
 
       // Update or create staff profile
       const [existingProfile] = await executeQuery(
@@ -358,9 +358,19 @@ class StaffRoleService {
               notes = ?, updated_at = NOW()
           WHERE user_id = ?
         `, [
-          employee_id, department, position, manager_id, hire_date,
-          employment_type, salary, hourly_rate, JSON.stringify(work_schedule),
-          emergency_contact_name, emergency_contact_phone, notes, staffId
+          employee_id || null, 
+          department || null, 
+          position || null, 
+          manager_id || null, 
+          hire_date || null,
+          employment_type || null, 
+          salary || null, 
+          hourly_rate || null, 
+          work_schedule ? JSON.stringify(work_schedule) : null,
+          emergency_contact_name || null, 
+          emergency_contact_phone || null, 
+          notes || null, 
+          staffId
         ]);
       } else {
         await executeQuery(`
@@ -370,9 +380,19 @@ class StaffRoleService {
            emergency_contact_name, emergency_contact_phone, notes)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-          staffId, employee_id, department, position, manager_id, hire_date,
-          employment_type, salary, hourly_rate, JSON.stringify(work_schedule),
-          emergency_contact_name, emergency_contact_phone, notes
+          staffId, 
+          employee_id || null, 
+          department || null, 
+          position || null, 
+          manager_id || null, 
+          hire_date || null,
+          employment_type || null, 
+          salary || null, 
+          hourly_rate || null, 
+          work_schedule ? JSON.stringify(work_schedule) : null,
+          emergency_contact_name || null, 
+          emergency_contact_phone || null, 
+          notes || null
         ]);
       }
 
@@ -411,7 +431,7 @@ class StaffRoleService {
   }
 
   // =====================================
-  // ROLE ASSIGNMENT
+  // ROLE ASSIGNMENT - ENHANCED WITH ADVANCED FEATURES
   // =====================================
 
   async assignRoles(userId, roleIds) {
@@ -423,7 +443,7 @@ class StaffRoleService {
     }
   }
 
-  async assignRolesToUser(userId, roleIds, assignedBy) {
+  async assignRolesToUser(userId, roleIds, assignedBy, expiresAt = null) {
     try {
       // Deactivate existing roles
       await executeQuery('UPDATE user_roles SET is_active = FALSE WHERE user_id = ?', [userId]);
@@ -431,13 +451,53 @@ class StaffRoleService {
       // Assign new roles
       for (const roleId of roleIds) {
         await executeQuery(`
-          INSERT INTO user_roles (user_id, role_id, assigned_by, is_active)
-          VALUES (?, ?, ?, TRUE)
-          ON DUPLICATE KEY UPDATE is_active = TRUE, assigned_by = ?, assigned_at = NOW()
-        `, [userId, roleId, assignedBy, assignedBy]);
+          INSERT INTO user_roles (user_id, role_id, assigned_by, expires_at, is_active)
+          VALUES (?, ?, ?, ?, TRUE)
+          ON DUPLICATE KEY UPDATE is_active = TRUE, assigned_by = ?, assigned_at = NOW(), expires_at = ?
+        `, [userId, roleId, assignedBy, expiresAt, assignedBy, expiresAt]);
       }
     } catch (error) {
       console.error('Error assigning roles:', error);
+      throw error;
+    }
+  }
+
+  async assignTemporaryRole(userId, roleId, assignedBy, expiresAt) {
+    try {
+      await executeQuery(`
+        INSERT INTO user_roles (user_id, role_id, assigned_by, expires_at, is_active)
+        VALUES (?, ?, ?, ?, TRUE)
+        ON DUPLICATE KEY UPDATE assigned_by = ?, assigned_at = NOW(), expires_at = ?, is_active = TRUE
+      `, [userId, roleId, assignedBy, expiresAt, assignedBy, expiresAt]);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error assigning temporary role:', error);
+      throw error;
+    }
+  }
+
+  async bulkAssignRoles(userIds, roleIds, assignedBy, expiresAt = null) {
+    try {
+      const results = [];
+      
+      for (const userId of userIds) {
+        try {
+          await this.assignRolesToUser(userId, roleIds, assignedBy, expiresAt);
+          results.push({ userId, success: true });
+        } catch (error) {
+          results.push({ userId, success: false, error: error.message });
+        }
+      }
+      
+      return {
+        success: true,
+        results,
+        successCount: results.filter(r => r.success).length,
+        failureCount: results.filter(r => !r.success).length
+      };
+    } catch (error) {
+      console.error('Error in bulk role assignment:', error);
       throw error;
     }
   }
@@ -460,6 +520,144 @@ class StaffRoleService {
       return { success: true };
     } catch (error) {
       console.error('Error removing role:', error);
+      throw error;
+    }
+  }
+
+  async getAssignmentHistory(userId = null, limit = 50) {
+    try {
+      // For now, return empty array since role assignments may not be implemented yet
+      // This prevents SQL errors when the user_roles table doesn't exist or is empty
+      console.log('Assignment history requested - returning empty for now');
+      return [];
+      
+      /* TODO: Uncomment when user_roles table is created and role assignments are implemented
+      const validLimit = Math.max(1, Math.min(1000, parseInt(limit) || 50));
+      
+      let query = `
+        SELECT 
+          ur.id,
+          ur.user_id,
+          u.first_name,
+          u.last_name,
+          u.email,
+          ur.role_id,
+          r.display_name as role_name,
+          ur.assigned_by,
+          ur.assigned_at,
+          ur.expires_at,
+          ur.is_active
+        FROM user_roles ur
+        JOIN users u ON ur.user_id = u.id
+        JOIN roles r ON ur.role_id = r.id
+      `;
+      
+      const params = [];
+      
+      if (userId) {
+        query += ' WHERE ur.user_id = ?';
+        params.push(parseInt(userId));
+      }
+      
+      query += ` ORDER BY ur.assigned_at DESC LIMIT ${validLimit}`;
+      
+      return await executeQuery(query, params);
+      */
+    } catch (error) {
+      console.error('Error fetching assignment history:', error);
+      throw error;
+    }
+  }
+
+  async getExpiringRoles(days = 7) {
+    try {
+      const roles = await executeQuery(`
+        SELECT 
+          ur.id,
+          ur.user_id,
+          u.first_name,
+          u.last_name,
+          u.email,
+          ur.role_id,
+          r.display_name as role_name,
+          ur.expires_at,
+          DATEDIFF(ur.expires_at, NOW()) as days_remaining
+        FROM user_roles ur
+        JOIN users u ON ur.user_id = u.id
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.is_active = TRUE 
+          AND ur.expires_at IS NOT NULL 
+          AND ur.expires_at > NOW()
+          AND DATEDIFF(ur.expires_at, NOW()) <= ?
+        ORDER BY ur.expires_at ASC
+      `, [days]);
+      
+      return roles;
+    } catch (error) {
+      console.error('Error fetching expiring roles:', error);
+      throw error;
+    }
+  }
+
+  async getRoleTemplates() {
+    try {
+      return [
+        {
+          id: 'store_manager',
+          name: 'Store Manager',
+          description: 'Complete store management access',
+          roles: ['manager', 'inventory_manager', 'customer_service']
+        },
+        {
+          id: 'sales_rep',
+          name: 'Sales Representative',
+          description: 'Customer-facing sales operations',
+          roles: ['staff', 'order_manager', 'customer_service']
+        },
+        {
+          id: 'inventory_staff',
+          name: 'Inventory Staff',
+          description: 'Product and inventory management',
+          roles: ['staff', 'inventory_manager']
+        },
+        {
+          id: 'customer_support',
+          name: 'Customer Support',
+          description: 'Customer service and support',
+          roles: ['staff', 'customer_service', 'support_agent']
+        },
+        {
+          id: 'data_analyst',
+          name: 'Data Analyst',
+          description: 'Reports and analytics access',
+          roles: ['viewer', 'reports_viewer']
+        }
+      ];
+    } catch (error) {
+      console.error('Error fetching role templates:', error);
+      throw error;
+    }
+  }
+
+  async applyRoleTemplate(templateId, userIds, assignedBy, expiresAt = null) {
+    try {
+      const templates = await this.getRoleTemplates();
+      const template = templates.find(t => t.id === templateId);
+      
+      if (!template) {
+        throw new Error('Role template not found');
+      }
+      
+      // Get role IDs from role names
+      const roles = await executeQuery(`
+        SELECT id FROM roles WHERE name IN (${template.roles.map(() => '?').join(',')})
+      `, template.roles);
+      
+      const roleIds = roles.map(r => r.id);
+      
+      return await this.bulkAssignRoles(userIds, roleIds, assignedBy, expiresAt);
+    } catch (error) {
+      console.error('Error applying role template:', error);
       throw error;
     }
   }

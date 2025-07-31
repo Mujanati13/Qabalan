@@ -6,8 +6,18 @@ const { authenticate } = require('../middleware/auth');
 // Get dashboard statistics
 router.get('/stats', authenticate, async (req, res) => {
   try {
+    const { startDate, endDate } = req.query;
+    
+    // Build date filter condition
+    let dateFilter = '';
+    let dateParams = [];
+    if (startDate && endDate) {
+      dateFilter = ' AND DATE(created_at) BETWEEN ? AND ?';
+      dateParams = [startDate, endDate];
+    }
+
     // Get total orders
-    const [totalOrdersResult] = await executeQuery('SELECT COUNT(*) as total FROM orders');
+    const [totalOrdersResult] = await executeQuery(`SELECT COUNT(*) as total FROM orders WHERE 1=1${dateFilter}`, dateParams);
     const totalOrders = totalOrdersResult.total;
 
     // Get total orders this month
@@ -15,7 +25,8 @@ router.get('/stats', authenticate, async (req, res) => {
       SELECT COUNT(*) as total FROM orders 
       WHERE MONTH(created_at) = MONTH(CURRENT_DATE()) 
       AND YEAR(created_at) = YEAR(CURRENT_DATE())
-    `);
+      ${dateFilter}
+    `, dateParams);
     const thisMonthOrders = thisMonthOrdersResult.total;
 
     // Get last month orders for comparison
@@ -33,8 +44,8 @@ router.get('/stats', authenticate, async (req, res) => {
     // Get total revenue
     const [totalRevenueResult] = await executeQuery(`
       SELECT COALESCE(SUM(total_amount), 0) as total FROM orders 
-      WHERE payment_status = 'paid'
-    `);
+      WHERE payment_status = 'paid'${dateFilter}
+    `, dateParams);
     const totalRevenue = parseFloat(totalRevenueResult.total);
 
     // Get this month revenue
@@ -43,7 +54,8 @@ router.get('/stats', authenticate, async (req, res) => {
       WHERE payment_status = 'paid'
       AND MONTH(created_at) = MONTH(CURRENT_DATE()) 
       AND YEAR(created_at) = YEAR(CURRENT_DATE())
-    `);
+      ${dateFilter}
+    `, dateParams);
     const thisMonthRevenue = parseFloat(thisMonthRevenueResult.total);
 
     // Get last month revenue
@@ -60,9 +72,10 @@ router.get('/stats', authenticate, async (req, res) => {
       ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100) : 0;
 
     // Get total customers
+    const customerDateFilter = startDate && endDate ? ' AND DATE(created_at) BETWEEN ? AND ?' : '';
     const [totalCustomersResult] = await executeQuery(`
-      SELECT COUNT(*) as total FROM users WHERE user_type = 'customer'
-    `);
+      SELECT COUNT(*) as total FROM users WHERE user_type = 'customer'${customerDateFilter}
+    `, dateParams);
     const totalCustomers = totalCustomersResult.total;
 
     // Get new customers this month
@@ -96,16 +109,17 @@ router.get('/stats', authenticate, async (req, res) => {
     // Get average order value
     const [avgOrderResult] = await executeQuery(`
       SELECT COALESCE(AVG(total_amount), 0) as avg FROM orders 
-      WHERE payment_status = 'paid'
-    `);
+      WHERE payment_status = 'paid'${dateFilter}
+    `, dateParams);
     const averageOrderValue = parseFloat(avgOrderResult.avg);
 
     // Get order status distribution
     const orderStatusDistribution = await executeQuery(`
       SELECT order_status, COUNT(*) as count 
       FROM orders 
+      WHERE 1=1${dateFilter}
       GROUP BY order_status
-    `);
+    `, dateParams);
 
     res.json({
       success: true,
@@ -138,25 +152,38 @@ router.get('/stats', authenticate, async (req, res) => {
 // Get order flow data for charts
 router.get('/order-flow', authenticate, async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', startDate, endDate } = req.query;
     
     let dateFormat, intervalDays;
-    switch (period) {
-      case 'day':
-        dateFormat = '%H:00';
-        intervalDays = 1;
-        break;
-      case 'month':
-        dateFormat = '%Y-%m-%d';
-        intervalDays = 30;
-        break;
-      case 'year':
-        dateFormat = '%Y-%m';
-        intervalDays = 365;
-        break;
-      default: // week
-        dateFormat = '%Y-%m-%d';
-        intervalDays = 7;
+    let dateCondition = '';
+    let params = [];
+    
+    if (startDate && endDate) {
+      // Custom date range
+      dateCondition = 'WHERE DATE(created_at) BETWEEN ? AND ?';
+      params = [startDate, endDate];
+      dateFormat = '%Y-%m-%d';
+    } else {
+      // Predefined periods
+      switch (period) {
+        case 'day':
+          dateFormat = '%H:00';
+          intervalDays = 1;
+          break;
+        case 'month':
+          dateFormat = '%Y-%m-%d';
+          intervalDays = 30;
+          break;
+        case 'year':
+          dateFormat = '%Y-%m';
+          intervalDays = 365;
+          break;
+        default: // week
+          dateFormat = '%Y-%m-%d';
+          intervalDays = 7;
+      }
+      dateCondition = 'WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)';
+      params = [intervalDays];
     }
 
     const orderFlow = await executeQuery(`
@@ -166,10 +193,10 @@ router.get('/order-flow', authenticate, async (req, res) => {
         SUM(total_amount) as revenue,
         AVG(total_amount) as avg_order_value
       FROM orders 
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      ${dateCondition}
       GROUP BY period
       ORDER BY period ASC
-    `, [dateFormat, intervalDays]);
+    `, [dateFormat, ...params]);
 
     res.json({
       success: true,
@@ -189,21 +216,33 @@ router.get('/order-flow', authenticate, async (req, res) => {
 // Get sales data
 router.get('/sales', authenticate, async (req, res) => {
   try {
-    const { period = 'week' } = req.query;
+    const { period = 'week', startDate, endDate } = req.query;
     
-    let intervalDays;
-    switch (period) {
-      case 'day':
-        intervalDays = 1;
-        break;
-      case 'month':
-        intervalDays = 30;
-        break;
-      case 'year':
-        intervalDays = 365;
-        break;
-      default: // week
-        intervalDays = 7;
+    let dateCondition = '';
+    let params = [];
+    
+    if (startDate && endDate) {
+      // Custom date range
+      dateCondition = 'WHERE DATE(created_at) BETWEEN ? AND ?';
+      params = [startDate, endDate];
+    } else {
+      // Predefined periods
+      let intervalDays;
+      switch (period) {
+        case 'day':
+          intervalDays = 1;
+          break;
+        case 'month':
+          intervalDays = 30;
+          break;
+        case 'year':
+          intervalDays = 365;
+          break;
+        default: // week
+          intervalDays = 7;
+      }
+      dateCondition = 'WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)';
+      params = [intervalDays];
     }
 
     const salesData = await executeQuery(`
@@ -214,10 +253,10 @@ router.get('/sales', authenticate, async (req, res) => {
         SUM(CASE WHEN payment_status = 'paid' THEN total_amount ELSE 0 END) as paid_revenue,
         COUNT(CASE WHEN payment_status = 'paid' THEN 1 END) as paid_orders
       FROM orders 
-      WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+      ${dateCondition}
       GROUP BY DATE(created_at)
       ORDER BY date ASC
-    `, [intervalDays]);
+    `, params);
 
     res.json({
       success: true,
@@ -237,8 +276,18 @@ router.get('/sales', authenticate, async (req, res) => {
 // Get top products
 router.get('/top-products', authenticate, async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 10, startDate, endDate } = req.query;
     const limitValue = Math.max(1, Math.min(100, parseInt(limit) || 10)); // Ensure limit is between 1-100
+
+    let dateCondition = '';
+    let params = [];
+    
+    if (startDate && endDate) {
+      dateCondition = 'AND DATE(o.created_at) BETWEEN ? AND ?';
+      params = [startDate, endDate];
+    } else {
+      dateCondition = 'AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
+    }
 
     const topProducts = await executeQuery(`
       SELECT 
@@ -254,11 +303,11 @@ router.get('/top-products', authenticate, async (req, res) => {
       INNER JOIN order_items oi ON p.id = oi.product_id
       INNER JOIN orders o ON oi.order_id = o.id
       WHERE o.payment_status = 'paid'
-      AND o.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      ${dateCondition}
       GROUP BY p.id, p.title_en, p.title_ar, p.main_image
       ORDER BY total_revenue DESC
       LIMIT ${limitValue}
-    `);
+    `, params);
 
     res.json({
       success: true,
@@ -278,8 +327,16 @@ router.get('/top-products', authenticate, async (req, res) => {
 // Get recent orders
 router.get('/recent-orders', authenticate, async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 10, startDate, endDate } = req.query;
     const limitValue = Math.max(1, Math.min(100, parseInt(limit) || 10)); // Ensure limit is between 1-100
+
+    let dateCondition = '';
+    let params = [];
+    
+    if (startDate && endDate) {
+      dateCondition = 'WHERE DATE(o.created_at) BETWEEN ? AND ?';
+      params = [startDate, endDate];
+    }
 
     const recentOrders = await executeQuery(`
       SELECT 
@@ -296,11 +353,12 @@ router.get('/recent-orders', authenticate, async (req, res) => {
         COUNT(oi.id) as item_count
       FROM orders o
       LEFT JOIN order_items oi ON o.id = oi.order_id
+      ${dateCondition}
       GROUP BY o.id, o.order_number, o.customer_name, o.customer_email, o.customer_phone, 
                o.total_amount, o.order_status, o.payment_status, o.payment_method, o.created_at
       ORDER BY o.created_at DESC
       LIMIT ${limitValue}
-    `);
+    `, params);
 
     res.json({
       success: true,

@@ -23,15 +23,24 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       is_featured,
       min_price,
       max_price,
-      stock_status
+      stock_status,
+      include_inactive = false
     } = req.query;
 
     // Validate pagination parameters
     const validatedPage = Math.max(1, parseInt(page));
     const validatedLimit = Math.min(Math.max(1, parseInt(limit)), 100); // Max 100 items per page
 
-    let whereConditions = ['p.is_active = 1'];
+    let whereConditions = [];
     let queryParams = [];
+
+    // Only filter by active status if include_inactive is false or not provided
+    const shouldIncludeInactive = include_inactive === 'true' || include_inactive === true || include_inactive === '1';
+    console.log('Products API - include_inactive parameter:', include_inactive, 'shouldIncludeInactive:', shouldIncludeInactive);
+    
+    if (!shouldIncludeInactive) {
+      whereConditions.push('p.is_active = 1');
+    }
 
     // Category filter
     if (category_id) {
@@ -118,7 +127,7 @@ router.get('/:id', optionalAuth, validateId, async (req, res, next) => {
         ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.id = ? AND p.is_active = 1
+      WHERE p.id = ? 
     `, [req.params.id]);
 
     if (!product) {
@@ -132,7 +141,7 @@ router.get('/:id', optionalAuth, validateId, async (req, res, next) => {
     // Get product variants
     const variants = await executeQuery(`
       SELECT * FROM product_variants 
-      WHERE product_id = ? AND is_active = 1
+      WHERE product_id = ?
       ORDER BY pieces_count ASC
     `, [req.params.id]);
 

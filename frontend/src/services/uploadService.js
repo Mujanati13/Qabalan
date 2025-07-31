@@ -31,13 +31,17 @@ const uploadService = {
 
   // Get image URL helper
   getImageUrl(filename, type = 'general') {
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001'
+    // Remove /api from the base URL since uploads are served directly
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+    const baseUrl = apiUrl.replace('/api', '');
     return `${baseUrl}/uploads/${type}/${filename}`
   },
 
   // Get thumbnail URL helper
   getThumbnailUrl(filename, type = 'general') {
-    const baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3001'
+    // Remove /api from the base URL since uploads are served directly
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+    const baseUrl = apiUrl.replace('/api', '');
     return `${baseUrl}/uploads/${type}/thumbnails/${filename}`
   }
 }

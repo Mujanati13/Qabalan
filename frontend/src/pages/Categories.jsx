@@ -19,8 +19,14 @@ import {
   TreeSelect,
   Badge,
   Tooltip,
-  Upload
+  Upload,
+  InputNumber,
+  Alert,
+  Descriptions,
+  Menu,
+  Dropdown
 } from 'antd';
+import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import {
   PlusOutlined,
   EditOutlined,
@@ -29,11 +35,17 @@ import {
   EyeOutlined,
   AppstoreOutlined,
   LinkOutlined,
-  UploadOutlined
+  UploadOutlined,
+  TruckOutlined,
+  CalculatorOutlined,
+  MoreOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import categoriesService from '../services/categoriesService';
 import productsService from '../services/productsService';
+import ExportButton from '../components/common/ExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
 const API_BASE_URL = import.meta.env.VITE_API_URL
 
 const { Title, Text } = Typography;
@@ -110,6 +122,7 @@ if (typeof document !== 'undefined') {
 
 const Categories = () => {
   const { t, language } = useLanguage();
+  const { getCategoriesExportConfig } = useExportConfig();
   const [categories, setCategories] = useState([]);
   const [categoriesTree, setCategoriesTree] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -123,10 +136,59 @@ const Categories = () => {
   const [allProducts, setAllProducts] = useState([]);
   const [assignedProducts, setAssignedProducts] = useState([]);
   const [form] = Form.useForm();
+  
+  // Bulk selection states
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  
+  // Shipping-related state
+  const [categoryShippingInfo, setCategoryShippingInfo] = useState({});
+  const [loadingShippingInfo, setLoadingShippingInfo] = useState(false);
+
+  // Table sorting hook
+  const {
+    sortedData: sortedCategories,
+    getColumnSortProps
+  } = useTableSorting(categories, [
+    { key: 'created_at', direction: 'desc', comparator: (a, b, direction) => {
+      const aVal = new Date(a).getTime() || 0;
+      const bVal = new Date(b).getTime() || 0;
+      const result = aVal - bVal;
+      return direction === 'asc' ? result : -result;
+    }}
+  ]);
+
+  // Auto-generate slug from title
+  const generateSlug = (title) => {
+    if (!title) return '';
+    return title
+      .toLowerCase()
+      .replace(/[^a-z0-9\u0600-\u06FF\s]/g, '') // Allow Arabic characters
+      .replace(/\s+/g, '-')
+      .trim();
+  };
+
+  const handleTitleChange = (field, value) => {
+    form.setFieldValue(field, value);
+    
+    // Auto-generate slug if it's empty or matches previous auto-generated pattern
+    const currentSlug = form.getFieldValue('slug');
+    const currentTitleEn = form.getFieldValue('title_en');
+    const currentTitleAr = form.getFieldValue('title_ar');
+    
+    if (!currentSlug || !editingCategory) {
+      const baseTitle = field === 'title_en' ? value : (field === 'title_ar' ? value : (currentTitleEn || currentTitleAr));
+      if (baseTitle) {
+        const newSlug = generateSlug(baseTitle);
+        form.setFieldValue('slug', newSlug);
+      }
+    }
+  };
 
   useEffect(() => {
     fetchCategories();
     fetchCategoriesTree();
+    loadCategoryShippingAnalytics();
   }, [searchText, showInactive]);
 
   const fetchCategories = async () => {
@@ -151,6 +213,29 @@ const Categories = () => {
       setCategoriesTree(response.data);
     } catch (error) {
       console.error('Failed to fetch categories tree:', error);
+    }
+  };
+
+  // Load shipping analytics for categories
+  const loadCategoryShippingAnalytics = async () => {
+    try {
+      setLoadingShippingInfo(true);
+      const response = await fetch(`${API_BASE_URL}/shipping/category-analytics`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setCategoryShippingInfo(data.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading category shipping analytics:', error);
+    } finally {
+      setLoadingShippingInfo(false);
     }
   };
 
@@ -217,6 +302,18 @@ const Categories = () => {
     try {
       setLoading(true);
       
+      // Auto-generate slug if not provided
+      if (!values.slug && (values.title_en || values.title_ar)) {
+        const baseSlug = (values.title_en || values.title_ar)
+          .toLowerCase()
+          .replace(/[^a-z0-9\u0600-\u06FF\s]/g, '') // Allow Arabic characters
+          .replace(/\s+/g, '-')
+          .trim();
+        
+        // Add timestamp suffix for uniqueness
+        values.slug = `${baseSlug}-${Date.now()}`;
+      }
+      
       // Create FormData to handle file uploads
       const formData = new FormData();
       
@@ -254,7 +351,61 @@ const Categories = () => {
       fetchCategories();
       fetchCategoriesTree();
     } catch (error) {
-      message.error(error.response?.data?.message || t('errors.operation_failed'));
+      console.error('Category submission error:', error);
+      
+      // Enhanced error handling with specific messages
+      const errorData = error.response?.data;
+      const errorMessage = errorData?.message;
+      const errorMessageAr = errorData?.message_ar;
+      const suggestedSlug = errorData?.suggestedSlug;
+      
+      if (errorMessage?.includes('slug') && errorMessage?.includes('already exists')) {
+        // Show specific slug conflict error with suggestion
+        const displayMessage = language === 'ar' 
+          ? errorMessageAr || 'رابط التصنيف موجود مسبقاً. يرجى اختيار رابط مختلف.'
+          : errorMessage;
+        
+        message.error(displayMessage);
+        
+        // If there's a suggested slug, offer to use it
+        if (suggestedSlug) {
+          Modal.confirm({
+            title: language === 'ar' ? 'استخدام رابط مقترح؟' : 'Use suggested slug?',
+            content: language === 'ar' 
+              ? `هل تريد استخدام الرابط المقترح: "${suggestedSlug}"؟`
+              : `Would you like to use the suggested slug: "${suggestedSlug}"?`,
+            okText: language === 'ar' ? 'نعم، استخدم الرابط المقترح' : 'Yes, use suggested slug',
+            cancelText: language === 'ar' ? 'لا، سأختار رابط آخر' : 'No, I\'ll choose another',
+            onOk: () => {
+              form.setFieldValue('slug', suggestedSlug);
+              message.info(
+                language === 'ar' 
+                  ? 'تم تحديث الرابط. يرجى المحاولة مرة أخرى.'
+                  : 'Slug updated. Please try submitting again.'
+              );
+            }
+          });
+        }
+      } else if (errorMessage?.includes('title') && errorMessage?.includes('required')) {
+        message.error(
+          language === 'ar' 
+            ? errorMessageAr || 'يرجى إدخال عنوان واحد على الأقل (عربي أو إنجليزي)'
+            : errorMessage || 'Please enter at least one title (Arabic or English)'
+        );
+      } else if (errorMessage?.includes('Parent category')) {
+        message.error(
+          language === 'ar' 
+            ? errorMessageAr || 'التصنيف الأساسي غير صحيح أو غير موجود'
+            : errorMessage || 'Invalid or non-existent parent category'
+        );
+      } else {
+        // Show the exact server message or fallback
+        const displayMessage = language === 'ar' 
+          ? errorMessageAr || errorMessage || 'فشل في حفظ التصنيف'
+          : errorMessage || 'Failed to save category';
+        
+        message.error(displayMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -292,6 +443,118 @@ const Categories = () => {
     } catch (error) {
       message.error(error.response?.data?.message || t('errors.operation_failed'));
     }
+  };
+
+  // Bulk selection functions
+  const onSelectChange = (newSelectedRowKeys) => {
+    setSelectedRowKeys(newSelectedRowKeys);
+  };
+
+  const hasSelected = selectedRowKeys.length > 0;
+
+  const handleBulkDelete = async () => {
+    if (!hasSelected) return;
+    
+    Modal.confirm({
+      title: t('categories.bulk_delete_confirm_title'),
+      content: t('categories.bulk_delete_confirm_message', { count: selectedRowKeys.length }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => categoriesService.deleteCategory(id)));
+          message.success(t('categories.bulk_deleted_successfully', { count: selectedRowKeys.length }));
+          setSelectedRowKeys([]);
+          fetchCategories();
+          fetchCategoriesTree();
+        } catch (error) {
+          message.error(t('categories.bulk_delete_error'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkStatusUpdate = async (status) => {
+    if (!hasSelected) return;
+    
+    Modal.confirm({
+      title: t('categories.bulk_status_update_confirm_title'),
+      content: t('categories.bulk_status_update_confirm_message', { 
+        count: selectedRowKeys.length, 
+        status: status ? t('common.active') : t('common.inactive')
+      }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => 
+            categoriesService.toggleCategoryStatus(id, status)
+          ));
+          message.success(t('categories.bulk_status_updated_successfully', { 
+            count: selectedRowKeys.length 
+          }));
+          setSelectedRowKeys([]);
+          fetchCategories();
+          fetchCategoriesTree();
+        } catch (error) {
+          message.error(t('categories.bulk_status_update_error'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkExport = () => {
+    if (!hasSelected) return;
+    
+    const selectedCategories = filteredCategories.filter(category => selectedRowKeys.includes(category.id));
+    const csvData = selectedCategories.map(category => ({
+      'Category ID': category.id,
+      'Name (EN)': category.title_en,
+      'Name (AR)': category.title_ar,
+      'Description (EN)': category.description_en,
+      'Description (AR)': category.description_ar,
+      'Status': category.is_active ? 'Active' : 'Inactive',
+      'Products Count': category.products_count || 0,
+      'Created': new Date(category.created_at).toLocaleDateString()
+    }));
+    
+    const csvContent = [
+      Object.keys(csvData[0]).join(','),
+      ...csvData.map(row => Object.values(row).map(val => `"${val || ''}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `categories_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    message.success(t('categories.exported_successfully', { count: selectedRowKeys.length }));
+  };
+
+  const clearSelection = () => {
+    setSelectedRowKeys([]);
+  };
+
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: onSelectChange,
+    selections: [
+      Table.SELECTION_ALL,
+      Table.SELECTION_INVERT,
+      Table.SELECTION_NONE,
+    ],
   };
 
   const buildTreeSelectData = (treeData) => {
@@ -335,6 +598,7 @@ const Categories = () => {
       title: t('categories.title'),
       key: 'title',
       ellipsis: true,
+      ...getColumnSortProps('title_en', 'string'),
       render: (_, record) => (
         <div>
           <Text strong style={{ fontSize: { xs: '12px', md: '14px' } }}>
@@ -352,6 +616,7 @@ const Categories = () => {
       key: 'parent',
       responsive: ['lg'],
       ellipsis: true,
+      ...getColumnSortProps('parent_title_en', 'string'),
       render: (_, record) => (
         record.parent_title_ar || record.parent_title_en ? (
           <Text>{language === 'ar' ? record.parent_title_ar : record.parent_title_en}</Text>
@@ -366,6 +631,7 @@ const Categories = () => {
       key: 'products_count',
       width: 120,
       responsive: ['sm'],
+      ...getColumnSortProps('products_count', 'number'),
       render: (count) => (
         <Badge count={count} style={{ backgroundColor: '#52c41a' }} />
       )
@@ -376,6 +642,7 @@ const Categories = () => {
       key: 'sort_order',
       width: 100,
       responsive: ['md'],
+      ...getColumnSortProps('sort_order', 'number'),
       sorter: (a, b) => a.sort_order - b.sort_order
     },
     {
@@ -384,6 +651,7 @@ const Categories = () => {
       key: 'is_active',
       width: 100,
       responsive: ['sm'],
+      ...getColumnSortProps('is_active', 'number'),
       render: (isActive, record) => (
         <Switch
           checked={isActive}
@@ -391,6 +659,39 @@ const Categories = () => {
           size="small"
         />
       )
+    },
+    {
+      title: '🚚 Shipping Info',
+      key: 'shipping',
+      width: 140,
+      responsive: ['lg'],
+      render: (_, record) => {
+        const categoryShipping = categoryShippingInfo[record.id];
+        if (!categoryShipping) {
+          return <Text type="secondary">No data</Text>;
+        }
+        
+        return (
+          <Tooltip
+            title={
+              <div>
+                <div>Total Orders: {categoryShipping.total_orders || 0}</div>
+                <div>Avg Shipping: {categoryShipping.avg_shipping_cost?.toFixed(2)} JOD</div>
+                <div>Most Used Zone: {categoryShipping.most_used_zone || 'N/A'}</div>
+              </div>
+            }
+          >
+            <Space direction="vertical" size={2}>
+              <Text style={{ fontSize: '11px' }}>
+                <TruckOutlined /> {categoryShipping.total_orders || 0} orders
+              </Text>
+              <Text style={{ fontSize: '11px', color: '#52c41a' }}>
+                <CalculatorOutlined /> {categoryShipping.avg_shipping_cost?.toFixed(2) || '0.00'} JOD
+              </Text>
+            </Space>
+          </Tooltip>
+        );
+      }
     },
     {
       title: t('common.actions'),
@@ -495,7 +796,42 @@ const Categories = () => {
     <div className="categories-page">
       <Card>
         {/* Responsive Header */}
-       
+        
+        {/* Categories Shipping Analytics Summary */}
+        {categoryShippingInfo && Object.keys(categoryShippingInfo).length > 0 && (
+          <Alert
+            message="📊 Categories Shipping Overview"
+            description={
+              <Row gutter={16} style={{ marginTop: 8 }}>
+                <Col span={6}>
+                  <Text type="secondary">Active Categories:</Text><br />
+                  <Text strong>{Object.keys(categoryShippingInfo).length}</Text>
+                </Col>
+                <Col span={6}>
+                  <Text type="secondary">Total Category Orders:</Text><br />
+                  <Text strong>
+                    {Object.values(categoryShippingInfo).reduce((sum, cat) => sum + (cat.total_orders || 0), 0)}
+                  </Text>
+                </Col>
+                <Col span={6}>
+                  <Text type="secondary">Avg Category Shipping:</Text><br />
+                  <Text strong style={{ color: '#52c41a' }}>
+                    {(Object.values(categoryShippingInfo).reduce((sum, cat) => sum + (cat.avg_shipping_cost || 0), 0) / Object.keys(categoryShippingInfo).length).toFixed(2)} JOD
+                  </Text>
+                </Col>
+                <Col span={6}>
+                  <Text type="secondary">Most Popular Category:</Text><br />
+                  <Text strong>
+                    {Object.values(categoryShippingInfo).sort((a, b) => (b.total_orders || 0) - (a.total_orders || 0))[0]?.category_name || 'N/A'}
+                  </Text>
+                </Col>
+              </Row>
+            }
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
 
         {/* Responsive Filters */}
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
@@ -539,17 +875,91 @@ const Categories = () => {
               >
                 <span className="hide-on-mobile">{t('categories.add_category')}</span>
               </Button>
+              <ExportButton
+                {...getCategoriesExportConfig(categories, columns)}
+                showFormats={['csv', 'excel', 'pdf']}
+              />
+              <Dropdown
+                overlay={
+                  <Menu>
+                    <Menu.Item 
+                      key="refresh" 
+                      icon={<ReloadOutlined />}
+                      onClick={() => window.location.reload()}
+                    >
+                      {t('common.refresh')}
+                    </Menu.Item>
+                  </Menu>
+                }
+                trigger={['click']}
+              >
+                <Button
+                  icon={<MoreOutlined />}
+                  size={{ xs: 'small', md: 'large' }}
+                >
+                  {t('common.actions')}
+                </Button>
+              </Dropdown>
             </Space>
         </Row>
 
+        {/* Bulk Actions */}
+        {hasSelected && (
+          <div style={{ marginBottom: 16, padding: 16, backgroundColor: '#f0f2f5', borderRadius: 6 }}>
+            <Row justify="space-between" align="middle">
+              <Col>
+                <Space>
+                  <span>{t('categories.selected_count', { count: selectedRowKeys.length })}</span>
+                  <Button size="small" onClick={clearSelection}>
+                    {t('common.clear_selection')}
+                  </Button>
+                </Space>
+              </Col>
+              <Col>
+                <Space>
+                  <Button 
+                    onClick={() => handleBulkStatusUpdate(true)}
+                    disabled={bulkActionLoading}
+                  >
+                    {t('categories.bulk_activate')}
+                  </Button>
+                  <Button 
+                    onClick={() => handleBulkStatusUpdate(false)}
+                    disabled={bulkActionLoading}
+                  >
+                    {t('categories.bulk_deactivate')}
+                  </Button>
+                  <Button 
+                    onClick={handleBulkExport}
+                    disabled={bulkActionLoading}
+                    icon={<UploadOutlined />}
+                  >
+                    {t('common.export')}
+                  </Button>
+                  <Button 
+                    danger
+                    onClick={handleBulkDelete}
+                    loading={bulkActionLoading}
+                    icon={<DeleteOutlined />}
+                  >
+                    {t('common.delete')}
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+          </div>
+        )}
+
         {/* Responsive Table */}
         <Table
+          rowSelection={rowSelection}
           columns={columns}
-          dataSource={categories}
+          dataSource={sortedCategories}
           rowKey="id"
           loading={loading}
+          onChange={() => {}} // Disable default sorting
           pagination={{
-            total: categories.length,
+            total: sortedCategories.length,
             pageSize: 10,
             showSizeChanger: true,
             showQuickJumper: true,
@@ -591,18 +1001,24 @@ const Categories = () => {
               <Form.Item
                 name="title_ar"
                 label={t('categories.title_ar')}
-                rules={[{ required: true, message: t('categories.title_ar_required') }]}
+                rules={[{ required: !editingCategory, message: t('categories.title_ar_required') }]}
               >
-                <Input placeholder={t('categories.title_ar_placeholder')} />
+                <Input 
+                  placeholder={t('categories.title_ar_placeholder')} 
+                  onChange={(e) => handleTitleChange('title_ar', e.target.value)}
+                />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item
                 name="title_en"
                 label={t('categories.title_en')}
-                rules={[{ required: true, message: t('categories.title_en_required') }]}
+                rules={[{ required: !editingCategory, message: t('categories.title_en_required') }]}
               >
-                <Input placeholder={t('categories.title_en_placeholder')} />
+                <Input 
+                  placeholder={t('categories.title_en_placeholder')} 
+                  onChange={(e) => handleTitleChange('title_en', e.target.value)}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -657,8 +1073,23 @@ const Categories = () => {
               <Form.Item
                 name="slug"
                 label={t('categories.slug')}
+                help={t('categories.slug_auto_generated')}
+                rules={[
+                  {
+                    pattern: /^[a-z0-9\u0600-\u06FF-]+$/,
+                    message: language === 'ar' ? 'الرابط يجب أن يحتوي على أحرف صغيرة وأرقام وشرطات فقط' : 'Slug must contain only lowercase letters, numbers, and hyphens'
+                  }
+                ]}
               >
-                <Input placeholder={t('categories.slug_placeholder')} />
+                <Input 
+                  placeholder={t('categories.slug_placeholder')} 
+                  onChange={(e) => {
+                    const value = e.target.value.toLowerCase()
+                      .replace(/[^a-z0-9\u0600-\u06FF\s-]/g, '')
+                      .replace(/\s+/g, '-');
+                    form.setFieldValue('slug', value);
+                  }}
+                />
               </Form.Item>
             </Col>
           </Row>

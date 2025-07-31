@@ -123,13 +123,20 @@ class SupportService {
   // Add admin reply
   async addAdminReply(ticketId, message, isInternalNote = false, attachments = []) {
     try {
+      console.log('Service - Adding admin reply:', { ticketId, message, isInternalNote, attachments: attachments.length }); // Debug log
+      
       const formData = new FormData();
       formData.append('message', message);
-      formData.append('is_internal_note', isInternalNote);
+      formData.append('is_internal_note', isInternalNote.toString());
 
       attachments.forEach(file => {
         formData.append('attachments', file);
       });
+
+      // Debug: Log FormData contents
+      for (let [key, value] of formData.entries()) {
+        console.log(`FormData ${key}:`, value);
+      }
 
       const response = await api.post(`/support/admin/tickets/${ticketId}/replies`, formData, {
         headers: {

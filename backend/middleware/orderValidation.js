@@ -113,12 +113,31 @@ const validateOrderType = (req, res, next) => {
   }
 
   // Validate delivery address for delivery orders
-  if (order_type === 'delivery' && !delivery_address_id) {
-    return res.status(400).json({
-      success: false,
-      message: 'Delivery address is required for delivery orders',
-      message_ar: 'عنوان التوصيل مطلوب لطلبات التوصيل'
-    });
+  if (order_type === 'delivery') {
+    const { is_guest, guest_delivery_address } = req.body;
+    const isGuestOrder = is_guest || !req.user;
+    
+    if (isGuestOrder) {
+      // For guest orders, require guest_delivery_address (can be string or object)
+      if (!guest_delivery_address || 
+          (typeof guest_delivery_address === 'string' && !guest_delivery_address.trim()) ||
+          (typeof guest_delivery_address === 'object' && (!guest_delivery_address.address || !guest_delivery_address.address.trim()))) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery address is required for delivery orders',
+          message_ar: 'عنوان التوصيل مطلوب لطلبات التوصيل'
+        });
+      }
+    } else {
+      // For authenticated users, require delivery_address_id
+      if (!delivery_address_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery address is required for delivery orders',
+          message_ar: 'عنوان التوصيل مطلوب لطلبات التوصيل'
+        });
+      }
+    }
   }
 
   next();

@@ -7,7 +7,12 @@ const branchesService = {
       const response = await api.get('/branches', { params })
       return response.data
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch branches')
+      // Return the error response so the frontend can handle it properly
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to fetch branches',
+        error: error.response?.data || error.message
+      }
     }
   },
 
@@ -27,7 +32,12 @@ const branchesService = {
       const response = await api.post('/branches', branchData)
       return response.data
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to create branch')
+      // Return the error response so the frontend can handle it properly
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to create branch',
+        error: error.response?.data || error.message
+      }
     }
   },
 
@@ -37,7 +47,12 @@ const branchesService = {
       const response = await api.put(`/branches/${id}`, branchData)
       return response.data
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to update branch')
+      // Return the error response so the frontend can handle it properly
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to update branch',
+        error: error.response?.data || error.message
+      }
     }
   },
 
@@ -47,7 +62,27 @@ const branchesService = {
       const response = await api.delete(`/branches/${id}`)
       return response.data
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to delete branch')
+      // Return the error response so the frontend can handle it properly
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to delete branch',
+        error: error.response?.data || error.message
+      }
+    }
+  },
+
+  // Update branch status
+  updateBranchStatus: async (id, isActive) => {
+    try {
+      const response = await api.patch(`/branches/${id}/status`, { is_active: isActive })
+      return response.data
+    } catch (error) {
+      // Return the error response so the frontend can handle it properly
+      return {
+        success: false,
+        message: error.response?.data?.message || 'Failed to update branch status',
+        error: error.response?.data || error.message
+      }
     }
   },
 

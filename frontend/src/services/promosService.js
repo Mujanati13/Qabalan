@@ -176,6 +176,8 @@ const promosService = {
   formatDiscount: (discountType, discountValue) => {
     if (discountType === 'percentage') {
       return `${discountValue}%`;
+    } else if (discountType === 'free_shipping') {
+      return 'Free Shipping';
     }
     return `$${discountValue}`;
   },

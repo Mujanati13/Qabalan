@@ -63,7 +63,7 @@ router.get('/categories', async (req, res) => {
 });
 
 // Submit new support ticket
-router.post('/tickets', authenticate, ...validateSupportTicket, upload.array('attachments', 5), async (req, res) => {
+router.post('/tickets', authenticate, upload.array('attachments', 5), ...validateSupportTicket, async (req, res) => {
   try {
     const { order_id, subject, message, category, priority } = req.body;
     const user_id = req.user.id;
@@ -145,7 +145,7 @@ router.get('/tickets/:id', authenticate, async (req, res) => {
 });
 
 // Add reply to ticket
-router.post('/tickets/:id/replies', authenticate, ...validateReply, upload.array('attachments', 3), async (req, res) => {
+router.post('/tickets/:id/replies', authenticate, upload.array('attachments', 3), ...validateReply, async (req, res) => {
   try {
     const ticketId = req.params.id;
     const user_id = req.user.id;
@@ -280,7 +280,7 @@ router.get('/admin/tickets/:id', authenticate, async (req, res) => {
 });
 
 // Add admin reply to ticket
-router.post('/admin/tickets/:id/replies', authenticate, ...validateReply, upload.array('attachments', 3), async (req, res) => {
+router.post('/admin/tickets/:id/replies', authenticate, upload.array('attachments', 3), ...validateReply, async (req, res) => {
   try {
     // Check if user is admin
     if (!req.user.isAdmin) {

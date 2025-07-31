@@ -8,12 +8,16 @@
     "dev": "nodemon bin/www",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:notifications": "node test-order-status-notifications.js",
+    "test:notifications:quick": "node quick-notification-test.js",
+    "test:notifications:comprehensive": "node comprehensive-notification-test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.7.4",
     "cookie-parser": "^1.4.6",
@@ -33,14 +37,18 @@
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
     "mysql2": "^3.6.0",
+    "node-cron": "^4.2.1",
     "nodemailer": "^6.9.4",
     "pdfkit": "^0.17.1",
     "puppeteer": "^24.11.2",
     "sharp": "^0.32.5",
     "twilio": "^4.15.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "axios": "^1.11.0",
+    "colors": "^1.4.0",
     "eslint": "^8.47.0",
     "eslint-config-standard": "^17.1.0",
     "eslint-plugin-import": "^2.28.1",

@@ -38,10 +38,12 @@ import {
   InfoCircleOutlined,
   ExclamationCircleOutlined,
   PlusOutlined,
-  DeleteOutlined
+  DeleteOutlined,
+  ClockCircleOutlined
 } from '@ant-design/icons';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../hooks/useAuth';
+import GlobalDisableSettings from '../components/GlobalDisableSettings';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -53,7 +55,7 @@ const Settings = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState({});
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState('global-disable');
   const [form] = Form.useForm();
   const [hasChanges, setHasChanges] = useState(false);
   const [addSettingVisible, setAddSettingVisible] = useState(false);
@@ -123,7 +125,7 @@ const Settings = () => {
   };
 
   useEffect(() => {
-    fetchSettings();
+    // No need to fetch regular settings since we only show Global Disable
   }, []);
 
   const fetchSettings = async () => {
@@ -389,132 +391,35 @@ const Settings = () => {
           <Col>
             <Title level={2} style={{ margin: 0, fontSize: '24px' }}>
               <SettingOutlined style={{ marginRight: '8px' }} />
-              System Settings
+              Global Disable Settings
             </Title>
             <Paragraph type="secondary" style={{ margin: '8px 0 0 0' }}>
-              Configure application settings and preferences
+              Configure global disable time for automatic store-wide control
             </Paragraph>
           </Col>
           <Col>
-            <Space wrap>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={fetchSettings}
-                loading={loading}
-              >
-                Refresh
-              </Button>
-              {hasChanges && (
-                <Button
-                  type="primary"
-                  icon={<SaveOutlined />}
-                  onClick={handleSave}
-                  loading={saving}
-                >
-                  Save Changes
-                </Button>
-              )}
-            </Space>
+            {/* Removed refresh button since GlobalDisableSettings handles its own data */}
           </Col>
         </Row>
       </div>
-
-      {hasChanges && (
-        <Alert
-          message="You have unsaved changes"
-          description="Don't forget to save your changes before leaving this page."
-          type="warning"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
 
       <Card>
         <Tabs
           activeKey={activeTab}
           onChange={handleTabChange}
-          tabBarExtraContent={
-            hasPermission('settings.create') && (
-              <Button
-                type="primary"
-                size="small"
-                icon={<PlusOutlined />}
-                onClick={() => setAddSettingVisible(true)}
-              >
-                Add Setting
-              </Button>
-            )
-          }
         >
-          {Object.keys(settings).map(category => (
-            <TabPane
-              key={category}
-              tab={
-                <span>
-                  {categoryIcons[category]}
-                  <span style={{ textTransform: 'capitalize' }}>{category}</span>
-                  <Badge
-                    count={getTabBadgeCount(category)}
-                    style={{
-                      backgroundColor: '#f0f0f0',
-                      color: '#666',
-                      marginLeft: '4px'
-                    }}
-                  />
-                </span>
-              }
-            >
-              <Spin spinning={loading}>
-                <div style={{ marginBottom: 16 }}>
-                  <Text type="secondary">{categoryDescriptions[category]}</Text>
-                  
-                  {hasPermission('settings.reset') && (
-                    <div style={{ float: 'right' }}>
-                      <Popconfirm
-                        title={`Reset all ${category} settings to defaults?`}
-                        description="This action cannot be undone."
-                        onConfirm={handleReset}
-                        okText="Yes, Reset"
-                        cancelText="Cancel"
-                        icon={<ExclamationCircleOutlined style={{ color: 'red' }} />}
-                      >
-                        <Button
-                          danger
-                          size="small"
-                          icon={<UndoOutlined />}
-                        >
-                          Reset to Defaults
-                        </Button>
-                      </Popconfirm>
-                    </div>
-                  )}
-                </div>
-                
-                <Divider />
-                
-                <Form
-                  form={form}
-                  layout="vertical"
-                  className="settings-form"
-                  onValuesChange={handleFormChange}
-                >
-                  <Row gutter={[24, 0]}>
-                    {settings[category]?.map(setting => (
-                      <Col xs={24} sm={12} lg={8} key={setting.setting_key}>
-                        {renderSettingField(setting)}
-                      </Col>
-                    ))}
-                  </Row>
-                </Form>
-                
-                {settings[category]?.length === 0 && (
-                  <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <Text type="secondary">No settings found for this category</Text>
-                  </div>
-                )}
-              </Spin>
-            </TabPane>
-          ))}
+          {/* Global Disable Settings Tab */}
+          <TabPane
+            key="global-disable"
+            tab={
+              <span>
+                <ClockCircleOutlined className="category-icon" />
+                <span>Global Disable</span>
+              </span>
+            }
+          >
+            <GlobalDisableSettings />
+          </TabPane>
         </Tabs>
       </Card>
 

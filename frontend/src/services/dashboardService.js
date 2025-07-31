@@ -2,9 +2,10 @@ import { api } from './authService';
 
 class DashboardService {
   // Get dashboard statistics
-  async getDashboardStats() {
+  async getDashboardStats(dateParams = {}) {
     try {
-      const response = await api.get('/dashboard/stats');
+      const params = new URLSearchParams(dateParams);
+      const response = await api.get(`/dashboard/stats?${params}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch dashboard statistics');
@@ -12,9 +13,10 @@ class DashboardService {
   }
 
   // Get order flow data for charts (daily/weekly)
-  async getOrderFlow(period = 'week') {
+  async getOrderFlow(params = {}) {
     try {
-      const response = await api.get(`/dashboard/order-flow?period=${period}`);
+      const queryParams = new URLSearchParams(params);
+      const response = await api.get(`/dashboard/order-flow?${queryParams}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch order flow data');
@@ -22,9 +24,10 @@ class DashboardService {
   }
 
   // Get sales data
-  async getSalesData(period = 'week') {
+  async getSalesData(params = {}) {
     try {
-      const response = await api.get(`/dashboard/sales?period=${period}`);
+      const queryParams = new URLSearchParams(params);
+      const response = await api.get(`/dashboard/sales?${queryParams}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch sales data');
@@ -32,9 +35,10 @@ class DashboardService {
   }
 
   // Get top products
-  async getTopProducts(limit = 10) {
+  async getTopProducts(limit = 10, dateParams = {}) {
     try {
-      const response = await api.get(`/dashboard/top-products?limit=${limit}`);
+      const params = new URLSearchParams({ limit, ...dateParams });
+      const response = await api.get(`/dashboard/top-products?${params}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch top products');
@@ -42,9 +46,10 @@ class DashboardService {
   }
 
   // Get recent orders
-  async getRecentOrders(limit = 10) {
+  async getRecentOrders(limit = 10, dateParams = {}) {
     try {
-      const response = await api.get(`/dashboard/recent-orders?limit=${limit}`);
+      const params = new URLSearchParams({ limit, ...dateParams });
+      const response = await api.get(`/dashboard/recent-orders?${params}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch recent orders');
@@ -52,9 +57,10 @@ class DashboardService {
   }
 
   // Get customer statistics
-  async getCustomerStats() {
+  async getCustomerStats(dateParams = {}) {
     try {
-      const response = await api.get('/dashboard/customer-stats');
+      const params = new URLSearchParams(dateParams);
+      const response = await api.get(`/dashboard/customer-stats?${params}`);
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch customer statistics');

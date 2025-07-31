@@ -38,27 +38,46 @@ const validatePromoCode = (req, res, next) => {
     errors.push('Discount type is required');
   }
 
-  if (discount_type && !['percentage', 'fixed_amount'].includes(discount_type)) {
-    errors.push('Discount type must be either "percentage" or "fixed_amount"');
+  if (discount_type && !['percentage', 'fixed_amount', 'free_shipping', 'bxgy'].includes(discount_type)) {
+    errors.push('Discount type must be one of: "percentage", "fixed_amount", "free_shipping", "bxgy"');
   }
 
   // Discount value validation
-  if (req.method === 'POST' && (discount_value === undefined || discount_value === null || discount_value === '')) {
-    errors.push('Discount value is required');
-  }
-
-  if (discount_value !== undefined && discount_value !== null && discount_value !== '') {
-    // Convert string to number if needed
-    const numericValue = typeof discount_value === 'string' ? parseFloat(discount_value) : discount_value;
-    
-    if (isNaN(numericValue) || numericValue <= 0) {
-      errors.push('Discount value must be a positive number');
+  if (discount_type === 'free_shipping') {
+    // Free shipping doesn't require discount_value, set it to 0
+    req.body.discount_value = 0;
+  } else if (discount_type === 'bxgy') {
+    // BXGY discount_value represents the discount percentage for get items
+    if (discount_value !== undefined && discount_value !== null && discount_value !== '') {
+      const numericValue = typeof discount_value === 'string' ? parseFloat(discount_value) : discount_value;
+      if (isNaN(numericValue) || numericValue < 0 || numericValue > 100) {
+        errors.push('BXGY discount value must be between 0 and 100 (percentage)');
+      } else {
+        req.body.discount_value = numericValue;
+      }
     } else {
-      // Update the request body with the numeric value
-      req.body.discount_value = numericValue;
+      // Default to 100% discount (free) for BXGY
+      req.body.discount_value = 100;
+    }
+  } else {
+    // Standard validation for percentage and fixed_amount
+    if (req.method === 'POST' && (discount_value === undefined || discount_value === null || discount_value === '')) {
+      errors.push('Discount value is required');
+    }
+
+    if (discount_value !== undefined && discount_value !== null && discount_value !== '') {
+      // Convert string to number if needed
+      const numericValue = typeof discount_value === 'string' ? parseFloat(discount_value) : discount_value;
       
-      if (discount_type === 'percentage' && numericValue > 100) {
-        errors.push('Percentage discount cannot exceed 100%');
+      if (isNaN(numericValue) || numericValue <= 0) {
+        errors.push('Discount value must be a positive number');
+      } else {
+        // Update the request body with the numeric value
+        req.body.discount_value = numericValue;
+        
+        if (discount_type === 'percentage' && numericValue > 100) {
+          errors.push('Percentage discount cannot exceed 100%');
+        }
       }
     }
   }

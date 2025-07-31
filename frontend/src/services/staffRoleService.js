@@ -111,12 +111,83 @@ class StaffRoleService {
   // ROLE ASSIGNMENT
   // =====================================
 
-  async assignRoles(staffId, roleIds) {
+  async assignRoles(staffId, roleIds, expiresAt = null) {
     try {
-      const response = await api.post(`/staff-roles/staff/${staffId}/roles`, { roles: roleIds });
+      const response = await api.post(`/staff-roles/staff/${staffId}/roles`, { 
+        roles: roleIds,
+        expires_at: expiresAt 
+      });
       return response.data;
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to assign roles');
+    }
+  }
+
+  async bulkAssignRoles(userIds, roleIds, expiresAt = null) {
+    try {
+      const response = await api.post('/staff-roles/bulk-assign-roles', {
+        user_ids: userIds,
+        role_ids: roleIds,
+        expires_at: expiresAt
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to bulk assign roles');
+    }
+  }
+
+  async assignTemporaryRole(staffId, roleId, expiresAt) {
+    try {
+      const response = await api.post(`/staff-roles/staff/${staffId}/temporary-role`, {
+        role_id: roleId,
+        expires_at: expiresAt
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to assign temporary role');
+    }
+  }
+
+  async getAssignmentHistory(userId = null, limit = 50) {
+    try {
+      const url = userId 
+        ? `/staff-roles/assignment-history/${userId}?limit=${limit}`
+        : `/staff-roles/assignment-history?limit=${limit}`;
+      const response = await api.get(url);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch assignment history');
+    }
+  }
+
+  async getExpiringRoles(days = 7) {
+    try {
+      const response = await api.get(`/staff-roles/expiring-roles?days=${days}`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch expiring roles');
+    }
+  }
+
+  async getRoleTemplates() {
+    try {
+      const response = await api.get('/staff-roles/role-templates');
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch role templates');
+    }
+  }
+
+  async applyRoleTemplate(templateId, userIds, expiresAt = null) {
+    try {
+      const response = await api.post('/staff-roles/apply-template', {
+        template_id: templateId,
+        user_ids: userIds,
+        expires_at: expiresAt
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to apply role template');
     }
   }
 

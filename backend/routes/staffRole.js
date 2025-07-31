@@ -323,13 +323,13 @@ router.delete('/staff/:id', authenticate, requirePermission('staff', 'can_delete
 });
 
 // =====================================
-// ROLE ASSIGNMENT ROUTES
+// ROLE ASSIGNMENT ROUTES - ENHANCED
 // =====================================
 
 // Assign roles to user
 router.post('/staff/:id/roles', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
   try {
-    const { roles } = req.body;
+    const { roles, expires_at } = req.body;
     
     if (!Array.isArray(roles)) {
       return res.status(400).json({
@@ -338,11 +338,11 @@ router.post('/staff/:id/roles', authenticate, requirePermission('staff', 'can_ma
       });
     }
 
-    await staffRoleService.assignRolesToUser(req.params.id, roles, req.user.id);
+    await staffRoleService.assignRolesToUser(req.params.id, roles, req.user.id, expires_at);
     
     // Log activity
     await staffRoleService.logActivity(
-      req.user.id, 'assign_roles', 'staff', 'user', req.params.id, null, { roles }, req.ip, req.get('User-Agent')
+      req.user.id, 'assign_roles', 'staff', 'user', req.params.id, null, { roles, expires_at }, req.ip, req.get('User-Agent')
     );
 
     res.json({
@@ -354,6 +354,171 @@ router.post('/staff/:id/roles', authenticate, requirePermission('staff', 'can_ma
     res.status(500).json({
       success: false,
       message: 'Failed to assign roles',
+      error: error.message
+    });
+  }
+});
+
+// Bulk assign roles to multiple users
+router.post('/bulk-assign-roles', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const { user_ids, role_ids, expires_at } = req.body;
+    
+    if (!Array.isArray(user_ids) || !Array.isArray(role_ids)) {
+      return res.status(400).json({
+        success: false,
+        message: 'user_ids and role_ids must be arrays'
+      });
+    }
+
+    const result = await staffRoleService.bulkAssignRoles(user_ids, role_ids, req.user.id, expires_at);
+    
+    // Log activity
+    await staffRoleService.logActivity(
+      req.user.id, 'bulk_assign_roles', 'staff', 'bulk_operation', null, null, 
+      { user_ids, role_ids, expires_at, result }, req.ip, req.get('User-Agent')
+    );
+
+    res.json({
+      success: true,
+      message: `Bulk assignment completed. ${result.successCount} successful, ${result.failureCount} failed`,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error in bulk role assignment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to perform bulk role assignment',
+      error: error.message
+    });
+  }
+});
+
+// Assign temporary role
+router.post('/staff/:id/temporary-role', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const { role_id, expires_at } = req.body;
+    
+    if (!role_id || !expires_at) {
+      return res.status(400).json({
+        success: false,
+        message: 'role_id and expires_at are required'
+      });
+    }
+
+    await staffRoleService.assignTemporaryRole(req.params.id, role_id, req.user.id, expires_at);
+    
+    // Log activity
+    await staffRoleService.logActivity(
+      req.user.id, 'assign_temporary_role', 'staff', 'user', req.params.id, null, 
+      { role_id, expires_at }, req.ip, req.get('User-Agent')
+    );
+
+    res.json({
+      success: true,
+      message: 'Temporary role assigned successfully'
+    });
+  } catch (error) {
+    console.error('Error assigning temporary role:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign temporary role',
+      error: error.message
+    });
+  }
+});
+
+// Get role assignment history
+router.get('/assignment-history/:userId?', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const userId = req.params.userId || null;
+    const limit = parseInt(req.query.limit) || 50;
+    
+    const history = await staffRoleService.getAssignmentHistory(userId, limit);
+    
+    res.json({
+      success: true,
+      data: history
+    });
+  } catch (error) {
+    console.error('Error fetching assignment history:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch assignment history',
+      error: error.message
+    });
+  }
+});
+
+// Get expiring roles
+router.get('/expiring-roles', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const expiringRoles = await staffRoleService.getExpiringRoles(days);
+    
+    res.json({
+      success: true,
+      data: expiringRoles
+    });
+  } catch (error) {
+    console.error('Error fetching expiring roles:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch expiring roles',
+      error: error.message
+    });
+  }
+});
+
+// Get role templates
+router.get('/role-templates', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const templates = await staffRoleService.getRoleTemplates();
+    
+    res.json({
+      success: true,
+      data: templates
+    });
+  } catch (error) {
+    console.error('Error fetching role templates:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch role templates',
+      error: error.message
+    });
+  }
+});
+
+// Apply role template
+router.post('/apply-template', authenticate, requirePermission('staff', 'can_manage'), async (req, res) => {
+  try {
+    const { template_id, user_ids, expires_at } = req.body;
+    
+    if (!template_id || !Array.isArray(user_ids)) {
+      return res.status(400).json({
+        success: false,
+        message: 'template_id and user_ids (array) are required'
+      });
+    }
+
+    const result = await staffRoleService.applyRoleTemplate(template_id, user_ids, req.user.id, expires_at);
+    
+    // Log activity
+    await staffRoleService.logActivity(
+      req.user.id, 'apply_role_template', 'staff', 'bulk_operation', null, null, 
+      { template_id, user_ids, expires_at, result }, req.ip, req.get('User-Agent')
+    );
+
+    res.json({
+      success: true,
+      message: `Template applied successfully. ${result.successCount} successful, ${result.failureCount} failed`,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error applying role template:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to apply role template',
       error: error.message
     });
   }

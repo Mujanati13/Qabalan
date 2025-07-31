@@ -1,0 +1,115 @@
+/* OrdersPage.css */
+.orders-page {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+  padding: 24px 0;
+}
+
+.orders-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.orders-stats {
+  margin-bottom: 24px;
+}
+
+.orders-stats .ant-card {
+  text-align: center;
+}
+
+.orders-table-card .ant-card-head {
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.orders-table-card .ant-table-thead > tr > th {
+  background-color: #fafafa;
+  font-weight: 600;
+}
+
+.order-details-modal .ant-descriptions-title {
+  margin-bottom: 16px;
+}
+
+.order-items-list .ant-list-item {
+  padding: 12px 0;
+}
+
+.order-total-card {
+  background-color: #f9f9f9;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .orders-container {
+    padding: 0 16px;
+  }
+  
+  .orders-stats .ant-col {
+    margin-bottom: 16px;
+  }
+  
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+  
+  .order-details-modal .ant-modal {
+    margin: 16px;
+    max-width: calc(100vw - 32px);
+  }
+}
+
+/* Status colors and animations */
+.ant-tag {
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.orders-page .ant-statistic-content-value {
+  color: #229A95;
+}
+
+.orders-page .ant-btn-primary {
+  background-color: #229A95;
+  border-color: #229A95;
+}
+
+.orders-page .ant-btn-primary:hover {
+  background-color: #1a7670;
+  border-color: #1a7670;
+}
+
+/* Empty state styling */
+.orders-page .ant-empty {
+  padding: 40px 0;
+}
+
+.orders-page .ant-empty-description {
+  margin-top: 16px;
+}
+
+/* Table customization */
+.orders-table .ant-table-tbody > tr:hover > td {
+  background-color: #f0f9ff;
+}
+
+/* Order details modal */
+.order-details-modal .ant-descriptions-item-label {
+  font-weight: 600;
+  background-color: #fafafa;
+}
+
+.order-details-modal .ant-list-item-meta-title {
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.order-details-modal .order-total-summary {
+  background-color: #f9f9f9;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}

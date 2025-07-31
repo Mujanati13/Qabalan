@@ -5,6 +5,36 @@ const { validateId, validatePagination } = require('../middleware/validation');
 
 const router = express.Router();
 
+/**
+ * Validate city ID parameter
+ */
+const validateCityId = (req, res, next) => {
+  const cityId = parseInt(req.params.city_id);
+  if (!cityId || cityId < 1) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid city ID is required',
+      message_ar: 'معرف المدينة مطلوب وصحيح'
+    });
+  }
+  next();
+};
+
+/**
+ * Validate area ID parameter
+ */
+const validateAreaId = (req, res, next) => {
+  const areaId = parseInt(req.params.area_id);
+  if (!areaId || areaId < 1) {
+    return res.status(400).json({
+      success: false,
+      message: 'Valid area ID is required',
+      message_ar: 'معرف المنطقة مطلوب وصحيح'
+    });
+  }
+  next();
+};
+
 // =============================================================================
 // VALIDATION MIDDLEWARE
 // =============================================================================
@@ -34,14 +64,24 @@ const validateAddressData = (req, res, next) => {
     if (!name || name.trim().length < 2) {
       errors.push('Address name must be at least 2 characters');
     }
-    if (!city_id || !Number.isInteger(Number(city_id))) {
-      errors.push('Valid city ID is required');
+    
+    // More flexible validation - allow any combination of location data
+    // We only require at least some form of location identification
+    const hasAnyLocationData = city_id || area_id || street_id || latitude || longitude || details;
+    
+    if (!hasAnyLocationData) {
+      errors.push('At least one form of location data is required (city/area/street, coordinates, or address details)');
     }
-    if (!area_id || !Number.isInteger(Number(area_id))) {
-      errors.push('Valid area ID is required');
+    
+    // If location IDs are provided, validate them individually
+    if (city_id !== undefined && city_id !== null && !Number.isInteger(Number(city_id))) {
+      errors.push('Valid city ID is required when city is specified');
     }
-    if (!street_id || !Number.isInteger(Number(street_id))) {
-      errors.push('Valid street ID is required');
+    if (area_id !== undefined && area_id !== null && !Number.isInteger(Number(area_id))) {
+      errors.push('Valid area ID is required when area is specified');
+    }
+    if (street_id !== undefined && street_id !== null && !Number.isInteger(Number(street_id))) {
+      errors.push('Valid street ID is required when street is specified');
     }
   }
 
@@ -86,24 +126,53 @@ const validateAddressData = (req, res, next) => {
 
 /**
  * Validate location hierarchy (city -> area -> street)
+ * Only validates the hierarchy if all required levels are provided
  */
 const validateLocationHierarchy = async (cityId, areaId, streetId) => {
-  // Check if city exists
-  const [city] = await executeQuery('SELECT id FROM cities WHERE id = ? AND is_active = 1', [cityId]);
-  if (!city) {
-    throw new Error('Invalid or inactive city');
+  // If city is provided, validate it
+  if (cityId) {
+    const [city] = await executeQuery('SELECT id FROM cities WHERE id = ? AND is_active = 1', [cityId]);
+    if (!city) {
+      throw new Error('Invalid or inactive city');
+    }
   }
 
-  // Check if area belongs to city
-  const [area] = await executeQuery('SELECT id FROM areas WHERE id = ? AND city_id = ? AND is_active = 1', [areaId, cityId]);
-  if (!area) {
-    throw new Error('Invalid area or area does not belong to the specified city');
+  // If area is provided, validate it (and its relationship to city if city is also provided)
+  if (areaId) {
+    let areaQuery = 'SELECT id FROM areas WHERE id = ? AND is_active = 1';
+    let areaParams = [areaId];
+    
+    if (cityId) {
+      areaQuery = 'SELECT id FROM areas WHERE id = ? AND city_id = ? AND is_active = 1';
+      areaParams = [areaId, cityId];
+    }
+    
+    const [area] = await executeQuery(areaQuery, areaParams);
+    if (!area) {
+      const errorMsg = cityId ? 
+        'Invalid area or area does not belong to the specified city' : 
+        'Invalid or inactive area';
+      throw new Error(errorMsg);
+    }
   }
 
-  // Check if street belongs to area
-  const [street] = await executeQuery('SELECT id FROM streets WHERE id = ? AND area_id = ? AND is_active = 1', [streetId, areaId]);
-  if (!street) {
-    throw new Error('Invalid street or street does not belong to the specified area');
+  // If street is provided, validate it (and its relationship to area if area is also provided)
+  if (streetId) {
+    let streetQuery = 'SELECT id FROM streets WHERE id = ? AND is_active = 1';
+    let streetParams = [streetId];
+    
+    if (areaId) {
+      streetQuery = 'SELECT id FROM streets WHERE id = ? AND area_id = ? AND is_active = 1';
+      streetParams = [streetId, areaId];
+    }
+    
+    const [street] = await executeQuery(streetQuery, streetParams);
+    if (!street) {
+      const errorMsg = areaId ? 
+        'Invalid street or street does not belong to the specified area' : 
+        'Invalid or inactive street';
+      throw new Error(errorMsg);
+    }
   }
 
   return true;
@@ -296,11 +365,13 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
       });
     }
 
-    // Validate location hierarchy
-    await validateLocationHierarchy(city_id, area_id, street_id);
+    // Validate location hierarchy if any location IDs are provided
+    if (city_id || area_id || street_id) {
+      await validateLocationHierarchy(city_id, area_id, street_id);
+    }
 
     // Create address
-    const [result] = await executeQuery(`
+    const result = await executeQuery(`
       INSERT INTO user_addresses (
         user_id, name, city_id, area_id, street_id, building_no, floor_no, 
         apartment_no, details, latitude, longitude, is_default, is_active, created_at, updated_at
@@ -308,9 +379,9 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
     `, [
       targetUserId,
       name.trim(),
-      city_id,
-      area_id,
-      street_id,
+      city_id || null,
+      area_id || null,
+      street_id || null,
       building_no || null,
       floor_no || null,
       apartment_no || null,
@@ -326,7 +397,7 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
     }
 
     // Get the created address with full details
-    const [newAddress] = await executeQuery(`
+    const addressResults = await executeQuery(`
       SELECT 
         ua.*, 
         c.title_ar as city_title_ar, c.title_en as city_title_en,
@@ -338,6 +409,8 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
       LEFT JOIN streets s ON ua.street_id = s.id
       WHERE ua.id = ?
     `, [result.insertId]);
+
+    const newAddress = addressResults[0];
 
     res.status(201).json({
       success: true,
@@ -664,7 +737,7 @@ router.get('/locations/cities', async (req, res, next) => {
  * @desc    Get areas for specific city
  * @access  Public
  */
-router.get('/locations/areas/:city_id', validateId, async (req, res, next) => {
+router.get('/locations/areas/:city_id', validateCityId, async (req, res, next) => {
   try {
     const areas = await executeQuery(`
       SELECT id, title_ar, title_en, delivery_fee
@@ -688,7 +761,7 @@ router.get('/locations/areas/:city_id', validateId, async (req, res, next) => {
  * @desc    Get streets for specific area
  * @access  Public
  */
-router.get('/locations/streets/:area_id', validateId, async (req, res, next) => {
+router.get('/locations/streets/:area_id', validateAreaId, async (req, res, next) => {
   try {
     const streets = await executeQuery(`
       SELECT id, title_ar, title_en

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Card,
   Table,
@@ -26,6 +27,7 @@ import {
   Dropdown,
   Menu
 } from 'antd';
+import urlGenerator from '../utils/urlGenerator.js';
 import {
   PlusOutlined,
   SearchOutlined,
@@ -41,10 +43,15 @@ import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   DownOutlined,
-  MoreOutlined
+  MoreOutlined,
+  ExportOutlined,
+  ShareAltOutlined,
+  LinkOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import promosService from '../services/promosService';
+import ExportButton from '../components/common/ExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -54,22 +61,53 @@ const { TabPane } = Tabs;
 
 const PromoCodes = () => {
   const { t } = useLanguage();
+  const { getPromoCodesExportConfig } = useExportConfig();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   
   // Add custom styles for responsive design
   const styles = `
     .responsive-table .ant-table-tbody > tr > td {
-      padding: 8px 4px !important;
-      font-size: 12px;
+      padding: 12px 8px !important;
+      font-size: 14px;
+      line-height: 1.4;
     }
     
     .responsive-table .ant-table-thead > tr > th {
-      padding: 8px 4px !important;
-      font-size: 11px;
+      padding: 12px 8px !important;
+      font-size: 14px;
       font-weight: 600;
+      line-height: 1.4;
+    }
+    
+    .responsive-table .ant-table-tbody > tr > td .ant-typography {
+      font-size: 14px !important;
+    }
+    
+    .responsive-table .ant-tag {
+      font-size: 12px !important;
+      padding: 4px 8px !important;
+      line-height: 1.3;
+    }
+    
+    .responsive-table .ant-progress-text {
+      font-size: 12px !important;
     }
     
     .hidden-xs {
       display: inline;
+    }
+    
+    @media (max-width: 768px) {
+      .responsive-table .ant-table-tbody > tr > td {
+        padding: 10px 6px !important;
+        font-size: 13px;
+      }
+      
+      .responsive-table .ant-table-thead > tr > th {
+        padding: 10px 6px !important;
+        font-size: 13px;
+      }
     }
     
     @media (max-width: 576px) {
@@ -78,13 +116,22 @@ const PromoCodes = () => {
       }
       
       .responsive-table .ant-table-tbody > tr > td {
-        padding: 6px 2px !important;
-        font-size: 11px;
+        padding: 8px 4px !important;
+        font-size: 12px;
       }
       
       .responsive-table .ant-table-thead > tr > th {
-        padding: 6px 2px !important;
-        font-size: 10px;
+        padding: 8px 4px !important;
+        font-size: 12px;
+      }
+      
+      .responsive-table .ant-table-tbody > tr > td .ant-typography {
+        font-size: 12px !important;
+      }
+      
+      .responsive-table .ant-tag {
+        font-size: 11px !important;
+        padding: 2px 6px !important;
       }
       
       .ant-space-compact {
@@ -100,6 +147,19 @@ const PromoCodes = () => {
         border-radius: 0 6px 6px 0 !important;
       }
     }
+    
+    /* Improve table row height */
+    .responsive-table .ant-table-tbody > tr {
+      height: auto;
+      min-height: 48px;
+    }
+    
+    /* Better spacing for table content */
+    .responsive-table .ant-table-tbody > tr > td > div {
+      min-height: 20px;
+      display: flex;
+      align-items: center;
+    }
   `;
   
   // State
@@ -114,6 +174,7 @@ const PromoCodes = () => {
   const [stats, setStats] = useState({});
   const [form] = Form.useForm();
   const [validateForm] = Form.useForm();
+  const [discountType, setDiscountType] = useState(null);
   
   // Filters
   const [filters, setFilters] = useState({
@@ -130,6 +191,24 @@ const PromoCodes = () => {
     pageSize: 10,
     total: 0
   });
+
+  // URL generation functions
+  const generateOfferUrl = (promoId, action = null) => {
+    return urlGenerator.offers({ promoId, action });
+  };
+
+  // Function to update URL parameters
+  const updateUrlParams = (params) => {
+    const newSearchParams = new URLSearchParams(searchParams);
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) {
+        newSearchParams.set(key, value);
+      } else {
+        newSearchParams.delete(key);
+      }
+    });
+    setSearchParams(newSearchParams);
+  };
 
   // Debounce utility function
   function debounce(func, wait) {
@@ -196,6 +275,7 @@ const PromoCodes = () => {
   // Handlers
   const handleAdd = () => {
     setEditingPromo(null);
+    setDiscountType(null);
     form.resetFields();
     
     // Set default dates: valid_from = now, valid_until = now + 30 days
@@ -214,6 +294,7 @@ const PromoCodes = () => {
 
   const handleEdit = (promo) => {
     setEditingPromo(promo);
+    setDiscountType(promo.discount_type);
     form.setFieldsValue({
       ...promo,
       valid_from: dayjs(promo.valid_from),
@@ -330,9 +411,9 @@ const PromoCodes = () => {
       title: t('promos.codeColumn'),
       dataIndex: 'code',
       key: 'code',
-      width: 120,
+      width: 140,
       fixed: 'left',
-      render: (code) => <Text strong>{code}</Text>
+      render: (code) => <Text strong style={{ fontSize: '14px' }}>{code}</Text>
     },
     {
       title: t('promos.titleColumn'),
@@ -340,27 +421,50 @@ const PromoCodes = () => {
       key: 'title',
       responsive: ['sm'],
       ellipsis: true,
-      render: (title, record) => title || record.title_ar || '-'
+      render: (title, record) => (
+        <Text style={{ fontSize: '14px' }}>
+          {title || record.title_ar || '-'}
+        </Text>
+      )
     },
     {
       title: t('promos.typeColumn'),
       dataIndex: 'discount_type',
       key: 'type',
-      width: 100,
+      width: 120,
       responsive: ['md'],
-      render: (type) => (
-        <Tag color={type === 'percentage' ? 'blue' : 'green'} style={{ fontSize: '11px' }}>
-          {type === 'percentage' ? '%' : '$'}
-        </Tag>
-      )
+      render: (type) => {
+        let color = 'green';
+        let icon = '$';
+        let text = '';
+        
+        if (type === 'percentage') {
+          color = 'blue';
+          icon = '%';
+        } else if (type === 'free_shipping') {
+          color = 'purple';
+          icon = '🚚';
+        } else if (type === 'bxgy') {
+          color = 'orange';
+          icon = '🎁';
+        } else {
+          text = t('promos.typeFixedAmount');
+        }
+        
+        return (
+          <Tag color={color} style={{ fontSize: '12px', padding: '4px 8px' }}>
+            {icon} {text}
+          </Tag>
+        );
+      }
     },
     {
       title: t('promos.discountColumn'),
       dataIndex: 'discount_value',
       key: 'discount',
-      width: 100,
+      width: 120,
       render: (value, record) => (
-        <Text strong style={{ color: '#1890ff' }}>
+        <Text strong style={{ color: '#1890ff', fontSize: '14px' }}>
           {promosService.formatDiscount(record.discount_type, value)}
         </Text>
       )
@@ -368,18 +472,18 @@ const PromoCodes = () => {
     {
       title: t('promos.usageColumn'),
       key: 'usage',
-      width: 120,
+      width: 140,
       responsive: ['lg'],
       render: (_, record) => {
         const percentage = promosService.getUsagePercentage(record.usage_count, record.usage_limit);
         return (
-          <div style={{ minWidth: '80px' }}>
-            <div style={{ fontSize: '12px', marginBottom: '2px' }}>
-              <Text>{record.usage_count}</Text>
+          <div style={{ minWidth: '100px' }}>
+            <div style={{ fontSize: '14px', marginBottom: '4px' }}>
+              <Text style={{ fontSize: '14px' }}>{record.usage_count}</Text>
               {record.usage_limit && (
-                <Text type="secondary"> / {record.usage_limit}</Text>
+                <Text type="secondary" style={{ fontSize: '14px' }}> / {record.usage_limit}</Text>
               )}
-              {!record.usage_limit && <Text type="secondary"> / ∞</Text>}
+              {!record.usage_limit && <Text type="secondary" style={{ fontSize: '14px' }}> / ∞</Text>}
             </div>
             {record.usage_limit && (
               <Progress
@@ -397,16 +501,17 @@ const PromoCodes = () => {
     {
       title: t('promos.statusColumn'),
       key: 'status',
-      width: 90,
+      width: 110,
       render: (_, record) => {
         const status = promosService.getStatusInfo(record);
         return (
           <Tag 
             color={status.color} 
             style={{ 
-              fontSize: '10px', 
-              padding: '2px 6px',
-              margin: 0
+              fontSize: '12px', 
+              padding: '4px 8px',
+              margin: 0,
+              lineHeight: '1.3'
             }}
           >
             {t(`promos.status${status.status.charAt(0).toUpperCase() + status.status.slice(1)}`)}
@@ -417,20 +522,19 @@ const PromoCodes = () => {
     {
       title: t('promos.validityColumn'),
       key: 'validity',
-      width: 110,
+      width: 130,
       responsive: ['xl'],
       render: (_, record) => (
-        <div style={{ fontSize: '11px' }}>
-          <Text>{dayjs(record.valid_from).format('MM/DD')}</Text>
+        <div style={{ fontSize: '13px', lineHeight: '1.4' }}>
+          <Text style={{ fontSize: '13px' }}>{dayjs(record.valid_from).format('MM/DD/YY')}</Text>
           <br />
-          <Text type="secondary">{dayjs(record.valid_until).format('MM/DD')}</Text>
         </div>
       )
     },
     {
       title: t('promos.actionsColumn'),
       key: 'actions',
-      width: 120,
+      width: 140,
       fixed: 'right',
       render: (_, record) => (
         <Space size="small" wrap>
@@ -541,13 +645,7 @@ const PromoCodes = () => {
       {/* Main Content */}
       <Card>
         {/* Header */}
-        <Row gutter={[16, 16]} style={{ marginBottom: '16px' }}>
-          <Col xs={24}>
-            <Title level={2} style={{ margin: 0 }}>
-              {t('promos.title')}
-            </Title>
-          </Col>
-        </Row>
+       
 
         {/* Filters and Actions */}
         <Row gutter={[16, 16]} style={{ marginBottom: '16px' }}>
@@ -583,49 +681,87 @@ const PromoCodes = () => {
               <Option value="all">{t('common.all')}</Option>
               <Option value="percentage">{t('promos.typePercentage')}</Option>
               <Option value="fixed_amount">{t('promos.typeFixedAmount')}</Option>
+              <Option value="free_shipping">{t('promos.typeFreeShipping')}</Option>
+              <Option value="bxgy">{t('promos.typeBXGY')}</Option>
             </Select>
           </Col>
           <Col xs={24} sm={12} md={8} lg={6}>
-            <Space.Compact style={{ width: '100%' }}>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />}
-                onClick={handleAdd}
-                style={{ flex: 1 }}
-              >
-                <span className="hidden-xs">{t('promos.add')}</span>
-              </Button>
-              <Dropdown
-                overlay={
-                  <Menu>
+            <Dropdown
+              overlay={
+                <Menu>
+                  <Menu.Item 
+                    key="add" 
+                    icon={<PlusOutlined />}
+                    onClick={handleAdd}
+                  >
+                    {t('promos.add')}
+                  </Menu.Item>
+                  <Menu.Divider />
+                  <Menu.SubMenu 
+                    key="export" 
+                    icon={<ExportOutlined />}
+                    title={t('common.export')}
+                  >
                     <Menu.Item 
-                      key="validate" 
-                      icon={<CheckCircleOutlined />}
-                      onClick={() => setValidateModalVisible(true)}
+                      key="export-csv"
+                      onClick={() => {
+                        const exportButton = document.querySelector('[data-export-module="promos"]');
+                        if (exportButton) {
+                          const csvButton = exportButton.querySelector('[data-format="csv"]');
+                          if (csvButton) csvButton.click();
+                        }
+                      }}
                     >
-                      {t('promos.validatePromo')}
+                      CSV
                     </Menu.Item>
                     <Menu.Item 
-                      key="reports" 
-                      icon={<BarChartOutlined />}
-                      onClick={() => setStatsModalVisible(true)}
+                      key="export-excel"
+                      onClick={() => {
+                        const exportButton = document.querySelector('[data-export-module="promos"]');
+                        if (exportButton) {
+                          const excelButton = exportButton.querySelector('[data-format="excel"]');
+                          if (excelButton) excelButton.click();
+                        }
+                      }}
                     >
-                      {t('promos.reports')}
+                      Excel
                     </Menu.Item>
-                    <Menu.Item 
-                      key="refresh" 
-                      icon={<ReloadOutlined />}
-                      onClick={loadPromoCodes}
-                    >
-                      {t('common.refresh')}
-                    </Menu.Item>
-                  </Menu>
-                }
-                trigger={['click']}
-              >
-                <Button icon={<MoreOutlined />} />
-              </Dropdown>
-            </Space.Compact>
+                  </Menu.SubMenu>
+                  <Menu.Divider />
+                  <Menu.Item 
+                    key="validate" 
+                    icon={<CheckCircleOutlined />}
+                    onClick={() => setValidateModalVisible(true)}
+                  >
+                    {t('promos.validatePromo')}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="reports" 
+                    icon={<BarChartOutlined />}
+                    onClick={() => setStatsModalVisible(true)}
+                  >
+                    {t('promos.reports')}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="refresh" 
+                    icon={<ReloadOutlined />}
+                    onClick={loadPromoCodes}
+                  >
+                    {t('common.refresh')}
+                  </Menu.Item>
+                </Menu>
+              }
+              trigger={['click']}
+            >
+              <Button icon={<MoreOutlined />} />
+            </Dropdown>
+            <div style={{ display: 'none' }}>
+              <ExportButton
+                {...getPromoCodesExportConfig(promoCodes, columns)}
+                size="default"
+                showFormats={['csv', 'excel']}
+              />
+            </div>
           </Col>
         </Row>
 
@@ -646,12 +782,14 @@ const PromoCodes = () => {
             onChange: (page, pageSize) => {
               setFilters({ ...filters, page, limit: pageSize });
             },
-            size: 'small',
+            pageSizeOptions: ['10', '20', '50', '100'],
+            size: 'default',
             responsive: true
           }}
-          scroll={{ x: 800, y: 400 }}
-          size="small"
+          scroll={{ x: 900, y: 450 }}
+          size="middle"
           className="responsive-table"
+          rowClassName="table-row"
         />
       </Card>
 
@@ -700,9 +838,21 @@ const PromoCodes = () => {
                 label={t('promos.discountType')}
                 rules={[{ required: true, message: t('promos.discountRequired') }]}
               >
-                <Select placeholder={t('promos.discountType')}>
+                <Select 
+                  placeholder={t('promos.discountType')}
+                  onChange={(value) => {
+                    setDiscountType(value);
+                    if (value === 'free_shipping') {
+                      form.setFieldValue('discount_value', 0);
+                    } else if (value === 'bxgy') {
+                      form.setFieldValue('discount_value', 100); // Default to 100% off for BXGY
+                    }
+                  }}
+                >
                   <Option value="percentage">{t('promos.typePercentage')}</Option>
                   <Option value="fixed_amount">{t('promos.typeFixedAmount')}</Option>
+                  <Option value="free_shipping">{t('promos.typeFreeShipping')}</Option>
+                  <Option value="bxgy">{t('promos.typeBXGY')}</Option>
                 </Select>
               </Form.Item>
             </Col>
@@ -747,75 +897,188 @@ const PromoCodes = () => {
           </Row>
 
           <Row gutter={[16, 16]}>
-            <Col xs={24} sm={8}>
-              <Form.Item
-                name="discount_value"
-                label={t('promos.discountValue')}
-                rules={[
-                  { required: true, message: t('promos.discountRequired') },
-                  {
-                    validator: (_, value) => {
-                      if (!value) return Promise.resolve();
-                      const discountType = form.getFieldValue('discount_type');
-                      if (discountType === 'percentage' && value > 100) {
-                        return Promise.reject(new Error(t('promos.percentageMaxError')));
+            {discountType !== 'free_shipping' && (
+              <Col xs={24} sm={8}>
+                <Form.Item
+                  name="discount_value"
+                  label={discountType === 'bxgy' ? t('promos.discountPercentage') : t('promos.discountValue')}
+                  rules={[
+                    { required: discountType !== 'free_shipping', message: t('promos.discountRequired') },
+                    {
+                      validator: (_, value) => {
+                        if (!value || discountType === 'free_shipping') return Promise.resolve();
+                        if ((discountType === 'percentage' || discountType === 'bxgy') && value > 100) {
+                          return Promise.reject(new Error(t('promos.percentageMaxError')));
+                        }
+                        if (value <= 0) {
+                          return Promise.reject(new Error(t('promos.discountValueMustBePositive')));
+                        }
+                        return Promise.resolve();
                       }
-                      if (value <= 0) {
-                        return Promise.reject(new Error(t('promos.discountValueMustBePositive')));
-                      }
-                      return Promise.resolve();
                     }
-                  }
-                ]}
-              >
-                <InputNumber
-                  style={{ width: '100%' }}
-                  min={0.01}
-                  max={form.getFieldValue('discount_type') === 'percentage' ? 100 : undefined}
-                  step={0.01}
-                  precision={2}
-                  placeholder={t('promos.discountValuePlaceholder')}
-                  formatter={(value) => {
-                    const discountType = form.getFieldValue('discount_type');
-                    return discountType === 'percentage' ? `${value}%` : `$${value}`;
-                  }}
-                  parser={(value) => value.replace(/[%$\s]/g, '')}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Form.Item
-                name="min_order_amount"
-                label={t('promos.minOrderAmount')}
-              >
-                <InputNumber
-                  style={{ width: '100%' }}
-                  min={0}
-                  step={0.01}
-                  precision={2}
-                  placeholder={t('promos.minOrderAmountPlaceholder')}
-                  formatter={(value) => `$${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  parser={(value) => value.replace(/\$\s?|(,*)/g, '')}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={8}>
-              <Form.Item
-                name="max_discount_amount"
-                label={t('promos.maxDiscountAmount')}
-              >
-                <InputNumber
-                  style={{ width: '100%' }}
-                  min={0}
-                  step={0.01}
-                  precision={2}
-                  placeholder={t('promos.maxDiscountAmountPlaceholder')}
-                  formatter={(value) => `$${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                  parser={(value) => value.replace(/\$\s?|(,*)/g, '')}
-                />
-              </Form.Item>
-            </Col>
+                  ]}
+                >
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    min={0.01}
+                    max={(discountType === 'percentage' || discountType === 'bxgy') ? 100 : undefined}
+                    step={0.01}
+                    precision={2}
+                    placeholder={t('promos.discountValuePlaceholder')}
+                    formatter={(value) => {
+                      return (discountType === 'percentage' || discountType === 'bxgy') ? `${value}%` : `$${value}`;
+                    }}
+                    parser={(value) => value.replace(/[%$\s]/g, '')}
+                  />
+                </Form.Item>
+              </Col>
+            )}
+            
+            {/* BXGY Specific Fields */}
+            {discountType === 'bxgy' && (
+              <>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="buy_quantity"
+                    label={t('promos.buyQuantity')}
+                    rules={[
+                      { required: true, message: t('promos.buyQuantityRequired') }
+                    ]}
+                    initialValue={1}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={1}
+                      placeholder={t('promos.buyQuantityPlaceholder')}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="get_quantity"
+                    label={t('promos.getQuantity')}
+                    rules={[
+                      { required: true, message: t('promos.getQuantityRequired') }
+                    ]}
+                    initialValue={1}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={1}
+                      placeholder={t('promos.getQuantityPlaceholder')}
+                    />
+                  </Form.Item>
+                </Col>
+              </>
+            )}
+            
+            {discountType !== 'bxgy' && (
+              <>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="min_order_amount"
+                    label={t('promos.minOrderAmount')}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={0}
+                      step={0.01}
+                      precision={2}
+                      placeholder={t('promos.minOrderAmountPlaceholder')}
+                      formatter={(value) => `$${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                      parser={(value) => value.replace(/\$\s?|(,*)/g, '')}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={8}>
+                  <Form.Item
+                    name="max_discount_amount"
+                    label={t('promos.maxDiscountAmount')}
+                  >
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      min={0}
+                      step={0.01}
+                      precision={2}
+                      placeholder={t('promos.maxDiscountAmountPlaceholder')}
+                      formatter={(value) => `$${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                      parser={(value) => value.replace(/\$\s?|(,*)/g, '')}
+                    />
+                  </Form.Item>
+                </Col>
+              </>
+            )}
           </Row>
+
+          {/* BXGY Configuration Section */}
+          {discountType === 'bxgy' && (
+            <Row gutter={[16, 16]}>
+              <Col xs={24}>
+                <Typography.Title level={5}>{t('promos.bxgyConfiguration')}</Typography.Title>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="buy_type"
+                  label={t('promos.buyType')}
+                  initialValue="any"
+                >
+                  <Select placeholder={t('promos.selectBuyType')}>
+                    <Option value="any">{t('promos.buyTypeAny')}</Option>
+                    <Option value="specific_products">{t('promos.buyTypeSpecificProducts')}</Option>
+                    <Option value="specific_categories">{t('promos.buyTypeSpecificCategories')}</Option>
+                    <Option value="mixed">{t('promos.buyTypeMixed')}</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  name="get_type"
+                  label={t('promos.getType')}
+                  initialValue="same_product"
+                >
+                  <Select placeholder={t('promos.selectGetType')}>
+                    <Option value="same_product">{t('promos.getTypeSameProduct')}</Option>
+                    <Option value="specific_products">{t('promos.getTypeSpecificProducts')}</Option>
+                    <Option value="specific_categories">{t('promos.getTypeSpecificCategories')}</Option>
+                    <Option value="cheapest_from_buy">{t('promos.getTypeCheapestFromBuy')}</Option>
+                    <Option value="customer_choice">{t('promos.getTypeCustomerChoice')}</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item
+                  name="max_applications_per_order"
+                  label={t('promos.maxApplicationsPerOrder')}
+                >
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    min={1}
+                    placeholder={t('promos.maxApplicationsPlaceholder')}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item
+                  name="apply_to_cheapest"
+                  label={t('promos.applyToCheapest')}
+                  valuePropName="checked"
+                  initialValue={false}
+                >
+                  <Switch />
+                </Form.Item>
+              </Col>
+              <Col xs={24} sm={8}>
+                <Form.Item
+                  name="customer_chooses_free_item"
+                  label={t('promos.customerChoosesFreeItem')}
+                  valuePropName="checked"
+                  initialValue={false}
+                >
+                  <Switch />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
 
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={8}>
@@ -1001,8 +1264,17 @@ const PromoCodes = () => {
                   {selectedPromo.title_ar || '-'}
                 </Descriptions.Item>
                 <Descriptions.Item label={t('promos.type')}>
-                  <Tag color={selectedPromo.discount_type === 'percentage' ? 'blue' : 'green'}>
-                    {t(`promos.type${selectedPromo.discount_type.charAt(0).toUpperCase() + selectedPromo.discount_type.slice(1)}`)}
+                  <Tag color={
+                    selectedPromo.discount_type === 'percentage' ? 'blue' : 
+                    selectedPromo.discount_type === 'free_shipping' ? 'purple' : 
+                    selectedPromo.discount_type === 'bxgy' ? 'orange' : 'green'
+                  }>
+                    {selectedPromo.discount_type === 'free_shipping' 
+                      ? t('promos.typeFreeShipping')
+                      : selectedPromo.discount_type === 'bxgy'
+                      ? t('promos.typeBXGY')
+                      : t(`promos.type${selectedPromo.discount_type.charAt(0).toUpperCase() + selectedPromo.discount_type.slice(1)}`)
+                    }
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label={t('promos.discountValue')}>

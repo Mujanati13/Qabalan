@@ -25,8 +25,10 @@ import {
   Popconfirm,
   Drawer,
   Descriptions,
-  Tabs
+  Tabs,
+  Spin
 } from 'antd';
+import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import {
   EyeOutlined,
   EditOutlined,
@@ -50,11 +52,18 @@ import {
   EnvironmentOutlined,
   StarOutlined,
   DownloadOutlined,
-  MoreOutlined
+  MoreOutlined,
+  CarOutlined,
+  DollarOutlined,
+  GiftOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import customersService from '../services/customersService';
+import api from '../services/api';
 import moment from 'moment';
+import ExportButton from '../components/common/ExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
+import EnhancedAddressForm from '../components/common/EnhancedAddressForm';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -63,6 +72,7 @@ const { TabPane } = Tabs;
 
 const Customers = () => {
   const { t, language } = useLanguage();
+  const { getCustomersExportConfig } = useExportConfig();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -82,6 +92,65 @@ const Customers = () => {
   const [customerStats, setCustomerStats] = useState({});
   const [customerAddresses, setCustomerAddresses] = useState([]);
   const [customerOrders, setCustomerOrders] = useState([]);
+    const [customerShippingInfo, setCustomerShippingInfo] = useState({});
+  const [loadingShippingInfo, setLoadingShippingInfo] = useState(false);
+
+  // Load customer shipping analytics
+  const loadCustomerShippingInfo = async (customerId) => {
+    if (!customerId) return;
+    
+    try {
+      setLoadingShippingInfo(true);
+      const response = await api.get(`/shipping/customer-analytics/${customerId}`);
+      
+      if (response.data?.success) {
+        setCustomerShippingInfo(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error loading customer shipping info:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else if (error.response.status === 404) {
+          message.warning({
+            content: errorMessage || 'Customer shipping data not found',
+            duration: 4
+          });
+        } else {
+          message.error({
+            content: errorMessage || error.message || 'Failed to load customer shipping information',
+            duration: 5
+          });
+        }
+      } else {
+        message.error({
+          content: error.message || 'Network error while loading shipping information',
+          duration: 5
+        });
+      }
+      
+      // Set empty shipping info on error
+      setCustomerShippingInfo({});
+    } finally {
+      setLoadingShippingInfo(false);
+    }
+  };
   const [cities, setCities] = useState([]);
   const [areas, setAreas] = useState([]);
   const [streets, setStreets] = useState([]);
@@ -98,6 +167,23 @@ const Customers = () => {
     pageSize: 20,
     total: 0
   });
+
+  // Bulk selection state
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
+
+  // Table sorting hook
+  const {
+    sortedData: sortedCustomers,
+    getColumnSortProps
+  } = useTableSorting(customers, [
+    { key: 'created_at', direction: 'desc', comparator: (a, b, direction) => {
+      const aVal = new Date(a).getTime() || 0;
+      const bVal = new Date(b).getTime() || 0;
+      const result = aVal - bVal;
+      return direction === 'asc' ? result : -result;
+    }}
+  ]);
 
   // Handle search and filters with server-side filtering
 
@@ -121,8 +207,32 @@ const Customers = () => {
         total: response.pagination?.total || 0
       }));
     } catch (error) {
-      message.error(t('customers.fetchError'));
       console.error('Error loading customers:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('customers.fetchError'));
+        }
+      } else {
+        message.error(error.message || t('customers.fetchError'));
+      }
     } finally {
       setLoading(false);
     }
@@ -203,6 +313,7 @@ const Customers = () => {
     setProfileVisible(true);
     await loadCustomerAddresses(customer.id);
     await loadCustomerOrders(customer.id);
+    await loadCustomerShippingInfo(customer.id);
   };
 
   const handleEditCustomer = (customer) => {
@@ -226,8 +337,162 @@ const Customers = () => {
       message.success(t('customers.deleteSuccess'));
       loadCustomers();
     } catch (error) {
-      message.error(t('customers.deleteError'));
+      console.error('Error deleting customer:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else if (error.response.status === 409) {
+          message.error({
+            content: errorMessage || 'Cannot delete customer with existing orders',
+            duration: 5
+          });
+        } else {
+          message.error(errorMessage || error.message || t('customers.deleteError'));
+        }
+      } else {
+        message.error(error.message || t('customers.deleteError'));
+      }
     }
+  };
+
+  // Bulk action functions
+  const handleBulkDelete = async () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning(t('customers.bulk_actions.no_selection'));
+      return;
+    }
+
+    Modal.confirm({
+      title: t('customers.bulk_actions.confirm_delete'),
+      content: t('customers.bulk_actions.delete_warning').replace('{count}', selectedRowKeys.length),
+      okText: t('common.delete'),
+      okType: 'danger',
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => customersService.deleteCustomer(id)));
+          message.success(t('customers.bulk_actions.delete_success'));
+          setSelectedRowKeys([]);
+          loadCustomers();
+        } catch (error) {
+          message.error(t('customers.bulk_actions.operation_failed'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkStatusUpdate = async (status) => {
+    if (selectedRowKeys.length === 0) {
+      message.warning(t('customers.bulk_actions.no_selection'));
+      return;
+    }
+
+    Modal.confirm({
+      title: t('customers.bulk_actions.confirm_status_update'),
+      content: t('customers.bulk_actions.status_update_warning').replace('{count}', selectedRowKeys.length),
+      okText: t('common.update'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => 
+            status === 'active' 
+              ? customersService.activateCustomer(id)
+              : customersService.deactivateCustomer(id)
+          ));
+          message.success(t('customers.bulk_actions.status_update_success'));
+          setSelectedRowKeys([]);
+          loadCustomers();
+        } catch (error) {
+          message.error(t('customers.bulk_actions.operation_failed'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkExport = async () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning(t('customers.bulk_actions.no_selection'));
+      return;
+    }
+
+    try {
+      setBulkActionLoading(true);
+      const selectedCustomers = customers.filter(customer => selectedRowKeys.includes(customer.id));
+      
+      const csvData = selectedCustomers.map(customer => ({
+        [t('customers.name')]: customer.name,
+        [t('customers.email')]: customer.email,
+        [t('customers.phone')]: customer.phone,
+        [t('customers.type')]: customer.user_type,
+        [t('customers.status')]: customer.is_active ? t('common.active') : t('common.inactive'),
+        [t('customers.verified')]: customer.is_verified ? t('common.yes') : t('common.no'),
+        [t('customers.registrationDate')]: moment(customer.created_at).format('YYYY-MM-DD HH:mm:ss')
+      }));
+
+      const csvContent = [
+        Object.keys(csvData[0]).join(','),
+        ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `customers_${moment().format('YYYY-MM-DD')}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      message.success(t('customers.bulk_actions.export_success'));
+      setSelectedRowKeys([]);
+    } catch (error) {
+      message.error(t('customers.bulk_actions.operation_failed'));
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  // Row selection configuration
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: setSelectedRowKeys,
+    onSelectAll: (selected, selectedRows, changeRows) => {
+      if (selected) {
+        setSelectedRowKeys(customers.map(customer => customer.id));
+      } else {
+        setSelectedRowKeys([]);
+      }
+    },
+    onSelect: (record, selected, selectedRows) => {
+      if (selected) {
+        setSelectedRowKeys([...selectedRowKeys, record.id]);
+      } else {
+        setSelectedRowKeys(selectedRowKeys.filter(key => key !== record.id));
+      }
+    },
   };
 
   const handleActivateCustomer = async (customerId) => {
@@ -236,7 +501,32 @@ const Customers = () => {
       message.success(t('customers.activateSuccess'));
       loadCustomers();
     } catch (error) {
-      message.error(error.message);
+      console.error('Error activating customer:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || 'Failed to activate customer');
+        }
+      } else {
+        message.error(error.message || 'Failed to activate customer');
+      }
     }
   };
 
@@ -254,7 +544,32 @@ const Customers = () => {
       customerForm.resetFields();
       loadCustomers();
     } catch (error) {
-      message.error(error.message || t('customers.createError'));
+      console.error('Error creating customer:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('customers.createError'));
+        }
+      } else {
+        message.error(error.message || t('customers.createError'));
+      }
     }
   };
 
@@ -272,7 +587,32 @@ const Customers = () => {
       customerForm.resetFields();
       loadCustomers();
     } catch (error) {
-      message.error(error.message || t('customers.updateError'));
+      console.error('Error updating customer:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('customers.updateError'));
+        }
+      } else {
+        message.error(error.message || t('customers.updateError'));
+      }
     }
   };
 
@@ -284,7 +624,32 @@ const Customers = () => {
       setPasswordVisible(false);
       passwordForm.resetFields();
     } catch (error) {
-      message.error(error.message || t('customers.passwordChangeError'));
+      console.error('Error changing password:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('customers.passwordChangeError'));
+        }
+      } else {
+        message.error(error.message || t('customers.passwordChangeError'));
+      }
     }
   };
 
@@ -329,7 +694,34 @@ const Customers = () => {
       addressForm.resetFields();
       await loadCustomerAddresses(selectedCustomer.id);
     } catch (error) {
-      message.error(error.message || t('customers.addressCreateError'));
+      console.error('Error saving address:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          const action = editingAddress ? 'update' : 'create';
+          message.error(errorMessage || error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`));
+        }
+      } else {
+        const action = editingAddress ? 'update' : 'create';
+        message.error(error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`));
+      }
     }
   };
 
@@ -393,6 +785,7 @@ const Customers = () => {
     {
       title: t('customers.fullName'),
       key: 'fullName',
+      ...getColumnSortProps('first_name', 'string'),
       render: (_, record) => (
         <div>
           <div style={{ fontWeight: 'bold' }}>
@@ -409,6 +802,7 @@ const Customers = () => {
       dataIndex: 'email',
       key: 'email',
       responsive: ['md'],
+      ...getColumnSortProps('email', 'string'),
       render: (email) => (
         <Space>
           <MailOutlined />
@@ -421,6 +815,7 @@ const Customers = () => {
       dataIndex: 'phone',
       key: 'phone',
       responsive: ['lg'],
+      ...getColumnSortProps('phone', 'string'),
       render: (phone) => phone ? (
         <Space>
           <PhoneOutlined />
@@ -433,6 +828,7 @@ const Customers = () => {
       key: 'status',
       width: 120,
       responsive: ['sm'],
+      ...getColumnSortProps('is_active', 'number'),
       render: (_, record) => (
         <Space direction="vertical" size="small">
           <Tag color={record.is_active ? 'green' : 'red'}>
@@ -450,6 +846,7 @@ const Customers = () => {
       key: 'orders_count',
       width: 100,
       responsive: ['md'],
+      ...getColumnSortProps('orders_count', 'number'),
       render: (count) => (
         <Badge count={count || 0} style={{ backgroundColor: '#1890ff' }} />
       )
@@ -460,6 +857,7 @@ const Customers = () => {
       key: 'created_at',
       width: 120,
       responsive: ['lg'],
+      ...getColumnSortProps('created_at', 'date'),
       render: (date) => moment(date).format('YYYY-MM-DD')
     },
     {
@@ -682,24 +1080,119 @@ const Customers = () => {
 
       {/* Customers Table */}
       <Card>
+        {/* Bulk Actions */}
+        {selectedRowKeys.length > 0 && (
+          <div style={{ 
+            marginBottom: 16, 
+            padding: 12, 
+            backgroundColor: '#f0f2f5', 
+            borderRadius: 6,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <Text>
+              {t('customers.bulk_actions.selected_count').replace('{count}', selectedRowKeys.length)}
+            </Text>
+            <Space>
+              <Button 
+                size="small" 
+                onClick={() => setSelectedRowKeys([])}
+              >
+                {t('customers.bulk_actions.deselect_all')}
+              </Button>
+              <Button 
+                size="small" 
+                type="primary" 
+                icon={<DownloadOutlined />}
+                onClick={handleBulkExport}
+                loading={bulkActionLoading}
+              >
+                {t('customers.bulk_actions.export_selected')}
+              </Button>
+              <Dropdown
+                overlay={
+                  <Menu>
+                    <Menu.Item 
+                      key="activate" 
+                      icon={<CheckCircleOutlined />}
+                      onClick={() => handleBulkStatusUpdate('active')}
+                    >
+                      {t('customers.bulk_actions.activate')}
+                    </Menu.Item>
+                    <Menu.Item 
+                      key="deactivate" 
+                      icon={<CloseCircleOutlined />}
+                      onClick={() => handleBulkStatusUpdate('inactive')}
+                    >
+                      {t('customers.bulk_actions.deactivate')}
+                    </Menu.Item>
+                  </Menu>
+                }
+                trigger={['click']}
+              >
+                <Button 
+                  size="small" 
+                  loading={bulkActionLoading}
+                >
+                  {t('customers.bulk_actions.update_status')} <DownloadOutlined />
+                </Button>
+              </Dropdown>
+              <Button 
+                size="small" 
+                type="primary" 
+                danger 
+                icon={<DeleteOutlined />}
+                onClick={handleBulkDelete}
+                loading={bulkActionLoading}
+              >
+                {t('customers.bulk_actions.delete_selected')}
+              </Button>
+            </Space>
+          </div>
+        )}
+
         <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Text strong>
             {t('common.totalItems', { total: pagination.total })}
           </Text>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => loadCustomers()}
-            loading={loading}
-          >
-            {t('common.refresh')}
-          </Button>
+          <Space.Compact>
+            <ExportButton
+              {...getCustomersExportConfig(customers, columns)}
+              showFormats={['csv', 'excel', 'pdf']}
+            />
+            <Dropdown
+              overlay={
+                <Menu>
+                  <Menu.Item 
+                    key="refresh" 
+                    icon={<ReloadOutlined />}
+                    onClick={() => loadCustomers()}
+                    disabled={loading}
+                  >
+                    {t('common.refresh')}
+                  </Menu.Item>
+                </Menu>
+              }
+              trigger={['click']}
+            >
+              <Button
+                icon={<MoreOutlined />}
+                loading={loading}
+              >
+                {t('common.actions')}
+              </Button>
+            </Dropdown>
+          </Space.Compact>
         </div>
 
         <Table
           columns={columns}
-          dataSource={customers}
+          dataSource={sortedCustomers}
           rowKey="id"
           loading={loading}
+          rowSelection={rowSelection}
+          onChange={() => {}} // Disable default sorting
           pagination={{
             current: pagination.current,
             pageSize: pagination.pageSize,
@@ -733,6 +1226,8 @@ const Customers = () => {
             customer={selectedCustomer}
             addresses={customerAddresses}
             orders={customerOrders}
+            customerShippingInfo={customerShippingInfo}
+            loadingShippingInfo={loadingShippingInfo}
             onEditCustomer={handleEditCustomer}
             onEditAddress={handleEditAddress}
             onDeleteAddress={handleDeleteAddress}
@@ -790,9 +1285,9 @@ const Customers = () => {
           addressForm.resetFields();
         }}
         footer={null}
-        width={600}
+        width={800}
       >
-        <AddressForm
+        <EnhancedAddressForm
           form={addressForm}
           onFinish={handleSaveAddress}
           cities={cities}
@@ -801,6 +1296,10 @@ const Customers = () => {
           onCityChange={loadAreas}
           onAreaChange={loadStreets}
           isEditing={!!editingAddress}
+          initialCoordinates={editingAddress ? { 
+            lat: editingAddress.latitude, 
+            lng: editingAddress.longitude 
+          } : null}
           t={t}
         />
       </Modal>
@@ -809,7 +1308,7 @@ const Customers = () => {
 };
 
 // Customer Profile Component
-const CustomerProfile = ({ customer, addresses, orders, onEditCustomer, onEditAddress, onDeleteAddress, onSetDefaultAddress, onAddAddress, t }) => (
+const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, loadingShippingInfo, onEditCustomer, onEditAddress, onDeleteAddress, onSetDefaultAddress, onAddAddress, t }) => (
   <Tabs defaultActiveKey="info">
     <TabPane tab={t('customers.profile')} key="info">
       <Descriptions column={1} bordered>
@@ -906,11 +1405,46 @@ const CustomerProfile = ({ customer, addresses, orders, onEditCustomer, onEditAd
             </Space>
           }
         >
-          <Text>
-            {address.building_no && `${address.building_no}, `}
-            {address.city_title_en}, {address.area_title_en}
-            {address.details && ` - ${address.details}`}
-          </Text>
+          <div style={{ marginBottom: 8 }}>
+            <Text>
+              {address.building_no && `${address.building_no}, `}
+              {address.city_title_en}, {address.area_title_en}
+              {address.details && ` - ${address.details}`}
+            </Text>
+          </div>
+          
+          {/* Shipping Zone Information */}
+          {address.shipping_zone_info && (
+            <div style={{ padding: '8px', backgroundColor: '#f6ffed', borderRadius: '4px', border: '1px solid #b7eb8f' }}>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Shipping Zone:</Text><br />
+                  <Text strong style={{ fontSize: '12px' }}>{address.shipping_zone_info.zone_name_en}</Text>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Base Fee:</Text><br />
+                  <Text strong style={{ fontSize: '12px', color: '#52c41a' }}>
+                    {address.shipping_zone_info.base_fee?.toFixed(2)} JOD
+                  </Text>
+                </Col>
+                <Col span={8}>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Free Shipping:</Text><br />
+                  <Text strong style={{ fontSize: '12px' }}>
+                    {address.shipping_zone_info.free_shipping_threshold?.toFixed(2)} JOD+
+                  </Text>
+                </Col>
+              </Row>
+            </div>
+          )}
+          
+          {/* Delivery Fee Display */}
+          {address.delivery_fee && (
+            <div style={{ marginTop: 8 }}>
+              <Tag color="blue" style={{ fontSize: '11px' }}>
+                🚚 Delivery Fee: {address.delivery_fee.toFixed(2)} JOD
+              </Tag>
+            </div>
+          )}
         </Card>
       ))}
     </TabPane>
@@ -937,6 +1471,113 @@ const CustomerProfile = ({ customer, addresses, orders, onEditCustomer, onEditAd
         ))
       ) : (
         <Alert message={t('customers.noOrders')} type="info" />
+      )}
+    </TabPane>
+
+    <TabPane tab="🚚 Shipping Analytics" key="shipping">
+      {loadingShippingInfo ? (
+        <div style={{ textAlign: 'center', padding: '20px' }}>
+          <Spin size="large" />
+        </div>
+      ) : customerShippingInfo && Object.keys(customerShippingInfo).length > 0 ? (
+        <div>
+          {/* Shipping Statistics */}
+          <Row gutter={16} style={{ marginBottom: '16px' }}>
+            <Col span={6}>
+              <Card>
+                <Statistic 
+                  title="Total Deliveries" 
+                  value={customerShippingInfo.total_orders || 0}
+                  prefix={<CarOutlined />}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic 
+                  title="Avg Distance" 
+                  value={customerShippingInfo.avg_distance || 0}
+                  suffix="km"
+                  precision={1}
+                  prefix={<EnvironmentOutlined />}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic 
+                  title="Total Shipping Cost" 
+                  value={customerShippingInfo.total_shipping_cost || 0}
+                  suffix="JOD"
+                  precision={2}
+                  prefix={<DollarOutlined />}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic 
+                  title="Free Shipping Rate" 
+                  value={customerShippingInfo.free_shipping_percentage || 0}
+                  suffix="%"
+                  precision={1}
+                  prefix={<GiftOutlined />}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* Most Used Zone */}
+          {customerShippingInfo.most_used_zone && (
+            <Card title="Most Used Shipping Zone" size="small" style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <Text strong>{customerShippingInfo.most_used_zone.zone_name_en}</Text>
+                  <br />
+                  <Text type="secondary">
+                    {customerShippingInfo.most_used_zone.distance_range_start}-{customerShippingInfo.most_used_zone.distance_range_end} km
+                  </Text>
+                </div>
+                <div>
+                  <Tag color="blue">{customerShippingInfo.most_used_zone.usage_count} orders</Tag>
+                  <br />
+                  <Text strong style={{ color: '#52c41a' }}>
+                    {customerShippingInfo.most_used_zone.base_fee?.toFixed(2)} JOD base
+                  </Text>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Recent Shipping History */}
+          {customerShippingInfo.recent_shipments && customerShippingInfo.recent_shipments.length > 0 && (
+            <Card title="Recent Shipments" size="small">
+              {customerShippingInfo.recent_shipments.map((shipment, index) => (
+                <Card key={index} size="small" style={{ marginBottom: 8 }}>
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Text type="secondary">Order:</Text><br />
+                      <Text strong>#{shipment.order_number}</Text>
+                    </Col>
+                    <Col span={8}>
+                      <Text type="secondary">Distance:</Text><br />
+                      <Text>{shipment.distance_km?.toFixed(2)} km</Text>
+                    </Col>
+                    <Col span={8}>
+                      <Text type="secondary">Shipping Cost:</Text><br />
+                      <Text strong style={{ color: shipment.free_shipping_applied ? '#52c41a' : '#1890ff' }}>
+                        {shipment.shipping_cost?.toFixed(2)} JOD
+                        {shipment.free_shipping_applied && <Tag color="green" size="small" style={{ marginLeft: 4 }}>FREE</Tag>}
+                      </Text>
+                    </Col>
+                  </Row>
+                </Card>
+              ))}
+            </Card>
+          )}
+        </div>
+      ) : (
+        <Alert message="No shipping data available" type="info" />
       )}
     </TabPane>
   </Tabs>
@@ -1120,129 +1761,6 @@ const PasswordForm = ({ form, onFinish, t }) => (
       <Space>
         <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
           {t('customers.changePassword')}
-        </Button>
-        <Button onClick={() => form.resetFields()}>
-          {t('common.cancel')}
-        </Button>
-      </Space>
-    </Form.Item>
-  </Form>
-);
-
-// Address Form Component
-const AddressForm = ({ form, onFinish, cities, areas, streets, onCityChange, onAreaChange, isEditing, t }) => (
-  <Form
-    form={form}
-    layout="vertical"
-    onFinish={onFinish}
-    autoComplete="off"
-  >
-    <Form.Item
-      label={t('customers.addressName')}
-      name="name"
-      rules={[
-        { required: true, message: t('common.required') },
-        { min: 2, message: t('common.minLength', { min: 2 }) }
-      ]}
-    >
-      <Input placeholder={t('customers.addressName')} />
-    </Form.Item>
-
-    <Row gutter={16}>
-      <Col span={8}>
-        <Form.Item
-          label={t('customers.city')}
-          name="city_id"
-          rules={[{ required: true, message: t('common.required') }]}
-        >
-          <Select
-            placeholder={t('customers.city')}
-            onChange={(value) => {
-              onCityChange(value);
-              form.setFieldsValue({ area_id: undefined, street_id: undefined });
-            }}
-          >
-            {cities.map(city => (
-              <Option key={city.id} value={city.id}>
-                {city.title_en}
-              </Option>
-            ))}
-          </Select>
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item
-          label={t('customers.area')}
-          name="area_id"
-          rules={[{ required: true, message: t('common.required') }]}
-        >
-          <Select
-            placeholder={t('customers.area')}
-            onChange={(value) => {
-              onAreaChange(value);
-              form.setFieldsValue({ street_id: undefined });
-            }}
-          >
-            {areas.map(area => (
-              <Option key={area.id} value={area.id}>
-                {area.title_en}
-              </Option>
-            ))}
-          </Select>
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item
-          label={t('customers.street')}
-          name="street_id"
-          rules={[{ required: true, message: t('common.required') }]}
-        >
-          <Select placeholder={t('customers.street')}>
-            {streets.map(street => (
-              <Option key={street.id} value={street.id}>
-                {street.title_en}
-              </Option>
-            ))}
-          </Select>
-        </Form.Item>
-      </Col>
-    </Row>
-
-    <Row gutter={16}>
-      <Col span={8}>
-        <Form.Item label={t('customers.buildingNo')} name="building_no">
-          <Input />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item label={t('customers.floorNo')} name="floor_no">
-          <Input />
-        </Form.Item>
-      </Col>
-      <Col span={8}>
-        <Form.Item label={t('customers.apartmentNo')} name="apartment_no">
-          <Input />
-        </Form.Item>
-      </Col>
-    </Row>
-
-    <Form.Item label={t('customers.details')} name="details">
-      <Input.TextArea rows={3} />
-    </Form.Item>
-
-    <Form.Item
-      label={t('customers.defaultAddress')}
-      name="is_default"
-      valuePropName="checked"
-      initialValue={false}
-    >
-      <Switch />
-    </Form.Item>
-
-    <Form.Item>
-      <Space>
-        <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
-          {isEditing ? t('common.update') : t('common.create')}
         </Button>
         <Button onClick={() => form.resetFields()}>
           {t('common.cancel')}

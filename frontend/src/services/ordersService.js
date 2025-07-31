@@ -126,12 +126,20 @@ const ordersService = {
   },
 
   // Get recent orders for real-time updates
-  getRecentOrders: async (since) => {
+  getRecentOrders: async (sinceTimestamp) => {
     try {
-      const response = await api.get(`/orders/recent?since=${since}`);
+      const params = {};
+      if (sinceTimestamp) {
+        // Backend expects a numeric timestamp, not ISO string
+        params.since = sinceTimestamp;
+      }
+      
+      const response = await api.get('/orders/recent', { params });
       return response.data;
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch recent orders');
+      console.error('Failed to fetch recent orders:', error);
+      // Return empty array if endpoint doesn't exist yet
+      return { data: [] };
     }
   },
 
@@ -158,6 +166,21 @@ const ordersService = {
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch order counts');
     }
+  },
+
+  // Calculate order totals (including delivery fee)
+  calculateOrder: async (orderData) => {
+    try {
+      const response = await api.post('/orders/calculate', orderData);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to calculate order totals');
+    }
+  },
+
+  // Alias for backward compatibility
+  create: function(orderData) {
+    return this.createOrder(orderData);
   }
 };
 

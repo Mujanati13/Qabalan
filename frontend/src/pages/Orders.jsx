@@ -25,7 +25,9 @@ import {
   Form,
   InputNumber,
   DatePicker,
-  Popconfirm
+  Popconfirm,
+  Menu,
+  Dropdown
 } from 'antd';
 import {
   EyeOutlined,
@@ -46,11 +48,23 @@ import {
   CloseCircleOutlined,
   ExclamationCircleOutlined,
   SaveOutlined,
-  FileTextOutlined
+  DownOutlined,
+  ExportOutlined,
+  ClearOutlined,
+  FileTextOutlined,
+  MoreOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useNotifications } from '../contexts/NotificationContext';
+import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import ordersService from '../services/ordersService';
-import { createNotificationSound } from '../utils/notificationSound';
+import NotificationControls from '../components/notifications/NotificationControls';
+import OrderItemCard from '../components/orders/OrderItemCard';
+import OrderItemsPreview from '../components/orders/OrderItemsPreview';
+import ExportButton from '../components/common/ExportButton';
+import { useExportConfig } from '../hooks/useExportConfig';
+import CreateOrderModal from '../components/common/CreateOrderModal';
+import api from '../services/api';
 import moment from 'moment';
 
 const { Title, Text } = Typography;
@@ -59,6 +73,13 @@ const { Option } = Select;
 
 const Orders = () => {
   const { t, language } = useLanguage();
+  const { 
+    pendingOrdersCount, 
+    updatePendingCount, 
+    refreshNotifications 
+  } = useNotifications();
+  const { getOrdersExportConfig } = useExportConfig();
+  
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
@@ -75,55 +96,45 @@ const Orders = () => {
   const [branches, setBranches] = useState([]);
   const [products, setProducts] = useState([]);
   const [selectedItems, setSelectedItems] = useState([]);
+  const [shippingZones, setShippingZones] = useState([]);
+  const [shippingCalculation, setShippingCalculation] = useState(null);
+  const [customerAddresses, setCustomerAddresses] = useState([]);
   const [filters, setFilters] = useState({
     status: 'all',
     order_type: 'all',
     payment_method: 'all',
-    date_range: 'today'
+    date_range: 'today',
+    custom_date_range: null
   });
   const [orderStats, setOrderStats] = useState({});
   const [orderCounts, setOrderCounts] = useState({});
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [lastOrderCheck, setLastOrderCheck] = useState(Date.now());
   
-  const notificationSound = useRef(null);
-  const refreshIntervalRef = useRef(null);
+  // Bulk selection states
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
+  const [bulkActionVisible, setBulkActionVisible] = useState(false);
+  const [bulkActionLoading, setBulkActionLoading] = useState(false);
 
-  // Sound notification setup
-  useEffect(() => {
-    try {
-      notificationSound.current = createNotificationSound();
-    } catch (error) {
-      console.error('Failed to initialize notification sound:', error);
-    }
-  }, []);
-
-  // Auto refresh setup
-  useEffect(() => {
-    if (autoRefresh) {
-      refreshIntervalRef.current = setInterval(() => {
-        checkForNewOrders();
-        fetchOrderCounts();
-      }, 30000); // Check every 30 seconds
-    } else {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    }
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    };
-  }, [autoRefresh, lastOrderCheck]);
+  // Initialize table sorting with default sorting by created_at (newest first)
+  const {
+    sortedData: sortedOrders,
+    sortConfig,
+    getColumnSortProps,
+    clearSorting
+  } = useTableSorting(orders, [
+    { key: 'created_at', direction: 'desc', comparator: (a, b, direction) => {
+      const aVal = new Date(a).getTime() || 0;
+      const bVal = new Date(b).getTime() || 0;
+      const result = aVal - bVal;
+      return direction === 'asc' ? result : -result;
+    }}
+  ]);
 
   useEffect(() => {
     fetchOrders();
     fetchOrderStats();
     fetchOrderCounts();
     fetchBranches();
+    fetchShippingZones();
   }, [filters]);
 
   const fetchOrders = async () => {
@@ -137,10 +148,46 @@ const Orders = () => {
         limit: 50
       };
       
+      // Handle custom date range
+      if (filters.date_range === 'custom' && filters.custom_date_range) {
+        const [startDate, endDate] = filters.custom_date_range;
+        if (startDate && endDate) {
+          params.start_date = startDate.format('YYYY-MM-DD');
+          params.end_date = endDate.format('YYYY-MM-DD');
+          // Remove the date_range parameter when using custom range
+          delete params.date_range;
+        }
+      }
+      
       const response = await ordersService.getOrders(params);
       setOrders(response.data || []);
     } catch (error) {
-      message.error(t('errors.fetch_failed'));
+      console.error('Fetch orders error:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('errors.fetch_failed'));
+        }
+      } else {
+        message.error(error.message || t('errors.fetch_failed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -170,43 +217,43 @@ const Orders = () => {
   const fetchBranches = async () => {
     try {
       // You'll need to add this endpoint or import from another service
-      const response = await fetch('/api/branches');
-      const data = await response.json();
+      const response = await api.get('/branches');
+      const data = response.data;
       setBranches(data.data || []);
     } catch (error) {
       console.error('Failed to fetch branches:', error);
       // Fallback to mock data
       setBranches([
-        { id: 1, title_en: 'Main Branch', title_ar: 'الفرع الرئيسي' },
-        { id: 2, title_en: 'Second Branch', title_ar: 'الفرع الثاني' }
+        { id: 635, title_en: 'Amman Main Branch', title_ar: 'فرع عمان الرئيسي', latitude: 31.9454, longitude: 35.9284 },
+        { id: 636, title_en: 'West Amman Branch', title_ar: 'فرع غرب عمان', latitude: 31.9394, longitude: 35.8714 }
       ]);
     }
   };
 
-  const checkForNewOrders = async () => {
+  const fetchShippingZones = async () => {
     try {
-      const response = await ordersService.getRecentOrders(lastOrderCheck);
-      const newOrders = response.data || [];
-      
-      if (newOrders.length > 0 && soundEnabled) {
-        playNotificationSound();
-        message.success(t('orders.new_orders_received', { count: newOrders.length }));
-        
-        // Refresh the orders list
-        fetchOrders();
-      }
-      
-      setLastOrderCheck(Date.now());
+      const response = await api.get('/shipping/zones');
+      setShippingZones(response.data.data.zones || []);
     } catch (error) {
-      console.error('Failed to check for new orders:', error);
+      console.error('Failed to fetch shipping zones:', error);
+      setShippingZones([]);
     }
   };
 
-  const playNotificationSound = () => {
-    if (notificationSound.current && soundEnabled) {
-      notificationSound.current.play().catch(error => {
-        console.error('Failed to play notification sound:', error);
+  const calculateShippingCost = async (deliveryAddressId, branchId, orderAmount = 0) => {
+    try {
+      if (!deliveryAddressId || !branchId) return null;
+      
+      const response = await api.post('/shipping/calculate', {
+        delivery_address_id: deliveryAddressId,
+        branch_id: branchId,
+        order_amount: orderAmount
       });
+      
+      return response.data.data;
+    } catch (error) {
+      console.error('Failed to calculate shipping cost:', error);
+      return null;
     }
   };
 
@@ -223,8 +270,35 @@ const Orders = () => {
       setStatusNotes('');
       fetchOrders();
       fetchOrderCounts();
+      // Update notification badge counter
+      updatePendingCount();
     } catch (error) {
-      message.error(error.message);
+      console.error('Status update error:', error);
+      
+      // Enhanced error handling
+      if (error.response?.data) {
+        const { message: errorMessage, errors, message_ar } = error.response.data;
+        
+        if (errors && Array.isArray(errors)) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('common.validationFailed')}:</strong>
+                <ul style={{ marginTop: '8px', marginBottom: 0, paddingLeft: '20px' }}>
+                  {errors.map((error, index) => (
+                    <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            ),
+            duration: 6
+          });
+        } else {
+          message.error(errorMessage || error.message || t('orders.status_update_error'));
+        }
+      } else {
+        message.error(error.message || t('orders.status_update_error'));
+      }
     } finally {
       setStatusUpdateLoading(false);
     }
@@ -263,6 +337,8 @@ const Orders = () => {
       setSelectedItems([]);
       fetchOrders();
       fetchOrderCounts();
+      // Update notification badge counter
+      updatePendingCount();
     } catch (error) {
       message.error(error.message);
     }
@@ -278,6 +354,8 @@ const Orders = () => {
       setEditingOrder(null);
       orderForm.resetFields();
       fetchOrders();
+      // Update notification badge counter
+      updatePendingCount();
     } catch (error) {
       message.error(error.message);
     }
@@ -289,6 +367,8 @@ const Orders = () => {
       message.success(t('orders.deleted_successfully'));
       fetchOrders();
       fetchOrderCounts();
+      // Update notification badge counter
+      updatePendingCount();
     } catch (error) {
       message.error(error.message);
     }
@@ -327,11 +407,130 @@ const Orders = () => {
           message.success(t('orders.cancelled_successfully'));
           fetchOrders();
           fetchOrderCounts();
+          // Update notification badge counter
+          updatePendingCount();
         } catch (error) {
           message.error(error.message);
         }
       }
     });
+  };
+
+  // Bulk selection functions
+  const onSelectChange = (newSelectedRowKeys) => {
+    setSelectedRowKeys(newSelectedRowKeys);
+  };
+
+  const hasSelected = selectedRowKeys.length > 0;
+
+  const handleBulkDelete = async () => {
+    if (!hasSelected) return;
+    
+    Modal.confirm({
+      title: t('orders.bulk_delete_confirm_title'),
+      content: t('orders.bulk_delete_confirm_message', { count: selectedRowKeys.length }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => ordersService.deleteOrder(id)));
+          message.success(t('orders.bulk_deleted_successfully', { count: selectedRowKeys.length }));
+          setSelectedRowKeys([]);
+          fetchOrders();
+          fetchOrderCounts();
+          updatePendingCount();
+        } catch (error) {
+          message.error(t('orders.bulk_delete_error'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkStatusUpdate = async (status) => {
+    if (!hasSelected) return;
+    
+    Modal.confirm({
+      title: t('orders.bulk_status_update_confirm_title'),
+      content: t('orders.bulk_status_update_confirm_message', { 
+        count: selectedRowKeys.length, 
+        status: t(`orders.status_${status}`) 
+      }),
+      okText: t('common.confirm'),
+      cancelText: t('common.cancel'),
+      onOk: async () => {
+        try {
+          setBulkActionLoading(true);
+          await Promise.all(selectedRowKeys.map(id => 
+            ordersService.updateOrderStatus(id, { 
+              order_status: status, 
+              notes: 'Bulk status update by admin' 
+            })
+          ));
+          message.success(t('orders.bulk_status_updated_successfully', { 
+            count: selectedRowKeys.length 
+          }));
+          setSelectedRowKeys([]);
+          fetchOrders();
+          fetchOrderCounts();
+          updatePendingCount();
+        } catch (error) {
+          message.error(t('orders.bulk_status_update_error'));
+        } finally {
+          setBulkActionLoading(false);
+        }
+      }
+    });
+  };
+
+  const handleBulkExport = () => {
+    if (!hasSelected) return;
+    
+    const selectedOrders = orders.filter(order => selectedRowKeys.includes(order.id));
+    const csvData = selectedOrders.map(order => ({
+      'Order ID': order.id,
+      'Order Number': order.order_number,
+      'Customer': order.customer_name,
+      'Status': order.order_status,
+      'Total': order.total_amount,
+      'Date': new Date(order.created_at).toLocaleDateString(),
+      'Payment Method': order.payment_method,
+      'Order Type': order.order_type
+    }));
+    
+    const csvContent = [
+      Object.keys(csvData[0]).join(','),
+      ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `orders_export_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    message.success(t('orders.exported_successfully', { count: selectedRowKeys.length }));
+  };
+
+  const clearSelection = () => {
+    setSelectedRowKeys([]);
+  };
+
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: onSelectChange,
+    selections: [
+      Table.SELECTION_ALL,
+      Table.SELECTION_INVERT,
+      Table.SELECTION_NONE,
+    ],
   };
 
   const getStatusColor = (status) => {
@@ -388,6 +587,7 @@ const Orders = () => {
       dataIndex: 'order_number',
       key: 'order_number',
       width: 120,
+      ...getColumnSortProps('order_number', 'string'),
       render: (orderNumber) => (
         <Text strong style={{ color: '#1890ff' }}>
           {orderNumber}
@@ -396,8 +596,10 @@ const Orders = () => {
     },
     {
       title: t('orders.customer'),
-      key: 'customer',
+      key: 'customer_name',
+      dataIndex: 'customer_name',
       width: 200,
+      ...getColumnSortProps('customer_name', 'string'),
       render: (_, record) => (
         <div>
           <div style={{ fontWeight: 'bold' }}>{record.customer_name}</div>
@@ -419,6 +621,7 @@ const Orders = () => {
       dataIndex: 'order_status',
       key: 'status',
       width: 120,
+      ...getColumnSortProps('order_status', 'string'),
       render: (status) => (
         <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
           {t(`orders.status_${status}`)}
@@ -430,6 +633,7 @@ const Orders = () => {
       dataIndex: 'order_type',
       key: 'order_type',
       width: 100,
+      ...getColumnSortProps('order_type', 'string'),
       render: (type) => (
         <Tag color={type === 'delivery' ? 'blue' : 'green'}>
           {type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
@@ -442,6 +646,7 @@ const Orders = () => {
       dataIndex: 'total_amount',
       key: 'total',
       width: 100,
+      ...getColumnSortProps('total_amount', 'currency'),
       render: (total) => (
         <Text strong style={{ color: '#52c41a' }}>
           {formatPrice(total)}
@@ -452,6 +657,7 @@ const Orders = () => {
       title: t('orders.payment'),
       key: 'payment',
       width: 120,
+      ...getColumnSortProps('payment_status', 'string'),
       render: (_, record) => (
         <div>
           <Tag>{t(`orders.payment_${record.payment_method}`)}</Tag>
@@ -468,12 +674,14 @@ const Orders = () => {
       dataIndex: 'created_at',
       key: 'created_at',
       width: 140,
+      ...getColumnSortProps('created_at', 'date'),
       render: (date) => new Date(date).toLocaleString()
     },
     {
       title: t('orders.points'),
       key: 'points',
       width: 100,
+      ...getColumnSortProps('points_earned', 'number'),
       render: (_, record) => (
         <div style={{ fontSize: '12px' }}>
           {record.points_earned > 0 && (
@@ -496,21 +704,34 @@ const Orders = () => {
       title: t('orders.items_count'),
       dataIndex: 'items_count',
       key: 'items_count',
-      width: 80,
-      render: (count) => (
-        <Badge count={count} style={{ backgroundColor: '#52c41a' }} />
+      width: 180,
+      ...getColumnSortProps('items_count', 'number'),
+      render: (count, record) => (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
+            <Badge count={count} style={{ backgroundColor: '#52c41a', marginRight: '8px' }} />
+            <Text strong style={{ fontSize: '12px' }}>
+              {count} item{count > 1 ? 's' : ''}
+            </Text>
+          </div>
+          <OrderItemsPreview 
+            items={record.items} 
+            formatPrice={formatPrice} 
+            maxItems={2}
+          />
+        </div>
       )
     },
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 300,
+      width: 120,
       fixed: 'right',
       render: (_, record) => (
-        <Space size="small" wrap>
+        <Space size="small">
           <Tooltip title={t('common.view_details')}>
             <Button
-              type="primary"
+              type="text"
               size="small"
               icon={<EyeOutlined />}
               onClick={async () => {
@@ -525,19 +746,21 @@ const Orders = () => {
                 }
               }}
             />
-          </Tooltip>              <Tooltip title={t('common.edit')}>
-                <Button
-                  type="default"
-                  size="small"
+          </Tooltip>
+          <Dropdown
+            overlay={
+              <Menu>
+                <Menu.Item 
+                  key="edit" 
                   icon={<EditOutlined />}
                   onClick={() => showEditModal(record)}
                   disabled={!['pending', 'confirmed'].includes(record.order_status)}
-                />
-              </Tooltip>              {canAdvanceStatus(record.order_status) && (
-                <Tooltip title={t('orders.advance_status')}>
-                  <Button
-                    type="default"
-                    size="small"
+                >
+                  {t('common.edit')}
+                </Menu.Item>
+                {canAdvanceStatus(record.order_status) && (
+                  <Menu.Item 
+                    key="advance" 
                     icon={<CheckCircleOutlined />}
                     onClick={() => {
                       setSelectedOrder(record);
@@ -546,38 +769,51 @@ const Orders = () => {
                     }}
                   >
                     {t(`orders.status_${getNextStatus(record.order_status)}`)}
-                  </Button>
-                </Tooltip>
-              )}
-          
-          <Tooltip title={t('orders.update_status')}>                <Button
-                  type="default"
-                  size="small"
+                  </Menu.Item>
+                )}
+                <Menu.Item 
+                  key="update_status" 
                   icon={<FileTextOutlined />}
                   onClick={() => {
                     setSelectedOrder(record);
                     setSelectedStatus(record.order_status);
                     setStatusUpdateVisible(true);
                   }}
-                />
-          </Tooltip>              {['pending', 'confirmed'].includes(record.order_status) && (
-                <Popconfirm
-                  title={t('orders.cancel_confirm_title')}
-                  description={t('orders.cancel_confirm_message')}
-                  onConfirm={() => handleDeleteOrder(record)}
-                  okText={t('common.confirm')}
-                  cancelText={t('common.cancel')}
-                  okType="danger"
                 >
-                  <Tooltip title={t('orders.cancel_order')}>
-                    <Button
-                      danger
-                      size="small"
+                  {t('orders.update_status')}
+                </Menu.Item>
+                {['pending', 'confirmed'].includes(record.order_status) && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Item 
+                      key="cancel" 
                       icon={<CloseCircleOutlined />}
-                    />
-                  </Tooltip>
-                </Popconfirm>
-              )}
+                      danger
+                      onClick={() => {
+                        Modal.confirm({
+                          title: t('orders.cancel_confirm_title'),
+                          content: t('orders.cancel_confirm_message'),
+                          okText: t('common.confirm'),
+                          cancelText: t('common.cancel'),
+                          okType: 'danger',
+                          onOk: () => handleDeleteOrder(record)
+                        });
+                      }}
+                    >
+                      {t('orders.cancel_order')}
+                    </Menu.Item>
+                  </>
+                )}
+              </Menu>
+            }
+            trigger={['click']}
+          >
+            <Button
+              type="text"
+              size="small"
+              icon={<MoreOutlined />}
+            />
+          </Dropdown>
         </Space>
       )
     }
@@ -585,15 +821,10 @@ const Orders = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      {/* <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={24}>
           <Card>
             <Row gutter={16} align="middle">
-              <Col>
-                <Title level={2} style={{ margin: 0 }}>
-                  {t('orders.title')}
-                </Title>
-              </Col>
               <Col flex="auto">
                 <Row gutter={16} justify="end">
                   <Col>
@@ -605,25 +836,36 @@ const Orders = () => {
                       >
                         {t('orders.add_order')}
                       </Button>
-                      <Switch
-                        checked={autoRefresh}
-                        onChange={setAutoRefresh}
-                        checkedChildren={t('orders.auto_refresh')}
-                        unCheckedChildren={t('orders.manual')}
+                      <ExportButton
+                        {...getOrdersExportConfig(orders, columns)}
+                        showFormats={['csv', 'excel', 'pdf']}
                       />
-                      <Switch
-                        checked={soundEnabled}
-                        onChange={setSoundEnabled}
-                        checkedChildren={<SoundOutlined />}
-                        unCheckedChildren={<MutedOutlined />}
-                      />
-                      <Button
-                        icon={<ReloadOutlined />}
-                        onClick={fetchOrders}
-                        loading={loading}
+                      <Dropdown
+                        overlay={
+                          <Menu>
+                            <Menu.Item 
+                              key="refresh" 
+                              icon={<ReloadOutlined />}
+                              onClick={() => {
+                                fetchOrders();
+                                refreshNotifications();
+                              }}
+                              disabled={loading}
+                            >
+                              {t('common.refresh')}
+                            </Menu.Item>
+                          </Menu>
+                        }
+                        trigger={['click']}
                       >
-                        {t('common.refresh')}
-                      </Button>
+                        <Button
+                          icon={<MoreOutlined />}
+                          loading={loading}
+                        >
+                          {t('common.actions')}
+                        </Button>
+                      </Dropdown>
+                      <NotificationControls />
                     </Space>
                   </Col>
                 </Row>
@@ -631,7 +873,7 @@ const Orders = () => {
             </Row>
           </Card>
         </Col>
-      </Row> */}
+      </Row>
 
       {/* Order Statistics */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -649,7 +891,7 @@ const Orders = () => {
           <Card>
             <Statistic
               title={t('orders.pending_orders')}
-              value={orderCounts.pending || 0}
+              value={pendingOrdersCount}
               prefix={<ClockCircleOutlined />}
               valueStyle={{ color: '#fa8c16' }}
             />
@@ -683,7 +925,7 @@ const Orders = () => {
       {/* Filters */}
       <Card style={{ marginBottom: 24 }}>
         <Row gutter={16}>
-          <Col xs={24} sm={6}>
+          <Col xs={24} sm={6} md={4}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_status')}
@@ -700,7 +942,7 @@ const Orders = () => {
               <Option value="cancelled">{t('orders.status_cancelled')}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={6}>
+          <Col xs={24} sm={6} md={4}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_type')}
@@ -712,7 +954,7 @@ const Orders = () => {
               <Option value="pickup">{t('orders.pickup')}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={6}>
+          <Col xs={24} sm={6} md={4}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_payment')}
@@ -725,33 +967,101 @@ const Orders = () => {
               <Option value="online">{t('orders.payment_online')}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={6}>
+          <Col xs={24} sm={6} md={4}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_date')}
               value={filters.date_range}
-              onChange={(value) => setFilters({ ...filters, date_range: value })}
+              onChange={(value) => {
+                setFilters({ ...filters, date_range: value, custom_date_range: null });
+              }}
             >
               <Option value="today">{t('orders.today')}</Option>
               <Option value="yesterday">{t('orders.yesterday')}</Option>
               <Option value="week">{t('orders.this_week')}</Option>
               <Option value="month">{t('orders.this_month')}</Option>
+              <Option value="custom">{t('orders.custom_range')}</Option>
             </Select>
           </Col>
+          {filters.date_range === 'custom' && (
+            <Col xs={24} sm={12} md={8}>
+              <DatePicker.RangePicker
+                style={{ width: '100%' }}
+                value={filters.custom_date_range}
+                onChange={(dates) => setFilters({ ...filters, custom_date_range: dates })}
+                placeholder={[t('orders.start_date'), t('orders.end_date')]}
+                format="YYYY-MM-DD"
+              />
+            </Col>
+          )}
         </Row>
       </Card>
 
       {/* Orders Table */}
       <Card>
+        {/* Bulk Actions */}
+        {hasSelected && (
+          <div style={{ marginBottom: 16, padding: 16, backgroundColor: '#f0f2f5', borderRadius: 6 }}>
+            <Row justify="space-between" align="middle">
+              <Col>
+                <Space>
+                  <span>{t('orders.selected_count', { count: selectedRowKeys.length })}</span>
+                  <Button size="small" onClick={clearSelection}>
+                    {t('common.clear_selection')}
+                  </Button>
+                </Space>
+              </Col>
+              <Col>
+                <Space>
+                  <Dropdown
+                    overlay={
+                      <Menu onClick={({ key }) => handleBulkStatusUpdate(key)}>
+                        <Menu.Item key="confirmed">{t('orders.status_confirmed')}</Menu.Item>
+                        <Menu.Item key="preparing">{t('orders.status_preparing')}</Menu.Item>
+                        <Menu.Item key="ready">{t('orders.status_ready')}</Menu.Item>
+                        <Menu.Item key="out_for_delivery">{t('orders.status_out_for_delivery')}</Menu.Item>
+                        <Menu.Item key="delivered">{t('orders.status_delivered')}</Menu.Item>
+                        <Menu.Item key="cancelled" danger>{t('orders.status_cancelled')}</Menu.Item>
+                      </Menu>
+                    }
+                    disabled={bulkActionLoading}
+                  >
+                    <Button loading={bulkActionLoading}>
+                      {t('orders.bulk_update_status')} <DownOutlined />
+                    </Button>
+                  </Dropdown>
+                  <Button 
+                    onClick={handleBulkExport}
+                    disabled={bulkActionLoading}
+                    icon={<ExportOutlined />}
+                  >
+                    {t('common.export')}
+                  </Button>
+                  <Button 
+                    danger
+                    onClick={handleBulkDelete}
+                    loading={bulkActionLoading}
+                    icon={<DeleteOutlined />}
+                  >
+                    {t('common.delete')}
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+          </div>
+        )}
+
         <Table
+          rowSelection={rowSelection}
           columns={columns}
-          dataSource={orders}
+          dataSource={sortedOrders}
           rowKey="id"
           loading={loading}
           size='small'
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1400 }}
+          onChange={() => {}} // Disable default sorting
           pagination={{
-            total: orders.length,
+            total: sortedOrders.length,
             pageSize: 20,
             showSizeChanger: true,
             showQuickJumper: true,
@@ -819,6 +1129,22 @@ const Orders = () => {
               <Descriptions.Item label={t('orders.delivery_address')}>
                 {selectedOrder.delivery_address || '-'}
               </Descriptions.Item>
+              {selectedOrder.shipping_zone_name_en && (
+                <Descriptions.Item label="Shipping Zone">
+                  {selectedOrder.shipping_zone_name_en}
+                  {selectedOrder.shipping_zone_name_ar && ` / ${selectedOrder.shipping_zone_name_ar}`}
+                </Descriptions.Item>
+              )}
+              {selectedOrder.calculated_distance_km && (
+                <Descriptions.Item label="Distance">
+                  {parseFloat(selectedOrder.calculated_distance_km).toFixed(2)} km
+                </Descriptions.Item>
+              )}
+              {selectedOrder.calculation_method && (
+                <Descriptions.Item label="Shipping Method">
+                  <Tag color="blue">{selectedOrder.calculation_method}</Tag>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label={t('orders.created_at')}>
                 {new Date(selectedOrder.created_at).toLocaleString()}
               </Descriptions.Item>
@@ -871,19 +1197,20 @@ const Orders = () => {
 
             <Divider>{t('orders.order_items')}</Divider>
             
-            {selectedOrder.items && (
-              <List
-                dataSource={selectedOrder.items}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      avatar={<Avatar icon={<ShoppingCartOutlined />} />}
-                      title={`${item.product_name} x${item.quantity}`}
-                      description={`${formatPrice(item.unit_price)} each - Total: ${formatPrice(item.total_price)}`}
-                    />
-                  </List.Item>
-                )}
-              />
+            {selectedOrder.items && selectedOrder.items.length > 0 ? (
+              <div style={{ marginBottom: '16px' }}>
+                {selectedOrder.items.map((item, index) => (
+                  <OrderItemCard 
+                    key={index} 
+                    item={item} 
+                    formatPrice={formatPrice}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#fafafa', borderRadius: '8px' }}>
+                <Text type="secondary">No items found for this order</Text>
+              </div>
             )}
 
             <Divider>{t('orders.order_summary')}</Divider>
@@ -896,6 +1223,9 @@ const Orders = () => {
               <Col span={12}>
                 <Text strong>{t('orders.delivery_fee')}: </Text>
                 <Text>{formatPrice(selectedOrder.delivery_fee || 0)}</Text>
+                {selectedOrder.free_shipping_applied && (
+                  <Tag color="green" style={{ marginLeft: 8 }}>FREE SHIPPING</Tag>
+                )}
               </Col>
               <Col span={12}>
                 <Text strong>{t('orders.tax_amount')}: </Text>
@@ -1058,10 +1388,21 @@ const Orders = () => {
                 label={t('orders.branch')}
                 rules={[{ required: true, message: t('common.required') }]}
               >
-                <Select placeholder={t('orders.select_branch')}>
+                <Select placeholder={t('orders.select_branch')} optionLabelProp="label">
                   {branches.map(branch => (
-                    <Option key={branch.id} value={branch.id}>
-                      {language === 'ar' ? branch.title_ar : branch.title_en}
+                    <Option 
+                      key={branch.id} 
+                      value={branch.id}
+                      label={language === 'ar' ? branch.title_ar : branch.title_en}
+                    >
+                      <div style={{ 
+                        whiteSpace: 'normal', 
+                        wordWrap: 'break-word',
+                        lineHeight: '1.4',
+                        padding: '4px 0'
+                      }}>
+                        {language === 'ar' ? branch.title_ar : branch.title_en}
+                      </div>
                     </Option>
                   ))}
                 </Select>
@@ -1087,10 +1428,59 @@ const Orders = () => {
                   }),
                 ]}
               >
-                <Input placeholder={t('orders.delivery_address_placeholder')} />
+                <Input 
+                  placeholder={t('orders.delivery_address_placeholder')} 
+                  onChange={async (e) => {
+                    const addressId = e.target.value;
+                    const branchId = orderForm.getFieldValue('branch_id');
+                    const subtotal = orderForm.getFieldValue('subtotal') || 0;
+                    
+                    if (addressId && branchId) {
+                      const calculation = await calculateShippingCost(addressId, branchId, subtotal);
+                      if (calculation) {
+                        setShippingCalculation(calculation);
+                        orderForm.setFieldsValue({
+                          delivery_fee: calculation.total_shipping_cost || 0
+                        });
+                      }
+                    }
+                  }}
+                />
               </Form.Item>
             </Col>
           </Row>
+
+          {/* Shipping Calculation Display */}
+          {shippingCalculation && (
+            <Row gutter={16}>
+              <Col xs={24}>
+                <Card size="small" style={{ marginBottom: 16, backgroundColor: '#f6ffed', border: '1px solid #b7eb8f' }}>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    <Text strong>🚚 Shipping Calculation</Text>
+                    <Row gutter={16}>
+                      <Col span={8}>
+                        <Text type="secondary">Zone:</Text><br />
+                        <Text>{shippingCalculation.zone_name_en}</Text>
+                      </Col>
+                      <Col span={8}>
+                        <Text type="secondary">Distance:</Text><br />
+                        <Text>{shippingCalculation.distance_km?.toFixed(2)} km</Text>
+                      </Col>
+                      <Col span={8}>
+                        <Text type="secondary">Cost:</Text><br />
+                        <Text strong style={{ color: '#52c41a' }}>
+                          {formatPrice(shippingCalculation.total_shipping_cost)}
+                        </Text>
+                        {shippingCalculation.free_shipping_applied && (
+                          <Tag color="green" size="small" style={{ marginLeft: 4 }}>FREE</Tag>
+                        )}
+                      </Col>
+                    </Row>
+                  </Space>
+                </Card>
+              </Col>
+            </Row>
+          )}
 
           <Form.Item
             name="special_instructions"
@@ -1301,6 +1691,17 @@ const Orders = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* Create Order Modal */}
+      <CreateOrderModal
+        visible={createOrderVisible}
+        onCancel={() => setCreateOrderVisible(false)}
+        onSuccess={() => {
+          fetchOrders();
+          refreshNotifications();
+        }}
+        t={t}
+      />
     </div>
   );
 };
