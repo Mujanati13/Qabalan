@@ -13,7 +13,6 @@ const {
   validateBulkOperation
 } = require('../middleware/orderValidation');
 const shippingService = require('../services/shippingService');
-const NotificationService = require('../services/NotificationService');
 
 const router = express.Router();
 
@@ -300,7 +299,7 @@ const isValidStatusTransition = (currentStatus, newStatus) => {
 // NOTIFICATION SERVICE
 // =============================================================================
 
-const notificationService = require('../services/NotificationService');
+const notificationService = require('../services/notificationService');
 
 /**
  * Send order status change notification to customer
