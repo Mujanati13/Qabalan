@@ -9,7 +9,11 @@ class SocketManager {
       process.env.FRONTEND_URL || "http://localhost:5173",
       "http://localhost:3006", // Admin dashboard
       "http://localhost:3070", // Web client
-      "http://localhost:5173"  // Default Vite port
+      "http://localhost:5173", // Default Vite port
+      "https://qablan.albech.me", // Production domain
+      "http://qablan.albech.me", // Production domain (HTTP)
+      /^https?:\/\/.*\.albech\.me$/, // Any subdomain of albech.me
+      /^https?:\/\/localhost:\d+$/, // Any localhost port
     ];
     
     console.log('🌐 CORS origins:', corsOrigins);

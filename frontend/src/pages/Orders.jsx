@@ -300,14 +300,15 @@ const Orders = () => {
         return;
       }
 
-      // Extract base URL from VITE_API_URL (remove /api suffix)
-      const apiUrl = import.meta.env.VITE_API_URL;
-      const socketUrl = apiUrl?.replace('/api', '') || 'http://localhost:3015';
+      // Get Socket.IO URL from environment variable with fallback
+      const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3015';
       
       console.log('🌐 Environment variables:');
       console.log('  VITE_API_URL:', import.meta.env.VITE_API_URL);
-      console.log('  Calculated socketUrl:', socketUrl);
-      console.log('� Attempting to connect to Socket.io server at:', socketUrl);
+      console.log('  VITE_SOCKET_URL:', import.meta.env.VITE_SOCKET_URL);
+      console.log('  Current host:', window.location.host);
+      console.log('  Using socketUrl:', socketUrl);
+      console.log('🔌 Attempting to connect to Socket.io server at:', socketUrl);
       
       try {
         socketRef.current = io(socketUrl, {

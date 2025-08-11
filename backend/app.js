@@ -60,7 +60,20 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // CORS configuration
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:3006', // Admin dashboard
+    'http://localhost:3070', // Web client  
+    'http://localhost:5173', // Vite dev server
+    'https://qablan.albech.me', // Production domain
+    'http://qablan.albech.me', // Production domain (HTTP)
+    /^https?:\/\/.*\.albech\.me$/, // Any subdomain
+    /^https?:\/\/localhost:\d+$/, // Any localhost port
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with']
+}));
 
 // Compression middleware
 app.use(compression());

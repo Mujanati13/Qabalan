@@ -27,6 +27,12 @@ export default defineConfig({
         target: 'http://localhost:3015', // Match your backend port
         changeOrigin: true,
         secure: false
+      },
+      '/socket.io': {
+        target: 'http://localhost:3015', // WebSocket proxy
+        changeOrigin: true,
+        secure: false,
+        ws: true, // Enable WebSocket proxying
       }
     }
   },
