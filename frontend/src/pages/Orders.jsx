@@ -300,13 +300,24 @@ const Orders = () => {
         return;
       }
 
-      // Get Socket.IO URL from environment variable with fallback
-      const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3015';
+      // Get Socket.IO URL from environment variable with intelligent fallback
+      let socketUrl = import.meta.env.VITE_SOCKET_URL;
+      
+      // If no environment variable is set, determine based on current location
+      if (!socketUrl) {
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+          socketUrl = 'http://localhost:3015';
+        } else {
+          // Use current host for production
+          socketUrl = `${window.location.protocol}//${window.location.hostname}`;
+        }
+      }
       
       console.log('🌐 Environment variables:');
       console.log('  VITE_API_URL:', import.meta.env.VITE_API_URL);
       console.log('  VITE_SOCKET_URL:', import.meta.env.VITE_SOCKET_URL);
       console.log('  Current host:', window.location.host);
+      console.log('  Current protocol:', window.location.protocol);
       console.log('  Using socketUrl:', socketUrl);
       console.log('🔌 Attempting to connect to Socket.io server at:', socketUrl);
       

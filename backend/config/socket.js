@@ -7,14 +7,20 @@ class SocketManager {
     
     const corsOrigins = [
       process.env.FRONTEND_URL || "http://localhost:5173",
-      "http://localhost:3006", // Admin dashboard
-      "http://localhost:3070", // Web client
+      process.env.ADMIN_DASHBOARD_URL || "http://localhost:3006",
+      process.env.WEB_CLIENT_URL || "http://localhost:3070",
       "http://localhost:5173", // Default Vite port
       "https://qablan.albech.me", // Production domain
       "http://qablan.albech.me", // Production domain (HTTP)
       /^https?:\/\/.*\.albech\.me$/, // Any subdomain of albech.me
       /^https?:\/\/localhost:\d+$/, // Any localhost port
     ];
+
+    // Parse additional origins from environment variable
+    if (process.env.SOCKET_CORS_ORIGINS) {
+      const additionalOrigins = process.env.SOCKET_CORS_ORIGINS.split(',');
+      corsOrigins.push(...additionalOrigins);
+    }
     
     console.log('🌐 CORS origins:', corsOrigins);
     

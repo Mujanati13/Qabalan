@@ -22,14 +22,19 @@ export default defineConfig({
     host: '0.0.0.0', // Allow external connections
     open: false,     // Don't try to open browser
     strictPort: true, // Exit if port is already in use
+    hmr: {
+      port: 24678, // Use a different port for HMR
+      host: 'localhost'
+    },
     proxy: {
       '/api': {
-        target: 'http://localhost:3015', // Match your backend port
+        target: process.env.VITE_API_URL || 'http://localhost:3015/api',
         changeOrigin: true,
-        secure: false
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api/, '')
       },
       '/socket.io': {
-        target: 'http://localhost:3015', // WebSocket proxy
+        target: process.env.VITE_SOCKET_URL || 'http://localhost:3015',
         changeOrigin: true,
         secure: false,
         ws: true, // Enable WebSocket proxying
