@@ -218,9 +218,13 @@ class SupportService {
       }
 
       // Send notifications
-      if (is_admin_reply) {
+      if (is_admin_reply && !is_internal_note) {
+        console.log(`🔔 Admin reply detected - sending notification to client for ticket ${ticketId}`);
         await this.notifyClient(ticketId, 'admin_reply');
+      } else if (is_admin_reply && is_internal_note) {
+        console.log(`📝 Internal note detected - skipping client notification for ticket ${ticketId}`);
       } else {
+        console.log(`👤 User reply detected - sending notification to admins for ticket ${ticketId}`);
         await this.notifyAdmins(ticketId, 'client_reply');
       }
 
@@ -492,9 +496,63 @@ class SupportService {
 
   // Notify client about admin replies
   async notifyClient(ticketId, type) {
-    // This would integrate with your notification system
-    // For now, just log the notification
-    console.log(`Client notification: ${type} for ticket ${ticketId}`);
+    console.log(`🔔 notifyClient called - ticketId: ${ticketId}, type: ${type}`);
+    
+    try {
+      // Get ticket details to get user_id
+      const [ticket] = await executeQuery(`
+        SELECT user_id, ticket_number, subject 
+        FROM support_tickets 
+        WHERE id = ?
+      `, [ticketId]);
+
+      if (!ticket) {
+        console.log(`❌ Ticket ${ticketId} not found for notification`);
+        return;
+      }
+
+      console.log(`📋 Found ticket for notification - user_id: ${ticket.user_id}, ticket_number: ${ticket.ticket_number}`);
+
+      const notificationService = require('./notificationService');
+      
+      let notification = {};
+      
+      if (type === 'admin_reply') {
+        notification = {
+          title_ar: 'رد جديد على تذكرة الدعم',
+          title_en: 'New Support Reply',
+          message_ar: `تم الرد على تذكرة الدعم رقم ${ticket.ticket_number}`,
+          message_en: `Your support ticket ${ticket.ticket_number} has been replied to`,
+          type: 'support_reply'
+        };
+        
+        console.log(`📧 Prepared notification:`, {
+          title: notification.title_en,
+          message: notification.message_en,
+          type: notification.type
+        });
+      }
+
+      // Send notification to the user
+      const notificationResult = await notificationService.sendToUser(
+        ticket.user_id,
+        notification,
+        {
+          ticket_id: ticketId,
+          ticket_number: ticket.ticket_number,
+          screen: 'Support',
+          action: 'view_ticket'
+        }
+      );
+
+      console.log(`✅ Support notification sent to user ${ticket.user_id} for ticket ${ticketId}:`, {
+        success: notificationResult.success,
+        notificationId: notificationResult.notificationId,
+        pushResults: notificationResult.pushResults?.length || 0
+      });
+    } catch (error) {
+      console.error('Error sending support notification:', error);
+    }
   }
 
   // Get support categories

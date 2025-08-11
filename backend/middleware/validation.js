@@ -267,22 +267,36 @@ const validateOrderCreation = [
 ];
 
 /**
- * Address creation validation
+ * Address creation validation - Relaxed version
  */
 const validateAddressCreation = [
   body('name')
-    .trim()
-    .notEmpty()
-    .withMessage('Address name is required'),
+    .optional()
+    .trim(),
   body('city_id')
-    .isInt({ min: 1 })
-    .withMessage('Valid city ID is required'),
+    .optional()
+    .custom((value) => {
+      if (value && !Number.isInteger(Number(value))) {
+        throw new Error('Valid city ID is required when provided');
+      }
+      return true;
+    }),
   body('area_id')
-    .isInt({ min: 1 })
-    .withMessage('Valid area ID is required'),
+    .optional()
+    .custom((value) => {
+      if (value && !Number.isInteger(Number(value))) {
+        throw new Error('Valid area ID is required when provided');
+      }
+      return true;
+    }),
   body('street_id')
-    .isInt({ min: 1 })
-    .withMessage('Valid street ID is required'),
+    .optional()
+    .custom((value) => {
+      if (value && !Number.isInteger(Number(value))) {
+        throw new Error('Valid street ID is required when provided');
+      }
+      return true;
+    }),
   body('building_no')
     .optional()
     .trim()

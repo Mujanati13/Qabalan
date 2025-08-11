@@ -43,6 +43,7 @@ const validateStaff = [
   body('last_name').trim().isLength({ min: 2, max: 50 }).withMessage('Last name must be 2-50 characters'),
   body('user_type').isIn(['admin', 'staff']).withMessage('User type must be admin or staff'),
   body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('phone').optional().isMobilePhone().withMessage('Valid phone number is required if provided'),
 ];
 
 // =====================================

@@ -158,7 +158,6 @@ const Customers = () => {
   // Filtering and searching state
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({
-    user_type: 'all',
     is_active: 'all',
     is_verified: 'all'
   });
@@ -195,7 +194,7 @@ const Customers = () => {
         page: pagination.current,
         limit: 100, // Use maximum allowed limit
         search: searchTerm,
-        user_type: filters.user_type !== 'all' ? filters.user_type : undefined,
+        user_type: 'customer', // Always filter for customers only
         is_active: filters.is_active !== 'all' ? filters.is_active : undefined,
         is_verified: filters.is_verified !== 'all' ? filters.is_verified : undefined,
         ...params
@@ -541,6 +540,7 @@ const Customers = () => {
       await customersService.createCustomer(customerData);
       message.success(t('customers.createSuccess'));
       setCreateVisible(false);
+      setEditingCustomer(null);
       customerForm.resetFields();
       loadCustomers();
     } catch (error) {
@@ -584,6 +584,7 @@ const Customers = () => {
       await customersService.updateCustomer(editingCustomer.id, customerData);
       message.success(t('customers.updateSuccess'));
       setEditVisible(false);
+      setEditingCustomer(null);
       customerForm.resetFields();
       loadCustomers();
     } catch (error) {
@@ -662,7 +663,17 @@ const Customers = () => {
 
   const handleEditAddress = (address) => {
     setEditingAddress(address);
-    addressForm.setFieldsValue(address);
+    
+    // Ensure proper data types for form fields
+    const formData = {
+      ...address,
+      is_default: Boolean(address.is_default), // Convert to boolean
+      city_id: address.city_id ? Number(address.city_id) : undefined,
+      area_id: address.area_id ? Number(address.area_id) : undefined,
+      street_id: address.street_id ? Number(address.street_id) : undefined
+    };
+    
+    addressForm.setFieldsValue(formData);
     
     // Load areas and streets if city and area are selected
     if (address.city_id) {
@@ -677,9 +688,11 @@ const Customers = () => {
 
   const handleSaveAddress = async (values) => {
     try {
+      // Ensure boolean fields are properly typed
       const addressData = {
         ...values,
-        user_id: selectedCustomer.id
+        user_id: selectedCustomer.id,
+        is_default: Boolean(values.is_default)
       };
 
       if (editingAddress) {
@@ -691,7 +704,10 @@ const Customers = () => {
       }
 
       setAddressVisible(false);
+      setEditingAddress(null);
       addressForm.resetFields();
+      setAreas([]);
+      setStreets([]);
       await loadCustomerAddresses(selectedCustomer.id);
     } catch (error) {
       console.error('Error saving address:', error);
@@ -712,15 +728,53 @@ const Customers = () => {
                 </ul>
               </div>
             ),
+            duration: 8
+          });
+        } else if (error.response.status === 400) {
+          message.error({
+            content: (
+              <div>
+                <strong>{t('customers.addressValidationError')}:</strong>
+                <div style={{ marginTop: '4px' }}>
+                  {errorMessage || 'Please check the address information and try again'}
+                </div>
+              </div>
+            ),
             duration: 6
+          });
+        } else if (error.response.status === 409) {
+          message.error({
+            content: errorMessage || 'Address conflict - this address may already exist',
+            duration: 5
+          });
+        } else if (error.response.status === 403) {
+          message.error({
+            content: errorMessage || 'You do not have permission to modify this address',
+            duration: 5
           });
         } else {
           const action = editingAddress ? 'update' : 'create';
-          message.error(errorMessage || error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`));
+          message.error({
+            content: errorMessage || error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`),
+            duration: 5
+          });
         }
+      } else if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+        message.error({
+          content: 'Request timeout - please check your connection and try again',
+          duration: 5
+        });
+      } else if (error.code === 'ERR_NETWORK' || error.message.includes('Network Error')) {
+        message.error({
+          content: 'Network error - please check your internet connection',
+          duration: 5
+        });
       } else {
         const action = editingAddress ? 'update' : 'create';
-        message.error(error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`));
+        message.error({
+          content: error.message || t(`customers.address${action === 'update' ? 'Update' : 'Create'}Error`),
+          duration: 5
+        });
       }
     }
   };
@@ -759,7 +813,6 @@ const Customers = () => {
   const handleClearFilters = () => {
     setSearchTerm('');
     setFilters({
-      user_type: 'all',
       is_active: 'all',
       is_verified: 'all'
     });
@@ -995,7 +1048,7 @@ const Customers = () => {
       {/* Search and Filters */}
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]} align="middle">
-          <Col xs={24} sm={12} lg={8}>
+          <Col xs={24} sm={12} lg={10}>
             <Search
               placeholder={t('customers.searchPlaceholder')}
               allowClear
@@ -1005,20 +1058,7 @@ const Customers = () => {
               onSearch={handleSearch}
             />
           </Col>
-          <Col xs={12} sm={8} lg={4}>
-            <Select
-              style={{ width: '100%' }}
-              placeholder={t('customers.filterByType')}
-              value={filters.user_type}
-              onChange={(value) => handleFilterChange('user_type', value)}
-            >
-              <Option value="all">{t('customers.allTypes')}</Option>
-              <Option value="customer">{t('customers.customer')}</Option>
-              <Option value="staff">{t('customers.staff')}</Option>
-              <Option value="admin">{t('customers.admin')}</Option>
-            </Select>
-          </Col>
-          <Col xs={12} sm={8} lg={4}>
+          <Col xs={12} sm={8} lg={5}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('customers.filterByStatus')}
@@ -1030,7 +1070,7 @@ const Customers = () => {
               <Option value="false">{t('customers.showInactive')}</Option>
             </Select>
           </Col>
-          <Col xs={12} sm={8} lg={4}>
+          <Col xs={12} sm={8} lg={5}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('customers.isVerified')}
@@ -1229,10 +1269,37 @@ const Customers = () => {
             customerShippingInfo={customerShippingInfo}
             loadingShippingInfo={loadingShippingInfo}
             onEditCustomer={handleEditCustomer}
-            onEditAddress={handleEditAddress}
+            onEditAddress={(address) => {
+              setEditingAddress(address);
+              
+              // Ensure proper data types for form fields
+              const formData = {
+                ...address,
+                is_default: Boolean(address.is_default), // Convert to boolean
+                city_id: address.city_id ? Number(address.city_id) : undefined,
+                area_id: address.area_id ? Number(address.area_id) : undefined,
+                street_id: address.street_id ? Number(address.street_id) : undefined
+              };
+              
+              addressForm.setFieldsValue(formData);
+              
+              // Load areas and streets if city and area are selected
+              if (address.city_id) {
+                loadAreas(address.city_id);
+                if (address.area_id) {
+                  loadStreets(address.area_id);
+                }
+              }
+              
+              setAddressVisible(true);
+            }}
             onDeleteAddress={handleDeleteAddress}
             onSetDefaultAddress={handleSetDefaultAddress}
-            onAddAddress={handleAddAddress}
+            onAddAddress={() => {
+              setEditingAddress(null);
+              addressForm.resetFields();
+              setAddressVisible(true);
+            }}
             t={t}
           />
         )}
@@ -1253,6 +1320,12 @@ const Customers = () => {
         <CustomerForm
           form={customerForm}
           onFinish={editingCustomer ? handleUpdateCustomer : handleCreateCustomer}
+          onCancel={() => {
+            setCreateVisible(false);
+            setEditVisible(false);
+            setEditingCustomer(null);
+            customerForm.resetFields();
+          }}
           isEditing={!!editingCustomer}
           t={t}
         />
@@ -1272,6 +1345,10 @@ const Customers = () => {
         <PasswordForm
           form={passwordForm}
           onFinish={handlePasswordChange}
+          onCancel={() => {
+            setPasswordVisible(false);
+            passwordForm.resetFields();
+          }}
           t={t}
         />
       </Modal>
@@ -1282,7 +1359,10 @@ const Customers = () => {
         visible={addressVisible}
         onCancel={() => {
           setAddressVisible(false);
+          setEditingAddress(null);
           addressForm.resetFields();
+          setAreas([]);
+          setStreets([]);
         }}
         footer={null}
         width={800}
@@ -1333,7 +1413,12 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
           <Tag color="blue">{t(`customers.${customer.user_type}`)}</Tag>
         </Descriptions.Item>
         <Descriptions.Item label={t('customers.birthDate')}>
-          {customer.birth_date ? moment(customer.birth_date).format('YYYY-MM-DD') : '-'}
+          {customer.birth_date ? (
+            <Space>
+              <Text strong>{moment(customer.birth_date).format('YYYY-MM-DD')}</Text>
+              <Text type="secondary">({moment().diff(moment(customer.birth_date), 'years')} years old)</Text>
+            </Space>
+          ) : '-'}
         </Descriptions.Item>
         <Descriptions.Item label={t('common.status')}>
           <Space>
@@ -1584,7 +1669,7 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
 );
 
 // Customer Form Component
-const CustomerForm = ({ form, onFinish, isEditing, t }) => (
+const CustomerForm = ({ form, onFinish, onCancel, isEditing, t }) => (
   <Form
     form={form}
     layout="vertical"
@@ -1704,7 +1789,12 @@ const CustomerForm = ({ form, onFinish, isEditing, t }) => (
         <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
           {isEditing ? t('common.update') : t('common.create')}
         </Button>
-        <Button onClick={() => form.resetFields()}>
+        <Button onClick={() => {
+          form.resetFields();
+          if (onCancel) {
+            onCancel();
+          }
+        }}>
           {t('common.cancel')}
         </Button>
       </Space>
@@ -1713,7 +1803,7 @@ const CustomerForm = ({ form, onFinish, isEditing, t }) => (
 );
 
 // Password Form Component
-const PasswordForm = ({ form, onFinish, t }) => (
+const PasswordForm = ({ form, onFinish, onCancel, t }) => (
   <Form
     form={form}
     layout="vertical"
@@ -1762,7 +1852,12 @@ const PasswordForm = ({ form, onFinish, t }) => (
         <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
           {t('customers.changePassword')}
         </Button>
-        <Button onClick={() => form.resetFields()}>
+        <Button onClick={() => {
+          form.resetFields();
+          if (onCancel) {
+            onCancel();
+          }
+        }}>
           {t('common.cancel')}
         </Button>
       </Space>

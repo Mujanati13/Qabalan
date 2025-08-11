@@ -417,7 +417,7 @@ const OffersPage = () => {
   return (
     <AppLayout>
       <div style={{ minHeight: '100vh', backgroundColor: '#f9fafb' }}>
-        <HeroSection />
+        {/* <HeroSection /> */}
         <FilterSection />
         <div className="offers-main-section">
           <div className="offers-main-container">

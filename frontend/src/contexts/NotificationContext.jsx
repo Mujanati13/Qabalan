@@ -23,7 +23,7 @@ export const NotificationProvider = ({ children }) => {
   const [totalNotificationsCount, setTotalNotificationsCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [lastOrderCheck, setLastOrderCheck] = useState(Date.now());
+  // Removed lastOrderCheck since we're using Socket.IO for real-time updates
   const [isInitialized, setIsInitialized] = useState(false);
   
   // Refs
@@ -55,25 +55,27 @@ export const NotificationProvider = ({ children }) => {
     initializeData();
   }, []);
 
-  // Auto-refresh effect
+  // Auto-refresh effect - Disabled since we're using Socket.IO for real-time updates
   useEffect(() => {
-    if (!isInitialized || !autoRefresh) {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
+    if (!isInitialized) {
       return;
     }
 
-    refreshIntervalRef.current = setInterval(() => {
-      checkForNewOrders();
-    }, 15000); // Check every 15 seconds
+    // Clean up any existing intervals since we don't need polling with Socket.IO
+    if (refreshIntervalRef.current) {
+      clearInterval(refreshIntervalRef.current);
+      refreshIntervalRef.current = null;
+    }
+
+    // Note: Real-time updates are now handled by Socket.IO in Orders.jsx
+    // No need for polling /api/orders/recent anymore
 
     return () => {
       if (refreshIntervalRef.current) {
         clearInterval(refreshIntervalRef.current);
       }
     };
-  }, [autoRefresh, isInitialized, lastOrderCheck]);
+  }, [isInitialized]); // Removed autoRefresh and lastOrderCheck dependencies
 
   // Fetch pending orders count
   const fetchPendingOrdersCount = useCallback(async () => {
@@ -92,28 +94,7 @@ export const NotificationProvider = ({ children }) => {
     }
   }, [pendingOrdersCount]);
 
-  // Check for new orders
-  const checkForNewOrders = useCallback(async () => {
-    try {
-      const response = await ordersService.getRecentOrders(lastOrderCheck);
-      const newOrders = response.data || [];
-      
-      if (newOrders.length > 0) {
-        // Update the last check time
-        setLastOrderCheck(Date.now());
-        
-        // Fetch updated pending count
-        const newPendingCount = await fetchPendingOrdersCount();
-        
-        // Trigger notifications for new orders
-        triggerNewOrderNotifications(newOrders, newPendingCount);
-      }
-    } catch (error) {
-      console.error('Failed to check for new orders:', error);
-    }
-  }, [lastOrderCheck, fetchPendingOrdersCount]);
-
-  // Trigger notifications for new orders
+  // Trigger notifications for new orders (now called by Socket.IO events)
   const triggerNewOrderNotifications = useCallback((newOrders, newPendingCount) => {
     const ordersCount = newOrders.length;
     
@@ -184,19 +165,27 @@ export const NotificationProvider = ({ children }) => {
   };
 
   // Manual refresh function
+  // Refresh notifications (simplified - Socket.IO handles real-time updates)
   const refreshNotifications = useCallback(async () => {
     try {
       await fetchPendingOrdersCount();
-      await checkForNewOrders();
+      // Note: Real-time order checking is now handled by Socket.IO
     } catch (error) {
       console.error('Failed to refresh notifications:', error);
     }
-  }, [fetchPendingOrdersCount, checkForNewOrders]);
+  }, [fetchPendingOrdersCount]);
 
   // Update pending count manually (for use after order actions)
-  const updatePendingCount = useCallback(async () => {
-    await fetchPendingOrdersCount();
-  }, [fetchPendingOrdersCount]);
+  const updatePendingCount = useCallback(async (newCount = null) => {
+    if (newCount !== null) {
+      // Direct update from Socket.IO
+      previousPendingCount.current = pendingOrdersCount;
+      setPendingOrdersCount(newCount);
+    } else {
+      // Fetch from API
+      await fetchPendingOrdersCount();
+    }
+  }, [pendingOrdersCount, fetchPendingOrdersCount]);
 
   // Toggle sound
   const toggleSound = useCallback(() => {
@@ -223,9 +212,8 @@ export const NotificationProvider = ({ children }) => {
     toggleAutoRefresh,
     playNotificationSound,
     
-    // Manual triggers
-    triggerNewOrderNotifications,
-    checkForNewOrders
+    // Manual triggers (now primarily used by Socket.IO events)
+    triggerNewOrderNotifications
   };
 
   return (

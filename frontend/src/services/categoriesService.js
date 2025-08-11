@@ -119,6 +119,30 @@ const categoriesService = {
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to search categories')
     }
+  },
+
+  // Update category sort order
+  updateSortOrder: async (categoryId, sortOrder) => {
+    try {
+      const response = await api.put(`/categories/${categoryId}/sort-order`, {
+        sort_order: sortOrder
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update category sort order')
+    }
+  },
+
+  // Increment/Decrement category sort order
+  adjustSortOrder: async (categoryId, direction) => {
+    try {
+      const response = await api.put(`/categories/${categoryId}/sort-order`, {
+        direction: direction // 'increment' or 'decrement'
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to adjust category sort order')
+    }
   }
 }
 

@@ -625,4 +625,92 @@ router.post('/:id/activate', authenticate, authorize('admin', 'staff'), validate
   }
 });
 
+// ============================================
+// CATEGORY SORT ORDER ROUTES
+// ============================================
+
+/**
+ * @route   PUT /api/categories/:id/sort-order
+ * @desc    Update category sort order
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/sort-order', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { sort_order, direction } = req.body;
+
+    // If direction is provided (increment/decrement), calculate new sort order
+    if (direction && ['increment', 'decrement'].includes(direction)) {
+      // Get current sort order
+      const [currentCategory] = await executeQuery(
+        'SELECT sort_order FROM categories WHERE id = ?',
+        [id]
+      );
+
+      if (!currentCategory) {
+        return res.status(404).json({
+          success: false,
+          message: 'Category not found',
+          message_ar: 'الفئة غير موجودة'
+        });
+      }
+
+      const currentSortOrder = currentCategory.sort_order;
+      const newSortOrder = direction === 'increment' 
+        ? currentSortOrder + 1 
+        : Math.max(0, currentSortOrder - 1);
+
+      // Update sort order
+      await executeQuery(
+        'UPDATE categories SET sort_order = ?, updated_at = NOW() WHERE id = ?',
+        [newSortOrder, id]
+      );
+
+      res.json({
+        success: true,
+        message: 'Category sort order updated successfully',
+        message_ar: 'تم تحديث ترتيب الفئة بنجاح',
+        data: {
+          category_id: id,
+          old_sort_order: currentSortOrder,
+          new_sort_order: newSortOrder
+        }
+      });
+    } else if (sort_order !== undefined) {
+      // Direct sort order update
+      if (isNaN(sort_order) || sort_order < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid sort order (non-negative number) is required',
+          message_ar: 'ترتيب صالح مطلوب (رقم غير سالب)'
+        });
+      }
+
+      await executeQuery(
+        'UPDATE categories SET sort_order = ?, updated_at = NOW() WHERE id = ?',
+        [sort_order, id]
+      );
+
+      res.json({
+        success: true,
+        message: 'Category sort order updated successfully',
+        message_ar: 'تم تحديث ترتيب الفئة بنجاح',
+        data: {
+          category_id: id,
+          new_sort_order: sort_order
+        }
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Either sort_order or direction (increment/decrement) is required',
+        message_ar: 'إما ترتيب أو اتجاه (زيادة/نقصان) مطلوب'
+      });
+    }
+
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

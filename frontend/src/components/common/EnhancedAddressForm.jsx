@@ -26,18 +26,28 @@ const EnhancedAddressForm = ({
 
   useEffect(() => {
     // Set initial coordinates if provided
-    if (initialCoordinates) {
-      setSelectedLocation(initialCoordinates);
+    if (initialCoordinates && initialCoordinates.lat && initialCoordinates.lng) {
+      const normalizedCoordinates = {
+        lat: Number(initialCoordinates.lat),
+        lng: Number(initialCoordinates.lng)
+      };
+      setSelectedLocation(normalizedCoordinates);
     }
   }, [initialCoordinates]);
 
   const handleLocationSelect = (location) => {
-    setSelectedLocation(location);
+    // Ensure coordinates are numbers
+    const normalizedLocation = {
+      lat: Number(location.lat),
+      lng: Number(location.lng)
+    };
+    
+    setSelectedLocation(normalizedLocation);
     
     // Update form with coordinates
     form.setFieldsValue({
-      latitude: location.lat,
-      longitude: location.lng
+      latitude: normalizedLocation.lat,
+      longitude: normalizedLocation.lng
     });
   };
 
@@ -46,8 +56,8 @@ const EnhancedAddressForm = ({
     
     // Auto-fill form fields with geocoded data
     const updateFields = {
-      latitude: addressData.latitude,
-      longitude: addressData.longitude,
+      latitude: Number(addressData.latitude),
+      longitude: Number(addressData.longitude),
       details: addressData.full_address
     };
 
@@ -90,6 +100,9 @@ const EnhancedAddressForm = ({
     const formData = {
       ...values
     };
+    
+    // Ensure boolean fields are properly converted
+    formData.is_default = Boolean(values.is_default);
     
     // Add coordinates if available
     if (selectedLocation) {
@@ -293,7 +306,7 @@ const EnhancedAddressForm = ({
         <Switch />
       </Form.Item>
 
-      {selectedLocation && (
+      {selectedLocation && selectedLocation.lat && selectedLocation.lng && (
         <div style={{ 
           marginBottom: 16, 
           padding: 12, 
@@ -302,7 +315,7 @@ const EnhancedAddressForm = ({
           borderRadius: 6 
         }}>
           <div style={{ fontSize: '12px', color: '#1890ff' }}>
-            <EnvironmentOutlined /> {t ? t('map.selectedCoordinates') : 'Selected Coordinates'}: {selectedLocation.lat.toFixed(6)}, {selectedLocation.lng.toFixed(6)}
+            <EnvironmentOutlined /> {t ? t('map.selectedCoordinates') : 'Selected Coordinates'}: {Number(selectedLocation.lat).toFixed(6)}, {Number(selectedLocation.lng).toFixed(6)}
           </div>
         </div>
       )}

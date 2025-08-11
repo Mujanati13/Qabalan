@@ -19,6 +19,16 @@ router.post('/test-notification', authenticate, async (req, res, next) => {
   try {
     const { title, body, data, token } = req.body;
 
+    // Structured debug logs (mask token)
+    const masked = token ? `${token.slice(0, 8)}...${token.slice(-6)}` : 'N/A';
+    console.log('[NOTIF][ADMIN][TEST] Incoming request:', {
+      title,
+      body,
+      hasData: !!data,
+      tokenMasked: masked,
+      fcmInitialized: !!(fcmService && fcmService.isInitialized)
+    });
+
     if (!title || !body || !token) {
       return res.status(400).json({
         success: false,
@@ -26,12 +36,12 @@ router.post('/test-notification', authenticate, async (req, res, next) => {
       });
     }
 
-    // Send notification
-    const result = await fcmService.sendToToken(token, {
-      title,
-      body,
-      data: data || {}
-    });
+    // Send notification (pass data as the third argument, not inside notification)
+    const result = await fcmService.sendToToken(
+      token,
+      { title, body },
+      data || {}
+    );
 
     if (result.success) {
       res.json({

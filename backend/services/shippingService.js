@@ -224,10 +224,7 @@ class ShippingService {
         branch.latitude, branch.longitude
       );
 
-      // Check if within delivery range
-      if (distance > this.maxDeliveryDistance) {
-        throw new Error(`Delivery distance (${distance}km) exceeds maximum allowed (${this.maxDeliveryDistance}km)`);
-      }
+  // Do not hard-fail on out-of-range distances; compute cost and flag
 
       // Find appropriate shipping zone
       const zone = await this.findShippingZone(distance, branchId);

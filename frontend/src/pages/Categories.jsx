@@ -434,14 +434,111 @@ const Categories = () => {
     }
   };
 
-  const handleToggleStatus = async (categoryId, currentStatus) => {
+  // Simple category status update
+  const updateCategoryStatus = async (categoryId, newStatus) => {
+    await categoriesService.toggleCategoryStatus(categoryId, newStatus);
+  };
+
+  // Update category products branch availability
+  const updateCategoryProductsBranches = async (categoryId, isAvailable) => {
     try {
-      await categoriesService.toggleCategoryStatus(categoryId, !currentStatus);
-      message.success(t('categories.status_updated'));
+      const productsResponse = await productsService.getProducts({ 
+        category_id: categoryId,
+        limit: 1000
+      });
+      
+      const products = productsResponse.data || [];
+      let updatedCount = 0;
+      
+      for (const product of products) {
+        try {
+          const branchesResponse = await fetch(`${API_BASE_URL}/products/${product.id}/branches`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+          });
+          
+          if (branchesResponse.ok) {
+            const branchData = await branchesResponse.json();
+            const branches = branchData.data?.availability || [];
+            
+            await Promise.all(branches.map(branch => 
+              fetch(`${API_BASE_URL}/products/${product.id}/branches/${branch.branch_id}`, {
+                method: 'PUT',
+                headers: {
+                  'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                  'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ is_available: isAvailable })
+              })
+            ));
+            
+            updatedCount++;
+          }
+        } catch (error) {
+          console.error(`Error updating product ${product.id}:`, error);
+        }
+      }
+      
+      return updatedCount;
+    } catch (error) {
+      console.error('Error updating category products branches:', error);
+      return 0;
+    }
+  };
+
+  const handleToggleStatus = async (categoryId, currentStatus) => {
+    const newStatus = !currentStatus;
+    const actionText = newStatus ? 'activate' : 'deactivate';
+    
+    try {
+      // Show simple confirmation with toggle option for branches
+      const result = await new Promise((resolve) => {
+        Modal.confirm({
+          title: `${actionText.charAt(0).toUpperCase() + actionText.slice(1)} Category`,
+          content: (
+            <div>
+              <p>Do you want to {actionText} this category?</p>
+              <div style={{ marginTop: 12 }}>
+                <label>
+                  <input type="checkbox" id="updateBranches" defaultChecked style={{ marginRight: 8 }} />
+                  Also update product availability in branches
+                </label>
+              </div>
+            </div>
+          ),
+          onOk: () => {
+            const updateBranches = document.getElementById('updateBranches')?.checked || false;
+            resolve({ proceed: true, updateBranches });
+          },
+          onCancel: () => resolve({ proceed: false })
+        });
+      });
+
+      if (!result.proceed) return;
+
+      setLoading(true);
+      
+      // Update category status
+      await updateCategoryStatus(categoryId, newStatus);
+      
+      let successMessage = `Category ${actionText}d successfully`;
+      
+      // Update branches if requested
+      if (result.updateBranches) {
+        const updatedProducts = await updateCategoryProductsBranches(categoryId, newStatus);
+        if (updatedProducts > 0) {
+          successMessage += ` and ${updatedProducts} products updated in branches`;
+        }
+      }
+      
+      message.success(successMessage);
       fetchCategories();
       fetchCategoriesTree();
+      
     } catch (error) {
-      message.error(error.response?.data?.message || t('errors.operation_failed'));
+      console.error('Error updating category:', error);
+      message.error('Failed to update category status');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -481,39 +578,87 @@ const Categories = () => {
   const handleBulkStatusUpdate = async (status) => {
     if (!hasSelected) return;
     
-    Modal.confirm({
-      title: t('categories.bulk_status_update_confirm_title'),
-      content: t('categories.bulk_status_update_confirm_message', { 
-        count: selectedRowKeys.length, 
-        status: status ? t('common.active') : t('common.inactive')
-      }),
-      okText: t('common.confirm'),
-      cancelText: t('common.cancel'),
-      onOk: async () => {
-        try {
-          setBulkActionLoading(true);
-          await Promise.all(selectedRowKeys.map(id => 
-            categoriesService.toggleCategoryStatus(id, status)
-          ));
-          message.success(t('categories.bulk_status_updated_successfully', { 
-            count: selectedRowKeys.length 
-          }));
-          setSelectedRowKeys([]);
-          fetchCategories();
-          fetchCategoriesTree();
-        } catch (error) {
-          message.error(t('categories.bulk_status_update_error'));
-        } finally {
-          setBulkActionLoading(false);
+    const actionText = status ? 'activate' : 'deactivate';
+    const count = selectedRowKeys.length;
+    
+    try {
+      // Show simple confirmation with toggle option for branches
+      const result = await new Promise((resolve) => {
+        Modal.confirm({
+          title: `${actionText.charAt(0).toUpperCase() + actionText.slice(1)} ${count} Categories`,
+          content: (
+            <div>
+              <p>Do you want to {actionText} {count} selected categories?</p>
+              <div style={{ marginTop: 12 }}>
+                <label>
+                  <input type="checkbox" id="bulkUpdateBranches" defaultChecked style={{ marginRight: 8 }} />
+                  Also update product availability in branches
+                </label>
+              </div>
+            </div>
+          ),
+          onOk: () => {
+            const updateBranches = document.getElementById('bulkUpdateBranches')?.checked || false;
+            resolve({ proceed: true, updateBranches });
+          },
+          onCancel: () => resolve({ proceed: false })
+        });
+      });
+
+      if (!result.proceed) return;
+
+      setBulkActionLoading(true);
+      
+      // Update all category statuses
+      await Promise.all(selectedRowKeys.map(id => updateCategoryStatus(id, status)));
+      
+      let successMessage = `Successfully ${actionText}d ${count} categories`;
+      
+      // Update branches if requested
+      if (result.updateBranches) {
+        let totalUpdatedProducts = 0;
+        
+        for (const categoryId of selectedRowKeys) {
+          try {
+            const updatedCount = await updateCategoryProductsBranches(categoryId, status);
+            totalUpdatedProducts += updatedCount;
+          } catch (error) {
+            console.error(`Error processing category ${categoryId}:`, error);
+          }
+        }
+        
+        if (totalUpdatedProducts > 0) {
+          successMessage += ` and ${totalUpdatedProducts} products updated in branches`;
         }
       }
-    });
+      
+      message.success(successMessage);
+      setSelectedRowKeys([]);
+      fetchCategories();
+      fetchCategoriesTree();
+      
+    } catch (error) {
+      console.error('Error in bulk status update:', error);
+      message.error('Failed to update categories');
+    } finally {
+      setBulkActionLoading(false);
+    }
+  };
+
+  const handleSortOrderChange = async (categoryId, direction) => {
+    try {
+      await categoriesService.adjustSortOrder(categoryId, direction);
+      message.success(t('categories.sort_order_updated') || 'Sort order updated successfully');
+      fetchCategories(); // Refresh the list to show new order
+    } catch (error) {
+      message.error(error.message || 'Failed to update sort order');
+    }
   };
 
   const handleBulkExport = () => {
     if (!hasSelected) return;
     
-    const selectedCategories = filteredCategories.filter(category => selectedRowKeys.includes(category.id));
+    const selectedCategories = sortedCategories.filter(category => selectedRowKeys.includes(category.id));
     const csvData = selectedCategories.map(category => ({
       'Category ID': category.id,
       'Name (EN)': category.title_en,
@@ -632,18 +777,48 @@ const Categories = () => {
       width: 120,
       responsive: ['sm'],
       ...getColumnSortProps('products_count', 'number'),
-      render: (count) => (
-        <Badge count={count} style={{ backgroundColor: '#52c41a' }} />
+      render: (count, record) => (
+        <Tooltip title={`${count} products will be ${record.is_active ? 'available' : 'hidden'} in branches`}>
+          <Badge 
+            count={count} 
+            style={{ 
+              backgroundColor: record.is_active ? '#52c41a' : '#ff4d4f',
+              cursor: 'help'
+            }} 
+          />
+        </Tooltip>
       )
     },
     {
       title: t('categories.sort_order'),
       dataIndex: 'sort_order',
       key: 'sort_order',
-      width: 100,
+      width: 120,
       responsive: ['md'],
       ...getColumnSortProps('sort_order', 'number'),
-      sorter: (a, b) => a.sort_order - b.sort_order
+      sorter: (a, b) => a.sort_order - b.sort_order,
+      render: (sortOrder, record) => (
+        <Space size="small">
+          <span>{sortOrder}</span>
+          <div>
+            <Button
+              type="text"
+              size="small"
+              icon={<span style={{ fontSize: '10px' }}>▲</span>}
+              onClick={() => handleSortOrderChange(record.id, 'decrement')}
+              disabled={sortOrder <= 0}
+              style={{ padding: '0 2px', height: '16px', lineHeight: '16px' }}
+            />
+            <Button
+              type="text"
+              size="small"
+              icon={<span style={{ fontSize: '10px' }}>▼</span>}
+              onClick={() => handleSortOrderChange(record.id, 'increment')}
+              style={{ padding: '0 2px', height: '16px', lineHeight: '16px' }}
+            />
+          </div>
+        </Space>
+      )
     },
     {
       title: t('common.status'),
@@ -653,11 +828,15 @@ const Categories = () => {
       responsive: ['sm'],
       ...getColumnSortProps('is_active', 'number'),
       render: (isActive, record) => (
-        <Switch
-          checked={isActive}
-          onChange={() => handleToggleStatus(record.id, isActive)}
-          size="small"
-        />
+        <Tooltip title={isActive ? 'Active - Products available in branches' : 'Inactive - Products hidden from branches'}>
+          <Switch
+            checked={isActive}
+            onChange={() => handleToggleStatus(record.id, isActive)}
+            size="small"
+            checkedChildren="✓"
+            unCheckedChildren="✗"
+          />
+        </Tooltip>
       )
     },
     {
@@ -835,7 +1014,7 @@ const Categories = () => {
 
         {/* Responsive Filters */}
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col xs={24} sm={24} md={12} lg={8} xl={6}>
+          <Col xs={24} sm={12} md={8} lg={6} xl={4}>
             <Input
               placeholder={t('categories.search_placeholder')}
               prefix={<SearchOutlined />}
@@ -845,17 +1024,21 @@ const Categories = () => {
               size={{ xs: 'small', md: 'large' }}
             />
           </Col>
-          {/* <Space wrap>
-              <Text style={{ fontSize: { xs: '12px', md: '14px' } }}>
-                {t('categories.show_inactive')}:
-              </Text>
-              <Switch
-                checked={showInactive}
-                onChange={setShowInactive}
-                size="small"
-              />
-            </Space> */}
-           <Space wrap size="small">
+          <Col xs={24} sm={12} md={8} lg={6} xl={4}>
+            <Select
+              placeholder="Filter by Status"
+              value={showInactive ? 'all' : 'active'}
+              onChange={(value) => setShowInactive(value === 'all')}
+              style={{ width: '100%' }}
+              size={{ xs: 'small', md: 'large' }}
+              options={[
+                { value: 'active', label: 'Active Only' },
+                { value: 'all', label: 'All Categories' }
+              ]}
+            />
+          </Col>
+          <Col xs={24} sm={24} md={16} lg={12} xl={16}>
+            <Space wrap size="small">
               <Button
                 icon={<EyeOutlined />}
                 onClick={() => setTreeModalVisible(true)}
@@ -901,7 +1084,20 @@ const Categories = () => {
                 </Button>
               </Dropdown>
             </Space>
+          </Col>
         </Row>
+
+        {/* Show filter status */}
+        {showInactive && (
+          <Alert
+            message="Showing all categories (including inactive)"
+            description="Inactive categories are displayed with a red status indicator and their products are hidden from branches."
+            type="info"
+            showIcon
+            closable
+            style={{ marginBottom: 16 }}
+          />
+        )}
 
         {/* Bulk Actions */}
         {hasSelected && (

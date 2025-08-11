@@ -536,7 +536,23 @@ const Support = () => {
         attachments?.fileList?.map(file => file.originFileObj) || []
       );
       
-      message.success('Reply added successfully');
+      // Check if it's not an internal note to show notification sent message
+      if (!is_internal_note) {
+        message.success({
+          content: (
+            <div>
+              <div>Reply sent successfully!</div>
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                📱 Push notification sent to customer
+              </div>
+            </div>
+          ),
+          duration: 4
+        });
+      } else {
+        message.success('Internal note added successfully');
+      }
+      
       replyForm.resetFields();
       setReplyVisible(false);
       handleTicketDetails({ id: selectedTicket.ticket.id });

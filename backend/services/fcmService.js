@@ -124,56 +124,84 @@ class FCMService {
       return { success: true, results: [] };
     }
 
-    try {
-      const message = {
-        notification: {
-          title: notification.title,
-          body: notification.body,
-          imageUrl: notification.image || undefined
-        },
-        data: {
-          ...data,
-          click_action: data.click_action || 'FLUTTER_NOTIFICATION_CLICK',
-          type: data.type || 'general'
-        },
-        android: {
-          notification: {
-            channelId: 'default',
-            priority: 'high',
-            sound: 'default'
-          }
-        },
-        apns: {
-          payload: {
-            aps: {
-              alert: {
-                title: notification.title,
-                body: notification.body
-              },
-              sound: 'default',
-              badge: 1
-            }
-          }
-        },
-        tokens
-      };
+    console.log(`🔄 Sending to ${tokens.length} token(s) using individual sends (multicast workaround)`);
 
-      const response = await this.messaging.sendMulticast(message);
-      console.log(`FCM multicast sent: ${response.successCount}/${tokens.length} successful`);
+    try {
+      const results = [];
+      let successCount = 0;
+      let failureCount = 0;
+
+      // Send to each token individually to avoid multicast /batch 404 error
+      for (let i = 0; i < tokens.length; i++) {
+        const token = tokens[i];
+        console.log(`📱 Sending to token ${i + 1}/${tokens.length}: ${token.substring(0, 20)}...`);
+        
+        try {
+          const message = {
+            token,
+            notification: {
+              title: notification.title,
+              body: notification.body,
+              imageUrl: notification.image || undefined
+            },
+            data: {
+              ...data,
+              click_action: data.click_action || 'FLUTTER_NOTIFICATION_CLICK',
+              type: data.type || 'general'
+            },
+            android: {
+              notification: {
+                channelId: 'default',
+                priority: 'high',
+                sound: 'default'
+              }
+            },
+            apns: {
+              payload: {
+                aps: {
+                  alert: {
+                    title: notification.title,
+                    body: notification.body
+                  },
+                  sound: 'default',
+                  badge: 1
+                }
+              }
+            }
+          };
+
+          const response = await this.messaging.send(message);
+          console.log(`✅ Token ${i + 1}: Success - ${response}`);
+          
+          results.push({
+            token,
+            success: true,
+            messageId: response
+          });
+          successCount++;
+          
+        } catch (tokenError) {
+          console.log(`❌ Token ${i + 1}: Failed - ${tokenError.code || tokenError.message}`);
+          
+          results.push({
+            token,
+            success: false,
+            error: tokenError.message
+          });
+          failureCount++;
+        }
+      }
+
+      console.log(`📊 Final results: ${successCount} successful, ${failureCount} failed`);
       
       return {
         success: true,
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        results: response.responses.map((resp, index) => ({
-          token: tokens[index],
-          success: resp.success,
-          messageId: resp.messageId,
-          error: resp.error?.message
-        }))
+        successCount,
+        failureCount,
+        results
       };
     } catch (error) {
-      console.error('FCM multicast send error:', error);
+      console.error('FCM individual sends error:', error);
       return {
         success: false,
         error: error.message,

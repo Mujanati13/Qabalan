@@ -739,12 +739,28 @@ router.post('/validate', authenticate, validatePromoApplication, async (req, res
       }
     }
 
-    // Calculate discount
+    // Calculate discount based on promo type
     let discountAmount = 0;
-    if (promo.discount_type === 'percentage') {
-      discountAmount = order_total * (promo.discount_value / 100);
-    } else {
-      discountAmount = promo.discount_value;
+    
+    switch (promo.discount_type) {
+      case 'percentage':
+        discountAmount = order_total * (promo.discount_value / 100);
+        break;
+      case 'fixed_amount':
+        discountAmount = promo.discount_value;
+        break;
+      case 'free_shipping':
+        // Free shipping promos don't affect order total discount
+        discountAmount = 0;
+        break;
+      case 'bxgy':
+        // Buy X Get Y promos need item-level calculation, for now return 0
+        discountAmount = 0;
+        break;
+      default:
+        // Legacy support: treat unknown types as fixed amount
+        discountAmount = promo.discount_value;
+        break;
     }
 
     // Apply maximum discount limit
@@ -760,8 +776,105 @@ router.post('/validate', authenticate, validatePromoApplication, async (req, res
       message_ar: 'كود الخصم صالح',
       data: {
         promo_code: promo,
-        discount_amount: discountAmount,
-        final_total: Math.max(0, order_total - discountAmount)
+        discount_amount: Math.round(discountAmount * 100) / 100, // Fix floating point precision
+        final_total: Math.max(0, Math.round((order_total - discountAmount) * 100) / 100)
+      }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/promos/validate-guest
+ * @desc    Validate promo code for guest users (no authentication required)
+ * @access  Public
+ */
+router.post('/validate-guest', validatePromoApplication, async (req, res, next) => {
+  try {
+    const { code, order_total = 0 } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Promo code is required',
+        message_ar: 'كود الخصم مطلوب'
+      });
+    }
+
+    // Get promo code
+    const [promo] = await executeQuery(`
+      SELECT * FROM promo_codes 
+      WHERE code = ? AND is_active = 1 
+      AND valid_from <= NOW() AND valid_until >= NOW()
+    `, [code.toUpperCase()]);
+
+    if (!promo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired promo code',
+        message_ar: 'كود خصم غير صالح أو منتهي الصلاحية'
+      });
+    }
+
+    // Check minimum order amount
+    if (promo.min_order_amount && order_total < promo.min_order_amount) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum order amount of $${promo.min_order_amount} required for this promo code`,
+        message_ar: `الحد الأدنى لقيمة الطلب ${promo.min_order_amount} مطلوب لهذا كود الخصم`
+      });
+    }
+
+    // Check usage limits (global limit only for guests, no user-specific checks)
+    if (promo.usage_limit && promo.usage_count >= promo.usage_limit) {
+      return res.status(400).json({
+        success: false,
+        message: 'Promo code usage limit exceeded',
+        message_ar: 'تم تجاوز الحد الأقصى لاستخدام كود الخصم'
+      });
+    }
+
+    // Calculate discount based on promo type
+    let discountAmount = 0;
+    
+    switch (promo.discount_type) {
+      case 'percentage':
+        discountAmount = order_total * (promo.discount_value / 100);
+        break;
+      case 'fixed_amount':
+        discountAmount = promo.discount_value;
+        break;
+      case 'free_shipping':
+        // Free shipping promos don't affect order total discount
+        discountAmount = 0;
+        break;
+      case 'bxgy':
+        // Buy X Get Y promos need item-level calculation, for now return 0
+        discountAmount = 0;
+        break;
+      default:
+        // Legacy support: treat unknown types as fixed amount
+        discountAmount = promo.discount_value;
+        break;
+    }
+
+    // Apply maximum discount limit
+    if (promo.max_discount_amount && discountAmount > promo.max_discount_amount) {
+      discountAmount = promo.max_discount_amount;
+    }
+
+    discountAmount = Math.min(discountAmount, order_total);
+
+    res.json({
+      success: true,
+      message: 'Promo code is valid',
+      message_ar: 'كود الخصم صالح',
+      data: {
+        promo: promo,
+        discount_amount: Math.round(discountAmount * 100) / 100, // Fix floating point precision
+        final_amount: Math.max(0, Math.round((order_total - discountAmount) * 100) / 100)
       }
     });
 

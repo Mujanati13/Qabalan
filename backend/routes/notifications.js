@@ -121,7 +121,7 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
       app_version
     } = req.body;
 
-    if (!token || !device_type) {
+  if (!token || !device_type) {
       return res.status(400).json({
         success: false,
         message: 'Token and device type are required',
@@ -130,13 +130,15 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
     }
 
     const userId = req.user.id;
+  const masked = `${token.slice(0, 8)}...${token.slice(-6)}`;
+  console.log('[NOTIF][REGISTER]', { userId, device_type, device_id, app_version, tokenMasked: masked });
 
     // Check if token already exists
     const [existingToken] = await executeQuery(`
       SELECT id FROM user_fcm_tokens WHERE token = ?
     `, [token]);
 
-    if (existingToken) {
+  if (existingToken) {
       // Update existing token
       await executeQuery(`
         UPDATE user_fcm_tokens 
@@ -155,8 +157,9 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
     // Subscribe to general topic for broadcasts
     try {
       await fcmService.subscribeToTopic([token], 'all_users');
+      console.log('[NOTIF][REGISTER] Subscribed to topic all_users', { tokenMasked: masked });
     } catch (topicError) {
-      console.warn('Could not subscribe token to topic:', topicError.message);
+      console.warn('[NOTIF][REGISTER] Topic subscribe failed:', topicError.message);
     }
 
     res.json({
@@ -166,7 +169,8 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
     });
 
   } catch (error) {
-    next(error);
+  console.error('[NOTIF][REGISTER] Error:', error);
+  next(error);
   }
 });
 
@@ -187,7 +191,10 @@ router.delete('/unregister-token', authenticate, async (req, res, next) => {
       });
     }
 
-    // Deactivate token
+  const masked = token ? `${token.slice(0, 8)}...${token.slice(-6)}` : 'N/A';
+  console.log('[NOTIF][UNREGISTER] Request:', { tokenMasked: masked });
+
+  // Deactivate token
     await executeQuery(`
       UPDATE user_fcm_tokens 
       SET is_active = 0, updated_at = NOW()
@@ -197,8 +204,9 @@ router.delete('/unregister-token', authenticate, async (req, res, next) => {
     // Unsubscribe from topics
     try {
       await fcmService.unsubscribeFromTopic([token], 'all_users');
+      console.log('[NOTIF][UNREGISTER] Unsubscribed from topic all_users', { tokenMasked: masked });
     } catch (topicError) {
-      console.warn('Could not unsubscribe token from topic:', topicError.message);
+      console.warn('[NOTIF][UNREGISTER] Topic unsubscribe failed:', topicError.message);
     }
 
     res.json({
@@ -208,6 +216,58 @@ router.delete('/unregister-token', authenticate, async (req, res, next) => {
     });
 
   } catch (error) {
+  console.error('[NOTIF][UNREGISTER] Error:', error);
+  next(error);
+  }
+});
+
+/**
+ * @route   POST /api/notifications/self-test
+ * @desc    Send a test push notification to the authenticated user's latest active FCM token
+ * @access  Private
+ */
+router.post('/self-test', authenticate, async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    const [row] = await executeQuery(
+      `SELECT token FROM user_fcm_tokens 
+       WHERE user_id = ? AND is_active = 1 
+       ORDER BY updated_at DESC, last_used_at DESC, created_at DESC 
+       LIMIT 1`,
+      [userId]
+    );
+
+    if (!row || !row.token) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active FCM token found for this user',
+        message_ar: 'لا يوجد رمز FCM نشط لهذا المستخدم'
+      });
+    }
+
+    const masked = `${row.token.slice(0, 8)}...${row.token.slice(-6)}`;
+    console.log('[NOTIF][SELF-TEST] Sending to latest token:', { userId, tokenMasked: masked });
+
+    const result = await fcmService.sendToToken(
+      row.token,
+      { title: 'FECS Test Notification', body: 'This is a self-test push to your device.' },
+      { type: 'test', source: 'self-test' }
+    );
+
+    if (result?.success) {
+      console.log('[NOTIF][SELF-TEST] Success:', { messageId: result.messageId, tokenMasked: masked });
+      return res.json({ success: true, message: 'Test notification sent' });
+    }
+
+    console.warn('[NOTIF][SELF-TEST] Failed:', { error: result?.error, tokenMasked: masked });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send test notification',
+      error: result?.error || 'Unknown error'
+    });
+  } catch (error) {
+    console.error('[NOTIF][SELF-TEST] Error:', error);
     next(error);
   }
 });
@@ -298,6 +358,15 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
       save_to_db = true
     } = req.body;
 
+    console.log('[NOTIF][ADMIN][SEND] Request:', {
+      recipient_type,
+      user_id,
+      recipient_ids_count: Array.isArray(recipient_ids) ? recipient_ids.length : 0,
+      topic,
+      type,
+      save_to_db
+    });
+
     if (!title_ar || !title_en || !message_ar || !message_en) {
       return res.status(400).json({
         success: false,
@@ -314,7 +383,7 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
       type
     };
 
-    let result;
+  let result;
 
     switch (recipient_type) {
       case 'user':
@@ -325,7 +394,7 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
             message_ar: 'معرف المستخدم مطلوب للإشعار الفردي'
           });
         }
-        result = await notificationService.sendToUser(user_id, notification, data, save_to_db);
+  result = await notificationService.sendToUser(user_id, notification, data, save_to_db);
         break;
 
       case 'users':
@@ -336,11 +405,11 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
             message_ar: 'مصفوفة معرفات المستلمين مطلوبة للإشعار متعدد المستخدمين'
           });
         }
-        result = await notificationService.sendToUsers(recipient_ids, notification, data, save_to_db);
+  result = await notificationService.sendToUsers(recipient_ids, notification, data, save_to_db);
         break;
 
       case 'broadcast':
-        result = await notificationService.broadcast(notification, data, save_to_db);
+  result = await notificationService.broadcast(notification, data, save_to_db);
         break;
 
       case 'topic':
@@ -351,7 +420,7 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
             message_ar: 'اسم الموضوع مطلوب للإشعار الموضوعي'
           });
         }
-        result = await notificationService.sendToTopic(topic, notification, data, save_to_db);
+  result = await notificationService.sendToTopic(topic, notification, data, save_to_db);
         break;
 
       default:
@@ -362,6 +431,15 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
         });
     }
 
+    // Summarize result for logs without dumping large arrays
+    const summary = result && typeof result === 'object' ? {
+      success: !!result.success,
+      notificationId: result.notificationId,
+      totalSent: result.totalSent ?? (Array.isArray(result.pushResults) ? result.pushResults.filter(r => r.success).length : undefined),
+      totalFailed: result.totalFailed ?? (Array.isArray(result.pushResults) ? result.pushResults.filter(r => !r.success).length : undefined)
+    } : undefined;
+    console.log('[NOTIF][ADMIN][SEND] Result:', summary);
+
     res.json({
       success: true,
       message: 'Notification sent successfully',
@@ -370,6 +448,7 @@ router.post('/admin/send', authenticate, authorize('admin', 'staff'), validateNo
     });
 
   } catch (error) {
+    console.error('[NOTIF][ADMIN][SEND] Error:', error);
     next(error);
   }
 });

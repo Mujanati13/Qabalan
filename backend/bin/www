@@ -8,6 +8,7 @@ const app = require('../app');
 const debug = require('debug')('qabalan-ecommerce-api:server');
 const http = require('http');
 const DatabaseSetup = require('../utils/database-setup');
+const SocketManager = require('../config/socket');
 
 /**
  * Get port from environment and store in Express.
@@ -21,6 +22,16 @@ app.set('port', port);
  */
 
 const server = http.createServer(app);
+
+/**
+ * Initialize Socket.IO
+ */
+console.log('🔌 Initializing Socket.IO server...');
+const socketManager = new SocketManager(server);
+
+// Make socket manager available globally
+global.socketManager = socketManager;
+console.log('✅ Socket.IO server initialized successfully');
 
 /**
  * Setup database and start server

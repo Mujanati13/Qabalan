@@ -1121,7 +1121,7 @@ router.put('/:id/change-password', authenticate, validateId, validatePasswordCha
  */
 router.post('/fcm-token', authenticate, async (req, res, next) => {
   try {
-    const { fcm_token, platform } = req.body;
+  const { fcm_token, platform } = req.body;
     const userId = req.user.id;
 
     if (!fcm_token) {
@@ -1132,32 +1132,35 @@ router.post('/fcm-token', authenticate, async (req, res, next) => {
       });
     }
 
-    // Check if token already exists for this user
+    const masked = fcm_token ? `${fcm_token.slice(0, 8)}...${fcm_token.slice(-6)}` : 'N/A';
+    console.log('[NOTIF][USERS] Register token', { userId, platform, tokenMasked: masked });
+
+    // Check if token already exists for this user (using unified schema with `token` column)
     const [existingToken] = await executeQuery(`
       SELECT id FROM user_fcm_tokens 
-      WHERE user_id = ? AND fcm_token = ?
+      WHERE user_id = ? AND token = ?
     `, [userId, fcm_token]);
 
     if (existingToken) {
       // Update existing token
       await executeQuery(`
         UPDATE user_fcm_tokens 
-        SET platform = ?, is_active = 1, updated_at = NOW() 
+        SET device_type = ?, is_active = 1, updated_at = NOW(), last_used_at = NOW() 
         WHERE id = ?
-      `, [platform || 'unknown', existingToken.id]);
+      `, [platform === 'ios' ? 'ios' : platform === 'android' ? 'android' : 'web', existingToken.id]);
     } else {
       // Deactivate old tokens for this user and platform
       await executeQuery(`
         UPDATE user_fcm_tokens 
         SET is_active = 0 
-        WHERE user_id = ? AND platform = ?
-      `, [userId, platform || 'unknown']);
+        WHERE user_id = ? AND device_type = ?
+      `, [userId, platform === 'ios' ? 'ios' : platform === 'android' ? 'android' : 'web']);
 
       // Insert new token
       await executeQuery(`
-        INSERT INTO user_fcm_tokens (user_id, fcm_token, platform, is_active, created_at, updated_at)
+        INSERT INTO user_fcm_tokens (user_id, token, device_type, is_active, created_at, updated_at)
         VALUES (?, ?, ?, 1, NOW(), NOW())
-      `, [userId, fcm_token, platform || 'unknown']);
+      `, [userId, fcm_token, platform === 'ios' ? 'ios' : platform === 'android' ? 'android' : 'web']);
     }
 
     res.json({
@@ -1167,6 +1170,7 @@ router.post('/fcm-token', authenticate, async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error('[NOTIF][USERS] Register token error:', error);
     next(error);
   }
 });
@@ -1206,10 +1210,12 @@ router.put('/notification-preferences', authenticate, async (req, res, next) => 
 
     // Update FCM token preferences if provided
     if (fcm_token) {
+      const masked = `${fcm_token.slice(0, 8)}...${fcm_token.slice(-6)}`;
+      console.log('[NOTIF][USERS] Update prefs', { userId, promo_notifications, order_notifications, tokenMasked: masked });
       await executeQuery(`
         UPDATE user_fcm_tokens 
         SET promo_notifications = ?, order_notifications = ?, updated_at = NOW()
-        WHERE user_id = ? AND fcm_token = ? AND is_active = 1
+        WHERE user_id = ? AND token = ? AND is_active = 1
       `, [
         promo_notifications ? 1 : 0,
         order_notifications ? 1 : 0,
@@ -1225,6 +1231,7 @@ router.put('/notification-preferences', authenticate, async (req, res, next) => 
     });
 
   } catch (error) {
+    console.error('[NOTIF][USERS] Update prefs error:', error);
     next(error);
   }
 });
@@ -1240,13 +1247,16 @@ router.delete('/fcm-token', authenticate, async (req, res, next) => {
     const userId = req.user.id;
 
     if (fcm_token) {
+      const masked = `${fcm_token.slice(0, 8)}...${fcm_token.slice(-6)}`;
+      console.log('[NOTIF][USERS] Remove token (single)', { userId, tokenMasked: masked });
       await executeQuery(`
         UPDATE user_fcm_tokens 
         SET is_active = 0, updated_at = NOW()
-        WHERE user_id = ? AND fcm_token = ?
+        WHERE user_id = ? AND token = ?
       `, [userId, fcm_token]);
     } else {
       // Deactivate all tokens for this user
+      console.log('[NOTIF][USERS] Remove all tokens for user', { userId });
       await executeQuery(`
         UPDATE user_fcm_tokens 
         SET is_active = 0, updated_at = NOW()
@@ -1261,6 +1271,7 @@ router.delete('/fcm-token', authenticate, async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error('[NOTIF][USERS] Remove token error:', error);
     next(error);
   }
 });

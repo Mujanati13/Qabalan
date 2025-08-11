@@ -451,12 +451,35 @@ router.delete('/branches/:branchId/zones/:zoneId/override', authenticate, author
  */
 router.post('/calculate', async (req, res, next) => {
   try {
-    const {
+    let {
       customer_latitude,
       customer_longitude,
       branch_id,
-      order_amount = 0
+      order_amount = 0,
+      delivery_address_id
     } = req.body;
+
+    // Backward compatibility: accept legacy field names customer_lat/customer_lng
+    if ((!customer_latitude || !customer_longitude) && (req.body.customer_lat || req.body.customer_lng)) {
+      customer_latitude = customer_latitude ?? req.body.customer_lat;
+      customer_longitude = customer_longitude ?? req.body.customer_lng;
+    }
+
+    // If still missing, try to resolve from delivery_address_id
+    if ((!customer_latitude || !customer_longitude) && delivery_address_id) {
+      try {
+        const [addr] = await executeQuery(
+          'SELECT latitude, longitude FROM user_addresses WHERE id = ? AND (latitude IS NOT NULL AND longitude IS NOT NULL)',
+          [delivery_address_id]
+        );
+        if (addr) {
+          customer_latitude = addr.latitude;
+          customer_longitude = addr.longitude;
+        }
+      } catch (e) {
+        // Ignore; validation below will handle missing coords
+      }
+    }
 
     if (!customer_latitude || !customer_longitude || !branch_id) {
       return res.status(400).json({
@@ -478,6 +501,55 @@ router.post('/calculate', async (req, res, next) => {
       data: calculation
     });
   } catch (error) {
+    // Provide structured 400 for known validation/business errors
+    const msg = String(error?.message || error);
+    if (msg.includes('exceeds maximum allowed')) {
+      try {
+        // Compute actual distance for the response
+        const [branch] = await executeQuery(
+          'SELECT id, latitude, longitude, title_en, title_ar FROM branches WHERE id = ? AND is_active = 1',
+          [req.body.branch_id]
+        );
+
+        let distance = null;
+        if (branch && branch.latitude && branch.longitude && req.body.customer_latitude && req.body.customer_longitude) {
+          distance = shippingService.calculateDistance(
+            Number(req.body.customer_latitude),
+            Number(req.body.customer_longitude),
+            Number(branch.latitude),
+            Number(branch.longitude)
+          );
+        }
+
+        // Suggest nearest in-range branch if possible
+        let nearest = null;
+        if (req.body.customer_latitude && req.body.customer_longitude) {
+          const suggestion = await shippingService.getNearestBranch(
+            Number(req.body.customer_latitude),
+            Number(req.body.customer_longitude)
+          );
+          if (suggestion && suggestion.distance_km <= shippingService.maxDeliveryDistance) {
+            nearest = suggestion;
+          }
+        }
+
+        return res.status(400).json({
+          success: false,
+          code: 'OUT_OF_RANGE',
+          message: `Delivery distance${distance !== null ? ` (${distance}km)` : ''} exceeds maximum allowed (${shippingService.maxDeliveryDistance}km)`,
+          message_ar: 'تجاوزت المسافة الحد المسموح للتوصيل',
+          data: {
+            distance_km: distance,
+            max_distance_km: shippingService.maxDeliveryDistance,
+            nearest_branch: nearest
+          }
+        });
+      } catch (e) {
+        // Fall back to default error handler if something goes wrong here
+        return next(error);
+      }
+    }
+
     next(error);
   }
 });

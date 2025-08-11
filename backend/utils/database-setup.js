@@ -1390,7 +1390,7 @@ class DatabaseSetup {
       console.log('🔑 Customer password: Customer123!');
 
       // Create sample product reviews and ratings
-      await this.createSampleReviews(customerIds, orderIds);
+      // await this.createSampleReviews(customerIds, orderIds);
 
       console.log('✅ Sample bakery data created successfully');
       return true;

@@ -35,6 +35,7 @@ import {
   CrownOutlined,
   DatabaseOutlined,
   PercentageOutlined,
+  EnvironmentOutlined,
 } from "@ant-design/icons";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
@@ -85,6 +86,16 @@ const AdminLayout = ({ children }) => {
 
   const closeMobileMenu = () => {
     setMobileOpen(false);
+  };
+
+  const handleMenuClick = (e) => {
+    // Handle navigation
+    navigate(e.key);
+    
+    // Close mobile menu after navigation
+    if (isMobile) {
+      closeMobileMenu();
+    }
   };
 
   // Menu items with permission checks
@@ -148,7 +159,7 @@ const AdminLayout = ({ children }) => {
       ecommerceChildren.push({
         key: "/orders",
         icon: <FileTextOutlined />,
-        label: <OrdersBadge><Link to="/orders">{t("nav.orders")}</Link></OrdersBadge>,
+        label: <OrdersBadge>{t("nav.orders")}</OrdersBadge>,
       });
     }
 
@@ -315,6 +326,15 @@ const AdminLayout = ({ children }) => {
       });
     }
 
+    // Locations Management - Only for admins
+    if (user?.user_type === "admin") {
+      systemChildren.push({
+        key: "/locations",
+        icon: <EnvironmentOutlined />,
+        label: <Link to="/locations">{t("nav.locations")}</Link>,
+      });
+    }
+
     // Add System Administration Group if has children
     if (systemChildren.length > 0) {
       items.push({
@@ -403,7 +423,7 @@ const AdminLayout = ({ children }) => {
       openKeys.push("marketing-group");
     }
     // System administration routes
-    else if (["/staff", "/shipping-zones", "/branches"].includes(path)) {
+    else if (["/staff", "/shipping-zones", "/branches", "/locations"].includes(path)) {
       openKeys.push("system-group");
     }
     // Configuration routes
@@ -623,7 +643,7 @@ const AdminLayout = ({ children }) => {
             defaultOpenKeys={getDefaultOpenKeys()}
             items={menuItems}
             style={{ border: 0 }}
-            onClick={isMobile ? closeMobileMenu : undefined}
+            onClick={handleMenuClick}
           />
         </Sider>
 

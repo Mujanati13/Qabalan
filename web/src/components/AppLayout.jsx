@@ -188,9 +188,9 @@ const AppLayout = ({ children, pageConfig = {} }) => {
 
       <Footer className="bg-gray-100 mt-auto">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-8 mb-8">
             {/* Company Info */}
-            <div>
+            <div className="min-w-[220px]">
               <Title level={4} style={{ color: appConfig.primaryColor || '#229A95' }}>
                 {appConfig.siteName || 'Qabalan'}
               </Title>
@@ -200,7 +200,7 @@ const AppLayout = ({ children, pageConfig = {} }) => {
             </div>
 
             {/* Quick Links */}
-            <div>
+            <div className="min-w-[220px]">
               <Title level={5} className="mb-4">{t('footer.quickLinks')}</Title>
               <Space direction="vertical">
                 {menuItems.map(item => (
@@ -210,7 +210,7 @@ const AppLayout = ({ children, pageConfig = {} }) => {
             </div>
 
             {/* Contact Info */}
-            <div>
+            <div className="min-w-[220px]">
               <Title level={5} className="mb-4">{t('footer.contactInfo')}</Title>
               <Space direction="vertical" size="small">
                 {contactConfig.primaryPhone && (
@@ -245,7 +245,7 @@ const AppLayout = ({ children, pageConfig = {} }) => {
             </div>
 
             {/* Social Links */}
-            <div>
+            <div className="min-w-[220px]">
               <Title level={5} className="mb-4">{t('footer.followUs')}</Title>
               <Space direction="vertical" size="small">
                 {contactConfig.socialMedia?.facebook && (

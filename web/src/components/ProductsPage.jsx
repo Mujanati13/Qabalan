@@ -494,7 +494,7 @@ const ProductsPage = () => {
   return (
     <AppLayout>
       <div className="products-page-wrapper">
-        <HeroSection />
+        {/* <HeroSection /> */}
         <FilterSection />
         <div className="products-main-section">
           <div className="products-main-container">

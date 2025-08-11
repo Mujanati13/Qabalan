@@ -49,11 +49,11 @@ export const SettingsProvider = ({ children }) => {
       enableDirections: true
     },
     languages: {
-      enableMultiLanguage: true,
+      enableMultiLanguage: false,
       defaultLanguage: 'en',
-      availableLanguages: ['en', 'ar'],
-      showLanguageFlags: true,
-      languageSwitcherPosition: 'header'
+      availableLanguages: ['en'],
+      showLanguageFlags: false,
+      languageSwitcherPosition: 'none'
     },
     contact: {
       enableContactPage: false,
@@ -131,11 +131,11 @@ export const SettingsProvider = ({ children }) => {
             return mergedSettings;
           });
 
-          // Set default language if multi-language is enabled
-          if (formattedSettings.languages?.enableMultiLanguage) {
+          // Force English-only
+          if (true) {
             const savedLanguage = localStorage.getItem('selectedLanguage');
-            const defaultLang = formattedSettings.languages?.defaultLanguage || 'en';
-            const availableLanguages = formattedSettings.languages?.availableLanguages || ['en'];
+            const defaultLang = 'en';
+            const availableLanguages = ['en'];
             
             // Use saved language if it's available, otherwise use default
             if (savedLanguage && availableLanguages.includes(savedLanguage)) {

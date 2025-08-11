@@ -51,11 +51,20 @@ class StaffRoleService {
     try {
       const { name, display_name, description, permissions } = roleData;
 
+      // Check for duplicate role name
+      const [existingRole] = await executeQuery(
+        'SELECT id FROM roles WHERE name = ? OR display_name = ?',
+        [name, display_name]
+      );
+      if (existingRole) {
+        throw new Error('Role name or display name already exists');
+      }
+
       // Create role
       const result = await executeQuery(`
         INSERT INTO roles (name, display_name, description, is_system_role)
         VALUES (?, ?, ?, FALSE)
-      `, [name, display_name, description]);
+      `, [name, display_name, description || null]);
 
       const roleId = result.insertId;
 
@@ -139,6 +148,12 @@ class StaffRoleService {
 
       // Insert new permissions
       for (const perm of permissions) {
+        // Skip permissions without module
+        if (!perm.module) {
+          console.warn('Skipping permission without module:', perm);
+          continue;
+        }
+        
         await executeQuery(`
           INSERT INTO role_permissions 
           (role_id, module, can_read, can_create, can_update, can_delete, can_export, can_manage)
@@ -289,6 +304,26 @@ class StaffRoleService {
         roles = []
       } = staffData;
 
+      // Check for duplicate email
+      const [existingEmail] = await executeQuery(
+        'SELECT id FROM users WHERE email = ?',
+        [email]
+      );
+      if (existingEmail) {
+        throw new Error('Email already exists');
+      }
+
+      // Check for duplicate phone if provided
+      if (phone && phone.trim()) {
+        const [existingPhone] = await executeQuery(
+          'SELECT id FROM users WHERE phone = ?',
+          [phone.trim()]
+        );
+        if (existingPhone) {
+          throw new Error('Phone number already exists');
+        }
+      }
+
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 12);
 
@@ -297,7 +332,7 @@ class StaffRoleService {
         INSERT INTO users 
         (email, phone, password_hash, first_name, last_name, user_type, is_verified, is_active)
         VALUES (?, ?, ?, ?, ?, ?, TRUE, TRUE)
-      `, [email, phone, hashedPassword, first_name, last_name, user_type]);
+      `, [email, phone || null, hashedPassword, first_name, last_name, user_type]);
 
       const userId = userResult.insertId;
 
@@ -309,9 +344,19 @@ class StaffRoleService {
          emergency_contact_name, emergency_contact_phone, notes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
-        userId, employee_id, department, position, manager_id, hire_date,
-        employment_type, salary, hourly_rate, work_schedule ? JSON.stringify(work_schedule) : null,
-        emergency_contact_name, emergency_contact_phone, notes
+        userId, 
+        employee_id || null, 
+        department || null, 
+        position || null, 
+        manager_id || null, 
+        hire_date || null,
+        employment_type || null, 
+        salary || null, 
+        hourly_rate || null, 
+        work_schedule ? JSON.stringify(work_schedule) : null,
+        emergency_contact_name || null, 
+        emergency_contact_phone || null, 
+        notes || null
       ]);
 
       // Assign roles

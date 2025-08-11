@@ -25,6 +25,7 @@ import Branches from './pages/Branches'
 import URLGeneratorDemo from './pages/URLGeneratorDemo'
 import OffersManagement from './pages/OffersManagement'
 import WebClientConfiguration from './pages/WebClientConfiguration'
+import LocationManagement from './pages/LocationManagement'
 
 // Placeholder pages
 const Inventory = () => <div>Inventory Page - Coming Soon</div>
@@ -240,6 +241,14 @@ function App() {
           <ProtectedRoute>
             <AdminLayout>
               <WebClientConfiguration />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        <Route path="/locations" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <LocationManagement />
             </AdminLayout>
           </ProtectedRoute>
         } />

@@ -125,22 +125,11 @@ const ordersService = {
     }
   },
 
-  // Get recent orders for real-time updates
+  // DEPRECATED: Get recent orders for real-time updates
+  // Real-time updates now use Socket.IO instead
   getRecentOrders: async (sinceTimestamp) => {
-    try {
-      const params = {};
-      if (sinceTimestamp) {
-        // Backend expects a numeric timestamp, not ISO string
-        params.since = sinceTimestamp;
-      }
-      
-      const response = await api.get('/orders/recent', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Failed to fetch recent orders:', error);
-      // Return empty array if endpoint doesn't exist yet
-      return { data: [] };
-    }
+    console.warn('getRecentOrders is deprecated. Use Socket.IO for real-time updates.');
+    return { data: [] }; // Return empty array to avoid breaking existing code
   },
 
   // Get order counts by status

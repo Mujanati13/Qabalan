@@ -9,45 +9,52 @@ import { useState, useMemo } from 'react';
  * - Date, number, and string sorting
  * - Null/undefined value handling
  */
-export const useTableSorting = (data = [], defaultSorting = []) => {
-  // Sorting state: array of sort objects { key, direction, comparator }
-  const [sortConfig, setSortConfig] = useState(defaultSorting);
 
-  // Default comparators for different data types
-  const defaultComparators = {
-    string: (a, b, direction) => {
-      const aVal = (a || '').toString().toLowerCase();
-      const bVal = (b || '').toString().toLowerCase();
-      const result = aVal.localeCompare(bVal);
-      return direction === 'asc' ? result : -result;
-    },
-    
-    number: (a, b, direction) => {
-      const aVal = parseFloat(a) || 0;
-      const bVal = parseFloat(b) || 0;
-      const result = aVal - bVal;
-      return direction === 'asc' ? result : -result;
-    },
-    
-    date: (a, b, direction) => {
-      const aVal = new Date(a).getTime() || 0;
-      const bVal = new Date(b).getTime() || 0;
-      const result = aVal - bVal;
-      return direction === 'asc' ? result : -result;
-    },
-    
-    currency: (a, b, direction) => {
-      // Handle currency strings like "$123.45" or numbers
-      const aVal = typeof a === 'string' ? 
-        parseFloat(a.replace(/[$,]/g, '')) || 0 : 
-        parseFloat(a) || 0;
-      const bVal = typeof b === 'string' ? 
-        parseFloat(b.replace(/[$,]/g, '')) || 0 : 
-        parseFloat(b) || 0;
-      const result = aVal - bVal;
-      return direction === 'asc' ? result : -result;
-    }
-  };
+// Default comparators for different data types
+const defaultComparators = {
+  string: (a, b, direction) => {
+    const aVal = (a || '').toString().toLowerCase();
+    const bVal = (b || '').toString().toLowerCase();
+    const result = aVal.localeCompare(bVal);
+    return direction === 'asc' ? result : -result;
+  },
+  
+  number: (a, b, direction) => {
+    const aVal = parseFloat(a) || 0;
+    const bVal = parseFloat(b) || 0;
+    const result = aVal - bVal;
+    return direction === 'asc' ? result : -result;
+  },
+  
+  date: (a, b, direction) => {
+    const aVal = new Date(a).getTime() || 0;
+    const bVal = new Date(b).getTime() || 0;
+    const result = aVal - bVal;
+    return direction === 'asc' ? result : -result;
+  },
+  
+  currency: (a, b, direction) => {
+    // Handle currency strings like "$123.45" or numbers
+    const aVal = typeof a === 'string' ? 
+      parseFloat(a.replace(/[$,]/g, '')) || 0 : 
+      parseFloat(a) || 0;
+    const bVal = typeof b === 'string' ? 
+      parseFloat(b.replace(/[$,]/g, '')) || 0 : 
+      parseFloat(b) || 0;
+    const result = aVal - bVal;
+    return direction === 'asc' ? result : -result;
+  }
+};
+
+export const useTableSorting = (data = [], defaultSorting = []) => {
+  // Ensure default sorting has comparators
+  const processedDefaultSorting = defaultSorting.map(sort => ({
+    ...sort,
+    comparator: sort.comparator || defaultComparators.string
+  }));
+  
+  // Sorting state: array of sort objects { key, direction, comparator }
+  const [sortConfig, setSortConfig] = useState(processedDefaultSorting);
 
   // Function to get nested property value
   const getNestedValue = (obj, path) => {
@@ -68,7 +75,8 @@ export const useTableSorting = (data = [], defaultSorting = []) => {
           // Change to descending
           newConfig[existingIndex] = {
             ...existingSort,
-            direction: 'desc'
+            direction: 'desc',
+            comparator: existingSort.comparator || defaultComparators.string
           };
         } else {
           // Remove this sort (third click removes sorting)
@@ -102,7 +110,9 @@ export const useTableSorting = (data = [], defaultSorting = []) => {
         const aValue = getNestedValue(a, sort.key);
         const bValue = getNestedValue(b, sort.key);
         
-        const result = sort.comparator(aValue, bValue, sort.direction);
+        // Ensure comparator exists, fallback to string comparator
+        const comparator = sort.comparator || defaultComparators.string;
+        const result = comparator(aValue, bValue, sort.direction);
         
         // If values are different, return the result
         if (result !== 0) {

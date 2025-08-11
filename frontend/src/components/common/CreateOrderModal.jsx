@@ -897,9 +897,13 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
             value={selectedCustomer?.id}
             onChange={handleCustomerSelect}
             style={{ flex: 1 }}
-            filterOption={(input, option) =>
-              option.children.toLowerCase().includes(input.toLowerCase())
-            }
+            filterOption={(input, option) => {
+              const children = option.children;
+              if (typeof children === 'string') {
+                return children.toLowerCase().includes(input.toLowerCase());
+              }
+              return false;
+            }}
           >
             {customers.map(customer => (
               <Option key={customer.id} value={customer.id}>
@@ -1127,9 +1131,13 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               loading={searchingProducts}
               onChange={addProduct}
               value={undefined}
-              filterOption={(input, option) =>
-                option.children.toLowerCase().includes(input.toLowerCase())
-              }
+              filterOption={(input, option) => {
+                const children = option.children;
+                if (typeof children === 'string') {
+                  return children.toLowerCase().includes(input.toLowerCase());
+                }
+                return false;
+              }}
             >
               {products.map(product => (
                 <Option key={product.id} value={product.id}>

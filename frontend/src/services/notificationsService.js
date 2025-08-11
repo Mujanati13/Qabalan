@@ -104,7 +104,13 @@ const notificationsService = {
   // Get customers for notification targeting
   async getCustomers(params = {}) {
     try {
-      const response = await apiClient.get('/customers', { params })
+      // Ensure we only get customers
+      const customerParams = { 
+        user_type: 'customer',
+        is_active: 'true',
+        ...params 
+      }
+      const response = await apiClient.get('/users', { params: customerParams })
       return response.data
     } catch (error) {
       console.error('Error fetching customers:', error)

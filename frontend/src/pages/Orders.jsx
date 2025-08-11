@@ -27,7 +27,8 @@ import {
   DatePicker,
   Popconfirm,
   Menu,
-  Dropdown
+  Dropdown,
+  Spin
 } from 'antd';
 import {
   EyeOutlined,
@@ -41,35 +42,172 @@ import {
   MailOutlined,
   ClockCircleOutlined,
   DollarOutlined,
-  UserOutlined,
+  SearchOutlined ,
   ShoppingCartOutlined,
   TruckOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExclamationCircleOutlined,
   SaveOutlined,
+  PrinterOutlined,
+  EnvironmentOutlined,
   DownOutlined,
   ExportOutlined,
   ClearOutlined,
   FileTextOutlined,
-  MoreOutlined
+  MoreOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import ordersService from '../services/ordersService';
 import NotificationControls from '../components/notifications/NotificationControls';
-import OrderItemCard from '../components/orders/OrderItemCard';
-import OrderItemsPreview from '../components/orders/OrderItemsPreview';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
 import CreateOrderModal from '../components/common/CreateOrderModal';
 import api from '../services/api';
 import moment from 'moment';
-
+import io from 'socket.io-client';
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
+
+// Simple notification sound using HTML5 Audio with system sound
+const playNotificationSound = () => {
+  try {
+    // Create a simple beep using Web Audio API
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Resume context if suspended (browser autoplay policy)
+    if (audioContext.state === 'suspended') {
+      audioContext.resume();
+    }
+    
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    // Create a pleasant notification sound (two tones)
+    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+    oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.15);
+    oscillator.type = 'sine';
+    
+    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 0.05);
+    gainNode.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + 0.15);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
+    
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.4);
+    
+    console.log('Notification sound played successfully');
+    return true;
+  } catch (error) {
+    console.log('Could not play notification sound:', error);
+    
+    // Fallback: Use HTML5 Audio with data URI
+    try {
+      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjiS0u7MeyIELIHM8tiJOQgZZ7fr45dNEwxPq+Xwtl8bBTmR1/LNeSsFJHfH8N+QQAoUXrPq66hVFApGnt7zv2wfBTiS0u7MeyIELYDU7t2TXBsZcabq65xWEQuBluvs5pJDGQNEmtPzt3EhBTmp3e7QgzQJE2KzhN+XVA8PaUgFoW/;');
+      audio.volume = 0.3;
+      audio.play().catch(e => console.log('Fallback audio failed:', e));
+      return true;
+    } catch (fallbackError) {
+      console.log('Fallback audio also failed:', fallbackError);
+      return false;
+    }
+  }
+};
+
+// OrderItemsPreview Component
+const OrderItemsPreview = ({ items, formatPrice, maxItems = 2 }) => {
+  if (!items || items.length === 0) {
+    return <Text type="secondary" style={{ fontSize: '11px' }}>No items</Text>;
+  }
+
+  const displayItems = items.slice(0, maxItems);
+  const remainingCount = items.length - maxItems;
+
+  return (
+    <div style={{ fontSize: '11px' }}>
+      {displayItems.map((item, index) => {
+        // Get product name with fallbacks
+        const productName = item?.product_name || 
+                           item?.product_title_en || 
+                           item?.product_title_ar || 
+                           'Unknown Product';
+        
+        // Get numeric values with fallbacks
+        const quantity = Number(item?.quantity || 0);
+        const unitPrice = Number(item?.unit_price || item?.price || 0);
+        
+        return (
+          <div key={index} style={{ marginBottom: '2px', color: '#666' }}>
+            <span style={{ fontWeight: 'bold' }}>{quantity}x</span>{' '}
+            <span>{productName}</span>
+            <span style={{ float: 'right', color: '#52c41a' }}>
+              {formatPrice(unitPrice * quantity)}
+            </span>
+          </div>
+        );
+      })}
+      {remainingCount > 0 && (
+        <div style={{ color: '#999', fontSize: '10px', marginTop: '2px' }}>
+          +{remainingCount} more item{remainingCount > 1 ? 's' : ''}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// OrderItemCard Component for detailed view
+const OrderItemCard = ({ item, formatPrice }) => {
+  // Get product name from various possible fields
+  const productName = item?.product_name || 
+                     item?.product_title_en || 
+                     item?.product_title_ar || 
+                     'Unknown Product';
+  
+  // Get unit price from various possible fields with fallback
+  const unitPrice = Number(item?.unit_price || item?.price || 0);
+  const quantity = Number(item?.quantity || 0);
+  
+  return (
+    <Card 
+      size="small" 
+      style={{ 
+        marginBottom: '8px',
+        borderLeft: '3px solid #1890ff'
+      }}
+      bodyStyle={{ padding: '12px' }}
+    >
+      <Row gutter={16} align="middle">
+        <Col span={16}>
+          <div>
+            <Text strong style={{ fontSize: '14px' }}>
+              {productName}
+            </Text>
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+              Unit Price: {formatPrice(unitPrice)}
+            </div>
+          </div>
+        </Col>
+        <Col span={4} style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '14px' }}>
+            <Text strong>Qty: {quantity}</Text>
+          </div>
+        </Col>
+        <Col span={4} style={{ textAlign: 'right' }}>
+          <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
+            {formatPrice(unitPrice * quantity)}
+          </Text>
+        </Col>
+      </Row>
+    </Card>
+  );
+};
 
 const Orders = () => {
   const { t, language } = useLanguage();
@@ -80,11 +218,19 @@ const Orders = () => {
   } = useNotifications();
   const { getOrdersExportConfig } = useExportConfig();
   
+  // Socket connection ref
+  const socketRef = useRef(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(
+    localStorage.getItem('orderSoundEnabled') !== 'false'
+  );
+  
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [detailsVisible, setDetailsVisible] = useState(false);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [statusUpdateVisible, setStatusUpdateVisible] = useState(false);
   const [statusUpdateLoading, setStatusUpdateLoading] = useState(false);
   const [createOrderVisible, setCreateOrderVisible] = useState(false);
@@ -92,6 +238,8 @@ const Orders = () => {
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusNotes, setStatusNotes] = useState('');
   const [editingOrder, setEditingOrder] = useState(null);
+  const [editOrderItems, setEditOrderItems] = useState([]);
+  const [availableProducts, setAvailableProducts] = useState([]);
   const [orderForm] = Form.useForm();
   const [branches, setBranches] = useState([]);
   const [products, setProducts] = useState([]);
@@ -104,10 +252,15 @@ const Orders = () => {
     order_type: 'all',
     payment_method: 'all',
     date_range: 'today',
-    custom_date_range: null
+    custom_date_range: null,
+    search: ''
   });
   const [orderStats, setOrderStats] = useState({});
   const [orderCounts, setOrderCounts] = useState({});
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   
   // Bulk selection states
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
@@ -129,12 +282,287 @@ const Orders = () => {
     }}
   ]);
 
+  // Socket connection setup
+  useEffect(() => {
+    console.log('🚀 Orders component mounted, initializing Socket.io...');
+    
+    const initializeSocket = () => {
+      // Try both token keys used in the app
+      const token = localStorage.getItem('admin_token') || localStorage.getItem('token');
+      console.log('🔑 Token check:');
+      console.log('  admin_token:', localStorage.getItem('admin_token') ? 'Found' : 'Not found');
+      console.log('  token:', localStorage.getItem('token') ? 'Found' : 'Not found');
+      console.log('  Using token:', token ? 'Token found' : 'No token found');
+      
+      if (!token) {
+        console.warn('⚠️ No authentication token found, skipping Socket.io connection');
+        console.warn('Please make sure you are logged into the admin dashboard');
+        return;
+      }
+
+      // Extract base URL from VITE_API_URL (remove /api suffix)
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const socketUrl = apiUrl?.replace('/api', '') || 'http://localhost:3015';
+      
+      console.log('🌐 Environment variables:');
+      console.log('  VITE_API_URL:', import.meta.env.VITE_API_URL);
+      console.log('  Calculated socketUrl:', socketUrl);
+      console.log('� Attempting to connect to Socket.io server at:', socketUrl);
+      
+      try {
+        socketRef.current = io(socketUrl, {
+          auth: { token },
+          transports: ['websocket', 'polling'],
+          timeout: 20000,
+          forceNew: true
+        });
+
+        socketRef.current.on('connect', () => {
+          console.log('✅ Socket.io connected successfully');
+          console.log('Socket ID:', socketRef.current.id);
+          setIsConnected(true);
+        });
+
+        socketRef.current.on('connect_error', (error) => {
+          console.error('❌ Socket.io connection error:', error);
+          console.error('Error type:', error.type);
+          console.error('Error description:', error.description);
+          console.error('Error context:', error.context);
+          console.error('Error transport:', error.transport);
+          setIsConnected(false);
+        });
+
+        socketRef.current.on('disconnect', (reason) => {
+          console.log('🔌 Socket.io disconnected:', reason);
+          setIsConnected(false);
+        });
+
+        socketRef.current.on('error', (error) => {
+          console.error('🚨 Socket.io error:', error);
+        });
+      } catch (error) {
+        console.error('💥 Failed to initialize Socket.io:', error);
+      }
+
+      // Listen for connection confirmation from server
+      socketRef.current.on('connection_confirmed', (data) => {
+        console.log('🎉 Connection confirmed from server:', data);
+      });
+
+      // Real-time order events
+      socketRef.current.on('newOrderCreated', (orderData) => {
+        console.log('🆕 New order received via Socket.io:', orderData);
+        
+        // Play notification sound
+        if (soundEnabled) {
+          playNotificationSound();
+        }
+        
+        // Show notification
+        message.success({
+          content: `🆕 New order received: #${orderData.orderId} from ${orderData.customerName}`,
+          duration: 6,
+          style: { marginTop: '10vh' }
+        });
+        
+        // Add the new order to the beginning of the list if on pending filter or all
+        if (filters.status === 'all' || filters.status === 'pending') {
+          setOrders(prevOrders => {
+            // Create a new order object with the received data
+            const newOrder = {
+              id: orderData.orderId,
+              order_number: orderData.orderNumber,
+              customer_name: orderData.customerName,
+              customer_phone: orderData.customerPhone || '',
+              customer_email: orderData.customerEmail || '',
+              order_status: 'pending',
+              order_type: orderData.orderType,
+              payment_method: orderData.paymentMethod || 'cash',
+              payment_status: orderData.paymentStatus || 'pending',
+              total_amount: orderData.orderTotal,
+              created_at: orderData.createdAt,
+              items_count: orderData.itemsCount || 1,
+              items: orderData.items || []
+            };
+            
+            // Add to the beginning of the list
+            return [newOrder, ...prevOrders];
+          });
+        }
+        
+        // Update counts and notifications
+        updatePendingCount();
+        fetchOrderStats();
+      });
+
+      socketRef.current.on('orderStatusUpdated', (orderData) => {
+        console.log('Order status updated:', orderData);
+        
+        // Play notification sound for important status changes
+        if (soundEnabled && ['delivered', 'cancelled'].includes(orderData.newStatus)) {
+          playNotificationSound();
+        }
+        
+        // Show notification for status changes
+        message.info({
+          content: `Order #${orderData.orderId} status changed from ${orderData.previousStatus} to ${orderData.newStatus}`,
+          duration: 4
+        });
+        
+        // Update order in the list
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.id === orderData.orderId ? { 
+              ...order, 
+              order_status: orderData.newStatus,
+              updated_at: orderData.updatedAt 
+            } : order
+          )
+        );
+        
+        // Update selected order if it's the same one
+        if (selectedOrder && selectedOrder.id === orderData.orderId) {
+          setSelectedOrder(prev => ({ 
+            ...prev, 
+            order_status: orderData.newStatus,
+            updated_at: orderData.updatedAt 
+          }));
+        }
+        
+        // Update counts
+        updatePendingCount();
+        fetchOrderStats();
+      });
+
+      socketRef.current.on('orderCancelled', (data) => {
+        console.log('Order cancelled:', data);
+        
+        // Play notification sound
+        if (soundEnabled) {
+          playNotificationSound();
+        }
+        
+        // Show notification
+        message.warning({
+          content: `Order #${data.orderId} has been cancelled by ${data.cancelledBy}`,
+          duration: 5
+        });
+        
+        // Update order in the list
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.id === data.orderId ? { 
+              ...order, 
+              order_status: 'cancelled',
+              cancelled_at: data.cancelledAt,
+              cancellation_reason: data.cancellationReason
+            } : order
+          )
+        );
+        
+        // Update selected order if it's the same one
+        if (selectedOrder && selectedOrder.id === data.orderId) {
+          setSelectedOrder(prev => ({ 
+            ...prev, 
+            order_status: 'cancelled',
+            cancelled_at: data.cancelledAt,
+            cancellation_reason: data.cancellationReason
+          }));
+        }
+        
+        updatePendingCount();
+        fetchOrderStats();
+      });
+
+      socketRef.current.on('orderCountsUpdated', (data) => {
+        console.log('Order counts updated:', data);
+        
+        // Update the pending orders count in the notification context
+        updatePendingCount(data.pendingOrders);
+        
+        // Update local order counts state
+        setOrderCounts(prevCounts => ({
+          ...prevCounts,
+          pending: data.pendingOrders
+        }));
+      });
+
+      socketRef.current.on('notification', (notification) => {
+        console.log('Real-time notification:', notification);
+        
+        if (soundEnabled) {
+          playNotificationSound();
+        }
+        
+        // Show notification based on type
+        const messageConfig = {
+          content: notification.message,
+          duration: 5
+        };
+        
+        switch (notification.type) {
+          case 'success':
+            message.success(messageConfig);
+            break;
+          case 'error':
+            message.error(messageConfig);
+            break;
+          case 'warning':
+            message.warning(messageConfig);
+            break;
+          default:
+            message.info(messageConfig);
+        }
+        
+        refreshNotifications();
+      });
+    };
+
+    initializeSocket();
+
+    // Cleanup function
+    return () => {
+      console.log('🧹 Cleaning up Socket.io connection...');
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, []); // Empty dependency array to run only once
+
+  // Test connection function for debugging
+  const testSocketConnection = () => {
+    console.log('🔍 Testing Socket.io connection...');
+    console.log('Connection status:', isConnected);
+    console.log('Socket object:', socketRef.current);
+    
+    if (socketRef.current) {
+      console.log('Socket connected:', socketRef.current.connected);
+      console.log('Socket ID:', socketRef.current.id);
+    } else {
+      console.log('No socket connection found');
+    }
+  };
+
+  // Toggle sound notifications
+  const toggleSound = () => {
+    const newSoundEnabled = !soundEnabled;
+    setSoundEnabled(newSoundEnabled);
+    localStorage.setItem('orderSoundEnabled', newSoundEnabled.toString());
+    
+    message.info({
+      content: newSoundEnabled ? 'Sound notifications enabled' : 'Sound notifications disabled',
+      duration: 2
+    });
+  };
+
   useEffect(() => {
     fetchOrders();
     fetchOrderStats();
     fetchOrderCounts();
     fetchBranches();
     fetchShippingZones();
+    fetchProducts();
   }, [filters]);
 
   const fetchOrders = async () => {
@@ -232,30 +660,501 @@ const Orders = () => {
 
   const fetchShippingZones = async () => {
     try {
-      const response = await api.get('/shipping/zones');
-      setShippingZones(response.data.data.zones || []);
+  const response = await api.get('/shipping/zones');
+  setShippingZones((response.data && response.data.data && response.data.data.zones) || []);
     } catch (error) {
       console.error('Failed to fetch shipping zones:', error);
       setShippingZones([]);
     }
   };
 
-  const calculateShippingCost = async (deliveryAddressId, branchId, orderAmount = 0) => {
+  const fetchProducts = async () => {
     try {
-      if (!deliveryAddressId || !branchId) return null;
+      const response = await api.get('/products');
+      const products = response.data.data || [];
+      console.log('Raw API response:', response.data);
+      console.log('Products array from API:', products);
       
-      const response = await api.post('/shipping/calculate', {
-        delivery_address_id: deliveryAddressId,
-        branch_id: branchId,
-        order_amount: orderAmount
-      });
-      
-      return response.data.data;
+      if (products.length > 0) {
+        console.log('First product structure:', products[0]);
+        console.log('All products with pricing info:', products.map(p => ({
+          id: p.id,
+          name: p.name || p.title_en || p.title_ar,
+          base_price: p.base_price,
+          sale_price: p.sale_price,
+          final_price: p.final_price,
+          // Old field names for comparison
+          price: p.price,
+          unit_price: p.unit_price,
+          selling_price: p.selling_price,
+          sale_price_old: p.sale_price
+        })));
+        
+        console.log('Using API products:', products);
+        setAvailableProducts(products);
+        setProducts(products);
+        return products;
+      } else {
+        console.warn('No products returned from API, using fallback mock data');
+        // Only use mock data if API returns empty array
+        const mockProducts = [
+          { id: 1, title_en: 'Chicken Burger', title_ar: 'برجر دجاج', price: 12.99, sku: 'CB001' },
+          { id: 2, title_en: 'Beef Burger', title_ar: 'برجر لحم', price: 15.99, sku: 'BB001' },
+          { id: 3, title_en: 'Fries', title_ar: 'بطاطا مقلية', price: 5.99, sku: 'FR001' },
+          { id: 4, title_en: 'Soft Drink', title_ar: 'مشروب غازي', price: 2.99, sku: 'SD001' }
+        ];
+        console.log('Using fallback mock products:', mockProducts);
+        setAvailableProducts(mockProducts);
+        setProducts(mockProducts);
+        return mockProducts;
+      }
     } catch (error) {
-      console.error('Failed to calculate shipping cost:', error);
+      console.error('Failed to fetch products:', error);
+      // Fallback to mock data only on API error
+      const mockProducts = [
+        { id: 1, title_en: 'Chicken Burger', title_ar: 'برجر دجاج', price: 12.99, sku: 'CB001' },
+        { id: 2, title_en: 'Beef Burger', title_ar: 'برجر لحم', price: 15.99, sku: 'BB001' },
+        { id: 3, title_en: 'Fries', title_ar: 'بطاطا مقلية', price: 5.99, sku: 'FR001' },
+        { id: 4, title_en: 'Soft Drink', title_ar: 'مشروب غازي', price: 2.99, sku: 'SD001' }
+      ];
+      console.log('Using mock products due to API error:', mockProducts);
+      setAvailableProducts(mockProducts);
+      setProducts(mockProducts);
+      return mockProducts;
+    }
+  };
+
+  // Fetch customer addresses by phone number or customer ID
+  const fetchCustomerAddresses = async (phoneNumber, customerId = null) => {
+    try {
+      console.log('Fetching addresses for customer:', { phoneNumber, customerId });
+      
+      let response;
+      if (customerId) {
+        response = await api.get(`/addresses?user_id=${customerId}`);
+      } else if (phoneNumber) {
+        // Search user by phone first, then get addresses
+        const userResponse = await api.get(`/users?phone=${phoneNumber}&limit=1`);
+        if (userResponse.data.success && userResponse.data.data.length > 0) {
+          const userId = userResponse.data.data[0].id;
+          response = await api.get(`/addresses?user_id=${userId}`);
+        } else {
+          console.log('No user found with phone number:', phoneNumber);
+          setCustomerAddresses([]);
+          return [];
+        }
+      } else {
+        setCustomerAddresses([]);
+        return [];
+      }
+
+      if (response && response.data.success) {
+        const addresses = response.data.data || [];
+        console.log('Customer addresses loaded:', addresses);
+        setCustomerAddresses(addresses);
+        return addresses;
+      } else {
+        console.log('No addresses found for customer');
+        setCustomerAddresses([]);
+        return [];
+      }
+    } catch (error) {
+      console.error('Failed to fetch customer addresses:', error);
+      setCustomerAddresses([]);
+      return [];
+    }
+  };
+
+  // Handle customer phone change to load addresses
+  const handleCustomerPhoneChange = async (phoneNumber) => {
+    if (phoneNumber && phoneNumber.length >= 8) { // Minimum phone length
+      const addresses = await fetchCustomerAddresses(phoneNumber);
+      
+      // Check address quality and provide feedback
+      if (addresses && addresses.length > 0) {
+        const addressesWithCoords = addresses.filter(addr => addr.latitude && addr.longitude);
+        const addressesWithoutCoords = addresses.filter(addr => !addr.latitude || !addr.longitude);
+        
+        if (addressesWithoutCoords.length > 0) {
+          console.log('Found addresses without coordinates:', addressesWithoutCoords);
+          message.info({
+            content: (
+              <div>
+                <div><strong>📍 Address Quality Check</strong></div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  Found {addresses.length} address{addresses.length !== 1 ? 'es' : ''} 
+                  ({addressesWithCoords.length} with GPS, {addressesWithoutCoords.length} without GPS)
+                  {addressesWithoutCoords.length > 0 && (
+                    <div style={{ marginTop: '4px', color: '#d46b08' }}>
+                      ⚠️ Addresses without GPS will use default zone pricing
+                    </div>
+                  )}
+                </div>
+              </div>
+            ),
+            duration: 6
+          });
+        }
+      }
+    } else {
+      setCustomerAddresses([]);
+      setShippingCalculation(null);
+    }
+  };
+
+  // Fallback shipping calculation using zone-based pricing
+  const calculateFallbackShipping = async (branchId, orderAmount = 0) => {
+    try {
+      // Fetch branch-specific zones (with overrides if any)
+      const response = await api.get(`/shipping/branches/${branchId}/zones`);
+      if (response.data && response.data.success) {
+        const zones = (response.data.data && response.data.data.zones) || [];
+        // Use the default zone or first available zone
+        const defaultZone = zones.find(z => z.is_default) || zones[0];
+        if (defaultZone) {
+          const baseCost = defaultZone.base_price || 10; // Default 10 AED
+          const freeShippingThreshold = defaultZone.free_shipping_threshold || 100;
+          
+          return {
+            total_shipping_cost: orderAmount >= freeShippingThreshold ? 0 : baseCost,
+            free_shipping_applied: orderAmount >= freeShippingThreshold,
+            zone_name: defaultZone.name_en || 'Standard Zone',
+            zone_name_en: defaultZone.name_en || 'Standard Zone',
+            distance_km: 0,
+            distance: 0,
+            base_cost: baseCost,
+            calculation_method: 'zone-fallback',
+            free_shipping_threshold: freeShippingThreshold
+          };
+        }
+      }
+      return null;
+    } catch (error) {
+      console.error('Fallback shipping calculation failed:', error);
       return null;
     }
   };
+
+  const calculateShippingCost = async (deliveryAddressId, branchId, orderAmount = 0) => {
+    try {
+      if (!deliveryAddressId || !branchId) {
+        console.log('Missing required parameters for shipping calculation:', { deliveryAddressId, branchId });
+        return null;
+      }
+      
+      console.log('Calculating shipping cost:', { deliveryAddressId, branchId, orderAmount });
+      
+  // First, try to get address details if deliveryAddressId is a number (address ID)
+      let addressData = null;
+      let customerLat = null;
+      let customerLng = null;
+      
+      // Check if deliveryAddressId is a valid address ID (numeric)
+      if (!isNaN(deliveryAddressId) && parseInt(deliveryAddressId) > 0) {
+        try {
+          // Get address details to extract coordinates
+          const addressResponse = await api.get(`/addresses/${deliveryAddressId}`);
+          if (addressResponse.data && addressResponse.data.success) {
+            addressData = addressResponse.data.data;
+            customerLat = addressData.latitude;
+            customerLng = addressData.longitude;
+            console.log('Address coordinates found:', { customerLat, customerLng });
+          }
+        } catch (addressError) {
+          console.warn('Could not fetch address details:', addressError);
+        }
+      }
+      
+      // Prepare shipping calculation payload
+      const shippingPayload = {
+        branch_id: branchId,
+        order_amount: orderAmount || 0
+      };
+      
+      // Add address information based on what we have
+      if (customerLat && customerLng) {
+        // Use coordinates if available
+        shippingPayload.customer_latitude = customerLat;
+        shippingPayload.customer_longitude = customerLng;
+        shippingPayload.delivery_address_id = deliveryAddressId;
+      } else if (!isNaN(deliveryAddressId)) {
+        // Use address ID if it's numeric, but warn about missing coordinates
+        shippingPayload.delivery_address_id = deliveryAddressId;
+        console.warn('Address coordinates missing for address ID:', deliveryAddressId);
+        
+        // Try fallback calculation using default zone
+        console.log('Attempting fallback shipping calculation...');
+        const fallbackResult = await calculateFallbackShipping(branchId, orderAmount);
+        if (fallbackResult) {
+          console.log('Fallback shipping calculation successful:', fallbackResult);
+          message.warning({
+            content: (
+              <div>
+                <div><strong>⚠️ Coordinates Missing</strong></div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  Using default zone pricing. For accurate shipping, please update customer address with GPS coordinates.
+                </div>
+              </div>
+            ),
+            duration: 6
+          });
+          setShippingCalculation(fallbackResult);
+          return fallbackResult;
+        } else {
+          message.error({
+            content: (
+              <div>
+                <div><strong>❌ Cannot Calculate Shipping</strong></div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  Address coordinates are missing and no default zones available. Please enter delivery fee manually.
+                </div>
+              </div>
+            ),
+            duration: 8
+          });
+          return null;
+        }
+      } else {
+        // For text addresses, we can't calculate shipping automatically
+        console.log('Cannot calculate shipping for text address:', deliveryAddressId);
+        message.warning({
+          content: (
+            <div>
+              <div><strong>💡 Manual Address Entry</strong></div>
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                Automatic shipping calculation is only available for saved addresses with GPS coordinates. Please enter delivery fee manually.
+              </div>
+            </div>
+          ),
+          duration: 6
+        });
+        return null;
+      }
+      
+      console.log('Shipping calculation payload:', shippingPayload);
+      
+      const response = await api.post('/shipping/calculate', shippingPayload);
+      
+    if (response.data && response.data.success) {
+        const shippingData = response.data.data;
+        console.log('Shipping calculation result:', shippingData);
+        
+        const calculationResult = {
+      total_shipping_cost: shippingData.total_cost || shippingData.total_shipping_cost || shippingData.delivery_fee || 0,
+          free_shipping_applied: shippingData.free_shipping_applied || false,
+          zone_name: shippingData.zone_name_en || shippingData.shipping_zone_name || 'Unknown Zone',
+          zone_name_en: shippingData.zone_name_en || 'Unknown Zone',
+      distance_km: shippingData.distance_km || 0,
+      distance: shippingData.distance_km || 0,
+      base_cost: shippingData.base_cost || shippingData.total_cost || shippingData.total_shipping_cost || 0,
+      calculation_method: shippingData.calculation_method || 'zone-based',
+          free_shipping_threshold: shippingData.free_shipping_threshold
+        };
+        // Alias for callers expecting delivery_fee
+        calculationResult.delivery_fee = calculationResult.total_shipping_cost;
+        calculationResult.shipping_zone_name = calculationResult.zone_name_en;
+        
+        setShippingCalculation(calculationResult);
+        return calculationResult;
+      } else {
+        throw new Error(response.data?.message || 'Invalid response from shipping service');
+      }
+      
+    } catch (error) {
+      console.error('Failed to calculate shipping cost:', error);
+      
+      // Enhanced error handling with specific error messages
+      let errorMessage = 'Failed to calculate shipping cost. ';
+
+      if (error.response) {
+        // Server responded with error status
+        const status = error.response.status;
+        const data = error.response.data;
+
+        if (status === 404) {
+          errorMessage += 'Shipping zone not found for this address. Please check if the address is within our delivery area.';
+        } else if (status === 400) {
+          const serverMessage = data.message || '';
+          if (serverMessage.includes('coordinates')) {
+            // Don't show generic error, instead try fallback and provide helpful guidance
+            console.log('Coordinates missing error detected, trying fallback calculation...');
+            try {
+              const fallbackResult = await calculateFallbackShipping(branchId, orderAmount);
+              if (fallbackResult) {
+                message.warning({
+                  content: (
+                    <div>
+                      <div><strong>⚠️ Using Default Zone Pricing</strong></div>
+                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                        GPS coordinates missing. Using estimated delivery fee: {formatPrice(fallbackResult.total_shipping_cost)}
+                        <br />
+                        <strong>To get accurate pricing:</strong> Update customer address with precise GPS location
+                      </div>
+                    </div>
+                  ),
+                  duration: 8
+                });
+                setShippingCalculation(fallbackResult);
+                return fallbackResult;
+              } else {
+                message.error({
+                  content: (
+                    <div>
+                      <div><strong>📍 Missing GPS Coordinates</strong></div>
+                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                        Customer address needs GPS coordinates for shipping calculation.
+                        <br />
+                        <strong>Next steps:</strong> Please enter delivery fee manually or ask customer to update their address.
+                      </div>
+                    </div>
+                  ),
+                  duration: 10
+                });
+                return null;
+              }
+            } catch (fallbackError) {
+              console.error('Fallback calculation also failed:', fallbackError);
+              message.error({
+                content: (
+                  <div>
+                    <div><strong>❌ Cannot Calculate Shipping</strong></div>
+                    <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                      Address coordinates missing and fallback calculation failed. Please enter delivery fee manually.
+                    </div>
+                  </div>
+                ),
+                duration: 8
+              });
+              return null;
+            }
+          } else if (data && data.code === 'OUT_OF_RANGE') {
+            const dist = data?.data?.distance_km;
+            const max = data?.data?.max_distance_km;
+            const nearest = data?.data?.nearest_branch;
+            message.error({
+              content: (
+                <div>
+                  <div><strong>🚫 Address Outside Delivery Range</strong></div>
+                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                    {dist ? `Distance to branch: ${dist} km. ` : ''}Maximum allowed: {max} km.
+                    <br />
+                    {nearest ? (
+                      <span>
+                        Nearest available branch: <strong>{nearest.title_en || nearest.title_ar}</strong> ({nearest.distance_km} km).
+                        Please switch branch for this order or enter delivery fee manually.
+                      </span>
+                    ) : (
+                      <span>Please select a different branch or enter delivery fee manually.</span>
+                    )}
+                  </div>
+                </div>
+              ),
+              duration: 10
+            });
+            return null;
+          } else if (serverMessage.includes('branch')) {
+            errorMessage += 'Invalid branch selected. Please choose a different branch.';
+          } else {
+            errorMessage += serverMessage || 'Invalid shipping calculation parameters. Please check the address and branch selection.';
+          }
+        } else if (status === 500) {
+          errorMessage += 'Server error during shipping calculation. Please contact support or try again later.';
+        } else {
+          errorMessage += data.message || 'Unexpected error occurred. Please try again.';
+        }
+      } else if (error.request) {
+        // Network error
+        errorMessage += 'Network error. Please check your internet connection and try again.';
+      } else {
+        // Other errors
+        const errorMsg = error.message || '';
+        if (errorMsg.includes('coordinates')) {
+          errorMessage += 'Customer address coordinates are required for shipping calculation.';
+        } else {
+          errorMessage += errorMsg || 'Unexpected error. Please try again.';
+        }
+      }
+      
+      message.error(errorMessage);
+      setShippingCalculation(null);
+      return null;
+    }
+  };
+
+  // Auto-calculate shipping when address or branch changes in create order
+  const handleAddressChange = async (addressId) => {
+    if (!addressId) {
+      setShippingCalculation(null);
+      orderForm.setFieldsValue({ delivery_fee: 0 });
+      return;
+    }
+
+    const currentBranch = orderForm.getFieldValue('branch_id');
+    const currentSubtotal = calculateCurrentSubtotal();
+    
+    // Check if we have both required values
+    if (!currentBranch) {
+      message.warning('Please select a branch first to calculate shipping cost.');
+      return;
+    }
+    
+    if (currentBranch) {
+      // Show loading state
+      const loadingMessage = message.loading('Calculating shipping cost...', 0);
+      
+      try {
+        const shippingData = await calculateShippingCost(addressId, currentBranch, currentSubtotal);
+        loadingMessage(); // Hide loading message
+        
+        if (shippingData) {
+          // Auto-update delivery fee in form
+          orderForm.setFieldsValue({
+            delivery_fee: shippingData.total_shipping_cost || 0
+          });
+          
+          // Show shipping info to user
+          message.success(
+            `Shipping calculated: ${formatPrice(shippingData.total_shipping_cost || 0)} ${
+              shippingData.free_shipping_applied ? '(Free shipping applied!)' : ''
+            }`,
+            3
+          );
+        } else {
+          // If calculation failed, reset delivery fee and let user enter manually
+          orderForm.setFieldsValue({ delivery_fee: 0 });
+          message.info('Please enter delivery fee manually for this address.');
+        }
+      } catch (error) {
+        loadingMessage(); // Hide loading message
+        console.error('Error in handleAddressChange:', error);
+        orderForm.setFieldsValue({ delivery_fee: 0 });
+      }
+    }
+  };
+
+  // Calculate current subtotal from selected items
+  const calculateCurrentSubtotal = () => {
+    if (selectedItems && selectedItems.length > 0) {
+      return selectedItems.reduce((total, item) => total + (item.total_price || 0), 0);
+    }
+    return parseFloat(orderForm.getFieldValue('subtotal')) || 0;
+  };
+
+  // Auto-calculate shipping when branch changes in create order
+  const handleBranchChange = async (branchId) => {
+    const currentAddressId = orderForm.getFieldValue('delivery_address_id');
+    const currentSubtotal = calculateCurrentSubtotal();
+    
+    if (currentAddressId && branchId) {
+      const shippingData = await calculateShippingCost(currentAddressId, branchId, currentSubtotal);
+      if (shippingData) {
+        orderForm.setFieldsValue({
+          delivery_fee: shippingData.delivery_fee
+        });
+      }
+    }
+  };
+
 
   const handleStatusUpdate = async () => {
     if (!selectedOrder || !selectedStatus) return;
@@ -304,16 +1203,54 @@ const Orders = () => {
     }
   };
 
+  // Quick status update without modal
+  const handleQuickStatusUpdate = async (order, newStatus) => {
+    try {
+      await ordersService.updateOrderStatus(order.id, newStatus, `Quick update to ${newStatus}`);
+      message.success(`Order status changed to ${newStatus}`);
+      fetchOrders();
+      fetchOrderCounts();
+      updatePendingCount();
+    } catch (error) {
+      message.error(error.message || 'Failed to update status');
+    }
+  };
+
   const handleCreateOrder = async (values) => {
     try {
       // Calculate basic totals
       const subtotal = parseFloat(values.subtotal) || 0;
-      const deliveryFee = parseFloat(values.delivery_fee) || 0;
+      let deliveryFee = parseFloat(values.delivery_fee) || 0;
       const discountAmount = parseFloat(values.discount_amount) || 0;
       const taxAmount = parseFloat(values.tax_amount) || 0;
       
+      // Auto-calculate shipping fee for delivery orders if not manually set
+      if (values.order_type === 'delivery' && values.delivery_address_id && values.branch_id) {
+        console.log('Auto-calculating shipping for new order...');
+        const shippingData = await calculateShippingCost(
+          values.delivery_address_id, 
+          values.branch_id, 
+          subtotal
+        );
+        
+        if (shippingData && deliveryFee === 0) {
+          deliveryFee = shippingData.delivery_fee;
+          console.log('Auto-calculated delivery fee:', deliveryFee);
+          
+          // Update form field to show calculated fee
+          orderForm.setFieldsValue({ delivery_fee: deliveryFee });
+        }
+      }
+      
       const orderData = {
         ...values,
+        // Ensure required fields are present
+        branch_id: values.branch_id || branches[0]?.id || 635, // Default to first branch or fallback
+        customer_name: values.customer_name || 'Admin Created Order',
+        customer_phone: values.customer_phone || '0000000000', // Default phone if not provided
+        customer_email: values.customer_email || '',
+        order_type: values.order_type || 'delivery',
+        payment_method: values.payment_method || 'cash',
         subtotal,
         delivery_fee: deliveryFee,
         tax_amount: taxAmount,
@@ -330,17 +1267,26 @@ const Orders = () => {
         ]
       };
 
+      console.log('Creating order with calculated shipping:', {
+        subtotal,
+        delivery_fee: deliveryFee,
+        total_amount: orderData.total_amount,
+        shipping_calculation: shippingCalculation
+      });
+
       await ordersService.createOrder(orderData);
       message.success(t('orders.created_successfully'));
       setCreateOrderVisible(false);
       orderForm.resetFields();
       setSelectedItems([]);
+      setShippingCalculation(null); // Reset shipping calculation
       fetchOrders();
       fetchOrderCounts();
       // Update notification badge counter
       updatePendingCount();
     } catch (error) {
-      message.error(error.message);
+      console.error('Create order error:', error);
+      message.error(error.message || 'Failed to create order');
     }
   };
 
@@ -348,16 +1294,111 @@ const Orders = () => {
     if (!editingOrder) return;
 
     try {
-      await ordersService.updateOrder(editingOrder.id, values);
-      message.success(t('orders.updated_successfully'));
+      // Calculate current order total
+      const currentSubtotal = calculateOrderTotal();
+      let deliveryFee = Number(values.delivery_fee || 0);
+      
+      // Auto-recalculate shipping if address or branch changed and it's a delivery order
+      if (values.order_type === 'delivery' && values.delivery_address_id && values.branch_id) {
+        // Check if we need to recalculate shipping
+        const addressChanged = values.delivery_address_id !== editingOrder.delivery_address_id;
+        const branchChanged = values.branch_id !== editingOrder.branch_id;
+        const subtotalChanged = Math.abs(currentSubtotal - (editingOrder.subtotal || 0)) > 0.01;
+        
+        if (addressChanged || branchChanged || subtotalChanged) {
+          console.log('Recalculating shipping due to changes:', {
+            addressChanged,
+            branchChanged,
+            subtotalChanged,
+            oldSubtotal: editingOrder.subtotal,
+            newSubtotal: currentSubtotal
+          });
+          
+          // Extract address ID if it's in formatted text
+          let addressId = values.delivery_address_id;
+          if (typeof addressId === 'string' && addressId.includes('Address ID:')) {
+            addressId = addressId.replace('Address ID:', '').trim();
+          } else if (typeof addressId === 'string' && addressId.includes('|')) {
+            // Use original address ID for formatted text
+            addressId = editingOrder.original_delivery_address_id || editingOrder.delivery_address_id;
+          }
+          
+          const shippingData = await calculateShippingCost(
+            addressId, 
+            values.branch_id, 
+            currentSubtotal
+          );
+          
+          if (shippingData) {
+            deliveryFee = shippingData.delivery_fee;
+            console.log('Recalculated delivery fee:', deliveryFee);
+            
+            // Show notification about shipping recalculation
+            message.info(
+              `Shipping fee recalculated: ${formatPrice(deliveryFee)} ${
+                shippingData.free_shipping_applied ? '(Free shipping applied!)' : ''
+              }`
+            );
+          }
+        }
+      }
+
+      // Prepare order data with proper delivery address handling
+      const orderData = {
+        ...values,
+        delivery_fee: deliveryFee,
+        items: editOrderItems.map(item => ({
+          product_id: item.product_id,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+          total_price: item.total_price
+        })),
+        subtotal: currentSubtotal,
+        total_amount: currentSubtotal + deliveryFee + Number(values.tax_amount || 0) - Number(values.discount_amount || 0)
+      };
+
+      // Handle delivery address for delivery orders
+      if (values.order_type === 'delivery') {
+        // If delivery_address_id is a formatted text (contains '|'), keep the original delivery_address_id from the order
+        if (values.delivery_address_id && values.delivery_address_id.includes('|')) {
+          // This is formatted text, use the original delivery_address_id from the editing order
+          if (editingOrder.original_delivery_address_id || editingOrder.delivery_address_id) {
+            orderData.delivery_address_id = editingOrder.original_delivery_address_id || editingOrder.delivery_address_id;
+          } else {
+            // If no original delivery_address_id, convert the formatted text to a simple address string
+            orderData.delivery_address = values.delivery_address_id;
+            delete orderData.delivery_address_id;
+          }
+        } else if (values.delivery_address_id && values.delivery_address_id.startsWith('Address ID:')) {
+          // Handle "Address ID: 123" format
+          const addressId = values.delivery_address_id.replace('Address ID:', '').trim();
+          orderData.delivery_address_id = addressId;
+        } else {
+          // This is likely a proper delivery address ID or simple address
+          orderData.delivery_address_id = values.delivery_address_id;
+        }
+      } else {
+        // For pickup orders, remove delivery address fields
+        delete orderData.delivery_address_id;
+        delete orderData.delivery_address;
+        orderData.delivery_fee = 0; // No delivery fee for pickup orders
+      }
+
+      console.log('Sending updated order data:', orderData);
+
+      await ordersService.updateOrder(editingOrder.id, orderData);
+      message.success(t('orders.updated_successfully') || 'Order updated successfully');
       setEditOrderVisible(false);
       setEditingOrder(null);
+      setEditOrderItems([]);
+      setShippingCalculation(null); // Reset shipping calculation
       orderForm.resetFields();
       fetchOrders();
       // Update notification badge counter
       updatePendingCount();
     } catch (error) {
-      message.error(error.message);
+      console.error('Edit order error:', error);
+      message.error(error.message || t('orders.update_error') || 'Failed to update order');
     }
   };
 
@@ -374,24 +1415,454 @@ const Orders = () => {
     }
   };
 
+  const handlePrintInvoice = (order) => {
+    const printWindow = window.open('', '_blank');
+    const invoiceHtml = generateInvoiceHTML(order);
+    
+    printWindow.document.write(invoiceHtml);
+    printWindow.document.close();
+    printWindow.focus();
+    
+    // Wait for content to load, then print
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 250);
+  };
+
+  const generateInvoiceHTML = (order) => {
+    const currentDate = new Date().toLocaleDateString();
+    
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Invoice #${order.order_number}</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
+            .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
+            .company-name { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+            .invoice-title { font-size: 20px; margin-top: 10px; }
+            .invoice-info { display: flex; justify-content: space-between; margin-bottom: 30px; }
+            .invoice-details, .customer-details { width: 48%; }
+            .invoice-details h3, .customer-details h3 { margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 5px; }
+            .items-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+            .items-table th, .items-table td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+            .items-table th { background-color: #f5f5f5; font-weight: bold; }
+            .items-table .qty-col { text-align: center; width: 80px; }
+            .items-table .price-col { text-align: right; width: 100px; }
+            .totals { float: right; width: 300px; }
+            .totals table { width: 100%; }
+            .totals td { padding: 8px; border-bottom: 1px solid #eee; }
+            .totals .total-row { font-weight: bold; font-size: 16px; border-top: 2px solid #333; }
+            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #666; }
+            .delivery-address { margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px; }
+            @media print {
+                body { margin: 0; }
+                .header { page-break-inside: avoid; }
+                .invoice-info { page-break-inside: avoid; }
+                .items-table { page-break-inside: avoid; }
+                .totals { page-break-inside: avoid; }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <div class="company-name">FECS Restaurant</div>
+            <div class="invoice-title">INVOICE</div>
+        </div>
+        
+        <div class="invoice-info">
+            <div class="invoice-details">
+                <h3>Invoice Details</h3>
+                <p><strong>Invoice #:</strong> ${order.order_number}</p>
+                <p><strong>Order Date:</strong> ${new Date(order.created_at).toLocaleDateString()}</p>
+                <p><strong>Print Date:</strong> ${currentDate}</p>
+                <p><strong>Status:</strong> ${order.order_status.toUpperCase()}</p>
+                <p><strong>Payment:</strong> ${order.payment_method.toUpperCase()} (${order.payment_status.toUpperCase()})</p>
+            </div>
+            
+            <div class="customer-details">
+                <h3>Customer Information</h3>
+                <p><strong>Name:</strong> ${order.customer_name}</p>
+                <p><strong>Phone:</strong> ${order.customer_phone}</p>
+                ${order.customer_email ? `<p><strong>Email:</strong> ${order.customer_email}</p>` : ''}
+                <p><strong>Order Type:</strong> ${order.order_type.toUpperCase()}</p>
+                
+                ${order.order_type === 'delivery' && order.delivery_address ? `
+                <div class="delivery-address">
+                    <strong>Delivery Address:</strong><br>
+                    ${order.delivery_address.full_name ? `${order.delivery_address.full_name}<br>` : ''}
+                    ${order.delivery_address.address_line}<br>
+                    ${order.delivery_address.city}, ${order.delivery_address.governorate}
+                    ${order.delivery_address.phone ? `<br>Phone: ${order.delivery_address.phone}` : ''}
+                </div>
+                ` : ''}
+            </div>
+        </div>
+        
+        <table class="items-table">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th class="qty-col">Qty</th>
+                    <th class="price-col">Unit Price</th>
+                    <th class="price-col">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${order.items ? order.items.map(item => {
+                    const productName = item?.product_name || item?.product_title_en || item?.product_title_ar || 'Unknown Product';
+                    const quantity = Number(item?.quantity || 0);
+                    const unitPrice = Number(item?.unit_price || item?.price || 0);
+                    
+                    return `
+                    <tr>
+                        <td>${productName}</td>
+                        <td class="qty-col">${quantity}</td>
+                        <td class="price-col">${formatPrice(unitPrice)}</td>
+                        <td class="price-col">${formatPrice(unitPrice * quantity)}</td>
+                    </tr>
+                    `;
+                }).join('') : '<tr><td colspan="4">No items available</td></tr>'}
+            </tbody>
+        </table>
+        
+        <div class="totals">
+            <table>
+                <tr>
+                    <td>Subtotal:</td>
+                    <td style="text-align: right;">${formatPrice(order.subtotal || 0)}</td>
+                </tr>
+                ${(order.delivery_fee && Number(order.delivery_fee) > 0) ? `
+                <tr>
+                    <td>Delivery Fee:</td>
+                    <td style="text-align: right;">${formatPrice(order.delivery_fee)}</td>
+                </tr>
+                ` : ''}
+                ${(order.tax_amount && Number(order.tax_amount) > 0) ? `
+                <tr>
+                    <td>Tax:</td>
+                    <td style="text-align: right;">${formatPrice(order.tax_amount)}</td>
+                </tr>
+                ` : ''}
+                ${(order.discount_amount && Number(order.discount_amount) > 0) ? `
+                <tr>
+                    <td>Discount:</td>
+                    <td style="text-align: right;">-${formatPrice(order.discount_amount)}</td>
+                </tr>
+                ` : ''}
+                ${(order.points_used && Number(order.points_used) > 0) ? `
+                <tr>
+                    <td>Points Used:</td>
+                    <td style="text-align: right;">-${order.points_used} pts</td>
+                </tr>
+                ` : ''}
+                <tr class="total-row">
+                    <td>TOTAL:</td>
+                    <td style="text-align: right;">${formatPrice(order.total_amount || 0)}</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="footer">
+            <p>Thank you for your business!</p>
+            <p>This invoice was generated on ${currentDate}</p>
+            ${order.special_instructions ? `<p><strong>Special Instructions:</strong> ${order.special_instructions}</p>` : ''}
+        </div>
+    </body>
+    </html>
+    `;
+  };
+
   const showCreateModal = () => {
     orderForm.resetFields();
     setSelectedItems([]);
     setCreateOrderVisible(true);
   };
 
-  const showEditModal = (order) => {
+  const showEditModal = async (order) => {
     setEditingOrder(order);
-    orderForm.setFieldsValue({
-      customer_name: order.customer_name,
-      customer_phone: order.customer_phone,
-      customer_email: order.customer_email,
-      special_instructions: order.special_instructions,
-      estimated_delivery_time: order.estimated_delivery_time ? moment(order.estimated_delivery_time) : null,
-      order_type: order.order_type,
-      delivery_address_id: order.delivery_address_id
-    });
-    setEditOrderVisible(true);
+    
+    try {
+      // Always ensure products are loaded before opening modal
+      if (products.length === 0 || availableProducts.length === 0) {
+        console.log('Products not loaded, fetching...');
+        await fetchProducts();
+      }
+      
+      // Double check that we have products after fetching
+      const currentProducts = products.length > 0 ? products : availableProducts;
+      console.log('Edit modal opened. Products available:', currentProducts.length);
+      console.log('Sample product with price:', currentProducts[0] ? {
+        id: currentProducts[0].id,
+        name: currentProducts[0].name || currentProducts[0].title_en,
+        price: currentProducts[0].price,
+        unit_price: currentProducts[0].unit_price,
+        selling_price: currentProducts[0].selling_price
+      } : 'None');
+      
+      // If still no products, use mock data directly
+      if (currentProducts.length === 0) {
+        console.warn('No products loaded, setting mock products...');
+        const mockProducts = [
+          { id: 1, title_en: 'Chicken Burger', title_ar: 'برجر دجاج', price: 12.99, sku: 'CB001' },
+          { id: 2, title_en: 'Beef Burger', title_ar: 'برجر لحم', price: 15.99, sku: 'BB001' },
+          { id: 3, title_en: 'Fries', title_ar: 'بطاطا مقلية', price: 5.99, sku: 'FR001' },
+          { id: 4, title_en: 'Soft Drink', title_ar: 'مشروب غازي', price: 2.99, sku: 'SD001' }
+        ];
+        setProducts(mockProducts);
+        setAvailableProducts(mockProducts);
+        console.log('Forced mock products loaded:', mockProducts);
+      }
+      
+      // Fetch detailed order information including items if not already loaded
+      let orderItems = order.items || [];
+      let completeOrder = order;
+      
+      // If order doesn't have items or detailed delivery address, try to fetch them
+      if ((!orderItems.length || !order.delivery_address) && order.id) {
+        try {
+          console.log('Fetching complete order details for edit...');
+          const response = await ordersService.getOrder(order.id);
+          if (response.success && response.data) {
+            const { order: orderDetails, items } = response.data;
+            console.log('Raw orderDetails from API:', orderDetails);
+            console.log('Available address fields:', {
+              address_line: orderDetails.address_line,
+              address_details: orderDetails.address_details,
+              address_name: orderDetails.address_name,
+              building_no: orderDetails.building_no,
+              floor_no: orderDetails.floor_no,
+              apartment_no: orderDetails.apartment_no,
+              city_title_en: orderDetails.city_title_en,
+              area_title_en: orderDetails.area_title_en,
+              delivery_address: orderDetails.delivery_address
+            });
+            
+            if (items && items.length > 0) {
+              orderItems = items;
+            }
+            // Merge the complete order data
+            completeOrder = {
+              ...order,
+              ...orderDetails,
+              delivery_address: orderDetails.delivery_address || (orderDetails.delivery_address_id ? {
+                full_name: orderDetails.address_name || orderDetails.customer_name || 'Unknown',
+                address_line: orderDetails.address_line || 
+                             orderDetails.address_details || 
+                             [
+                               orderDetails.building_no && `Building ${orderDetails.building_no}`,
+                               orderDetails.floor_no && `Floor ${orderDetails.floor_no}`,
+                               orderDetails.apartment_no && `Apt ${orderDetails.apartment_no}`,
+                               orderDetails.street_title_en,
+                               orderDetails.area_title_en
+                             ].filter(Boolean).join(', ') ||
+                             `Delivery Address ${orderDetails.delivery_address_id}`,
+                city: orderDetails.city_title_en || orderDetails.city || 'Unknown City',
+                governorate: orderDetails.area_title_en || orderDetails.area || orderDetails.governorate || 'Unknown Area',
+                phone: orderDetails.customer_phone || orderDetails.phone
+              } : null) || order.delivery_address
+            };
+            console.log('Complete order with delivery address:', completeOrder);
+          }
+        } catch (error) {
+          console.warn('Could not fetch complete order details:', error);
+          // Continue with existing data
+        }
+      }
+      
+      // Set current order items for editing with proper mapping
+      setEditOrderItems(orderItems.map(item => ({
+        id: item.id || Date.now() + Math.random(),
+        product_id: item.product_id,
+        product_name: item.product_name || item.product_title_en || item.product_title_ar || 'Unknown Product',
+        quantity: Number(item.quantity || 1),
+        unit_price: Number(item.unit_price || item.price || 0),
+        total_price: Number(item.total_price || (item.unit_price || item.price || 0) * (item.quantity || 1))
+      })));
+      
+      // Prepare delivery address display text
+      let deliveryAddressText = '';
+      if (completeOrder.delivery_address) {
+        const addr = completeOrder.delivery_address;
+        deliveryAddressText = [
+          addr.full_name,
+          addr.address_line,
+          `${addr.city}, ${addr.governorate}`,
+          addr.phone ? `Phone: ${addr.phone}` : ''
+        ].filter(Boolean).join(' | ');
+      } else if (completeOrder.delivery_address_id) {
+        deliveryAddressText = `Address ID: ${completeOrder.delivery_address_id}`;
+      }
+      
+      console.log('Order data for edit modal:', {
+        id: completeOrder.id,
+        order_type: completeOrder.order_type,
+        delivery_address_id: completeOrder.delivery_address_id,
+        delivery_address: completeOrder.delivery_address,
+        deliveryAddressText: deliveryAddressText
+      });
+      
+      console.log('Setting form with delivery address:', deliveryAddressText);
+      console.log('Original delivery_address_id:', completeOrder.delivery_address_id);
+      
+      // Store the complete order with original delivery_address_id for reference
+      setEditingOrder({
+        ...completeOrder,
+        original_delivery_address_id: completeOrder.delivery_address_id // Preserve original ID
+      });
+
+      // Load customer addresses if we have a phone number
+      if (completeOrder.customer_phone) {
+        try {
+          await fetchCustomerAddresses(completeOrder.customer_phone);
+          console.log('Customer addresses loaded for edit order');
+        } catch (error) {
+          console.error('Error loading customer addresses:', error);
+        }
+      }
+      
+      // Calculate shipping for existing delivery orders
+      if (completeOrder.order_type === 'delivery' && 
+          completeOrder.delivery_address_id && 
+          completeOrder.branch_id) {
+        try {
+          const calculation = await calculateShippingCost(
+            completeOrder.delivery_address_id, 
+            completeOrder.branch_id, 
+            completeOrder.subtotal || 0
+          );
+          if (calculation) {
+            setShippingCalculation(calculation);
+            console.log('Shipping calculation loaded for edit order:', calculation);
+            // Ensure form shows the calculated delivery fee
+            orderForm.setFieldsValue({ delivery_fee: calculation.total_shipping_cost || calculation.delivery_fee || 0 });
+          }
+        } catch (error) {
+          console.error('Error calculating shipping for edit order:', error);
+        }
+      }
+
+      orderForm.setFieldsValue({
+        customer_name: completeOrder.customer_name,
+        customer_phone: completeOrder.customer_phone,
+        customer_email: completeOrder.customer_email,
+        special_instructions: completeOrder.special_instructions,
+        estimated_delivery_time: completeOrder.estimated_delivery_time ? moment(completeOrder.estimated_delivery_time) : null,
+        order_type: completeOrder.order_type,
+        // Always store the ID (string) so Select can resolve and show its label
+        delivery_address_id: (completeOrder.delivery_address_id ? String(completeOrder.delivery_address_id) : ''),
+        branch_id: completeOrder.branch_id,
+        subtotal: completeOrder.subtotal,
+        delivery_fee: completeOrder.delivery_fee,
+        points_to_use: completeOrder.points_to_use,
+        total_amount: completeOrder.total_amount
+      });
+      
+      console.log('Form values set:', {
+        customer_name: completeOrder.customer_name,
+        customer_phone: completeOrder.customer_phone,
+        customer_email: completeOrder.customer_email,
+        order_type: completeOrder.order_type,
+        delivery_address_id: deliveryAddressText || completeOrder.delivery_address_id
+      });
+      
+      setEditOrderVisible(true);
+    } catch (error) {
+      console.error('Error opening edit modal:', error);
+      message.error(t('orders.failed_to_load_order') || 'Failed to load order details');
+    }
+  };
+
+  // Functions for managing items in edit modal
+  const addItemToOrder = () => {
+    try {
+      const newItem = {
+        id: Date.now() + Math.random(),
+        product_id: null,
+        product_name: '',
+        quantity: 1,
+        unit_price: 0,
+        total_price: 0
+      };
+      setEditOrderItems(prevItems => [...prevItems, newItem]);
+      message.success(t('orders.item_added') || 'New item added successfully');
+    } catch (error) {
+      console.error('Error adding item:', error);
+      message.error(t('orders.item_add_error') || 'Failed to add new item');
+    }
+  };
+
+  const removeItemFromOrder = (itemId) => {
+    try {
+      setEditOrderItems(prevItems => prevItems.filter(item => item.id !== itemId));
+      message.success(t('orders.item_removed') || 'Item removed successfully');
+    } catch (error) {
+      console.error('Error removing item:', error);
+      message.error(t('orders.item_remove_error') || 'Failed to remove item');
+    }
+  };
+
+  const updateOrderItem = (itemId, field, value) => {
+    try {
+      setEditOrderItems(prevItems => prevItems.map(item => {
+        if (item.id === itemId) {
+          const updatedItem = { ...item, [field]: value };
+          
+          // Auto-calculate total when quantity or unit_price changes
+          if (field === 'quantity' || field === 'unit_price') {
+            updatedItem.total_price = Number(updatedItem.quantity) * Number(updatedItem.unit_price);
+          }
+          
+          // Update product info when product is selected
+          if (field === 'product_id' && value) {
+            const selectedProduct = products.find(p => p.id === value);
+            console.log('Selected product:', selectedProduct, 'from products:', products.length);
+            if (selectedProduct) {
+              updatedItem.product_name = language === 'ar' ? 
+                (selectedProduct.title_ar || selectedProduct.title_en || selectedProduct.name) :
+                (selectedProduct.title_en || selectedProduct.title_ar || selectedProduct.name);
+              
+              // Check multiple possible price fields - Updated for correct backend fields
+              const productPrice = selectedProduct.final_price ||  // Backend calculated price (preferred)
+                                 selectedProduct.sale_price ||     // Backend sale price
+                                 selectedProduct.base_price ||     // Backend base price
+                                 selectedProduct.price ||          // Legacy field (fallback)
+                                 selectedProduct.unit_price ||     // Legacy field (fallback)
+                                 selectedProduct.selling_price ||  // Legacy field (fallback)
+                                 0;
+              
+              console.log('Product price debugging:');
+              console.log('- selectedProduct.final_price:', selectedProduct.final_price, typeof selectedProduct.final_price);
+              console.log('- selectedProduct.sale_price:', selectedProduct.sale_price, typeof selectedProduct.sale_price);
+              console.log('- selectedProduct.base_price:', selectedProduct.base_price, typeof selectedProduct.base_price);
+              console.log('- selectedProduct.price (legacy):', selectedProduct.price, typeof selectedProduct.price);
+              console.log('- selectedProduct.unit_price (legacy):', selectedProduct.unit_price, typeof selectedProduct.unit_price);
+              console.log('- selectedProduct.selling_price (legacy):', selectedProduct.selling_price, typeof selectedProduct.selling_price);
+              console.log('- Final productPrice:', productPrice, typeof productPrice);
+              console.log('- Number(productPrice):', Number(productPrice));
+              
+              updatedItem.unit_price = Number(productPrice);
+              updatedItem.total_price = Number(updatedItem.quantity) * Number(productPrice);
+              console.log('Updated item with product:', updatedItem);
+            } else {
+              console.warn('Product not found with ID:', value);
+            }
+          }
+          
+          return updatedItem;
+        }
+        return item;
+      }));
+    } catch (error) {
+      console.error('Error updating order item:', error);
+      message.error(t('orders.item_update_error') || 'Failed to update item');
+    }
+  };
+
+  const calculateOrderTotal = () => {
+    return editOrderItems.reduce((total, item) => total + Number(item.total_price || 0), 0);
   };
 
   const handleCancelOrder = async (order) => {
@@ -414,6 +1885,153 @@ const Orders = () => {
         }
       }
     });
+  };
+
+  const handleViewDetails = async (order) => {
+    try {
+      setDetailsVisible(true);
+      setDetailsLoading(true);
+      
+      // Set basic order data immediately with fallbacks
+      const safeOrder = {
+        id: order?.id || 'N/A',
+        order_number: order?.order_number || 'N/A',
+        customer_name: order?.customer_name || 'Unknown Customer',
+        customer_phone: order?.customer_phone || 'N/A',
+        customer_email: order?.customer_email || null,
+        order_status: order?.order_status || 'pending',
+        payment_status: order?.payment_status || 'pending',
+        order_type: order?.order_type || 'pickup',
+        payment_method: order?.payment_method || 'cash',
+        total_amount: Number(order?.total_amount || 0),
+        subtotal: Number(order?.subtotal || 0),
+        delivery_fee: Number(order?.delivery_fee || 0),
+        tax_amount: Number(order?.tax_amount || 0),
+        discount_amount: Number(order?.discount_amount || 0),
+        points_used: Number(order?.points_used || 0),
+        points_earned: Number(order?.points_earned || 0),
+        created_at: order?.created_at || null,
+        updated_at: order?.updated_at || null,
+        estimated_delivery_time: order?.estimated_delivery_time || null,
+        delivered_at: order?.delivered_at || null,
+        cancelled_at: order?.cancelled_at || null,
+        items: order?.items || [],
+        ...order // Spread the rest of the order properties
+      };
+      
+      setSelectedOrder(safeOrder);
+      
+      // Fetch complete order details including items
+      console.log('Fetching detailed order data for order ID:', order.id);
+      const response = await ordersService.getOrder(order.id);
+      console.log('API Response:', response);
+      
+      if (response.success && response.data) {
+        const { order: orderDetails, items, status_history } = response.data;
+        
+        // Create complete order object with proper data handling
+        const completeOrder = {
+          // Basic order information with fallbacks
+          id: orderDetails?.id || safeOrder.id,
+          order_number: orderDetails?.order_number || safeOrder.order_number,
+          customer_name: orderDetails?.customer_name || orderDetails?.first_name && orderDetails?.last_name 
+            ? `${orderDetails.first_name} ${orderDetails.last_name}` 
+            : safeOrder.customer_name,
+          customer_phone: orderDetails?.customer_phone || orderDetails?.phone || safeOrder.customer_phone,
+          customer_email: orderDetails?.customer_email || orderDetails?.user_email || orderDetails?.email || safeOrder.customer_email,
+          
+          // Order status and type
+          order_status: orderDetails?.order_status || safeOrder.order_status,
+          payment_status: orderDetails?.payment_status || safeOrder.payment_status,
+          order_type: orderDetails?.order_type || safeOrder.order_type,
+          payment_method: orderDetails?.payment_method || safeOrder.payment_method,
+          
+          // Financial data with proper number conversion
+          total_amount: Number(orderDetails?.total_amount || safeOrder.total_amount),
+          subtotal: Number(orderDetails?.subtotal || safeOrder.subtotal),
+          delivery_fee: Number(orderDetails?.delivery_fee || safeOrder.delivery_fee),
+          tax_amount: Number(orderDetails?.tax_amount || safeOrder.tax_amount),
+          discount_amount: Number(orderDetails?.discount_amount || safeOrder.discount_amount),
+          points_used: Number(orderDetails?.points_used || safeOrder.points_used),
+          points_earned: Number(orderDetails?.points_earned || safeOrder.points_earned),
+          
+          // Dates with validation
+          created_at: orderDetails?.created_at || safeOrder.created_at,
+          updated_at: orderDetails?.updated_at || safeOrder.updated_at,
+          estimated_delivery_time: orderDetails?.estimated_delivery_time || safeOrder.estimated_delivery_time,
+          delivered_at: orderDetails?.delivered_at || safeOrder.delivered_at,
+          cancelled_at: orderDetails?.cancelled_at || safeOrder.cancelled_at,
+          
+          // Branch information
+          branch_title_en: orderDetails?.branch_title_en || 'Unknown Branch',
+          branch_title_ar: orderDetails?.branch_title_ar || null,
+          
+          // Delivery address with proper structure
+          delivery_address: orderDetails?.delivery_address_id ? {
+            full_name: orderDetails?.address_name || orderDetails?.customer_name || 'Unknown',
+            address_line: orderDetails?.address_line || orderDetails?.address_details || 'Address not available',
+            city: orderDetails?.city_title_en || orderDetails?.city || 'Unknown City',
+            governorate: orderDetails?.area_title_en || orderDetails?.area || orderDetails?.governorate || 'Unknown Area',
+            phone: orderDetails?.customer_phone || orderDetails?.phone,
+            latitude: orderDetails?.latitude || null,
+            longitude: orderDetails?.longitude || null
+          } : null,
+          
+          // Promo code information
+          promo_code: orderDetails?.promo_code || null,
+          
+          // Special instructions and notes
+          special_instructions: orderDetails?.special_instructions || null,
+          cancellation_reason: orderDetails?.cancellation_reason || null,
+          
+          // Shipping information
+          shipping_zone_name_en: orderDetails?.shipping_zone_name_en || null,
+          shipping_zone_name_ar: orderDetails?.shipping_zone_name_ar || null,
+          calculated_distance_km: orderDetails?.calculated_distance_km || null,
+          calculation_method: orderDetails?.calculation_method || null,
+          free_shipping_applied: orderDetails?.free_shipping_applied || false,
+          
+          // Gift card information
+          gift_card_id: orderDetails?.gift_card_id || null,
+          
+          // Order items with proper structure
+          items: Array.isArray(items) ? items.map(item => ({
+            id: item?.id || null,
+            product_id: item?.product_id || null,
+            product_name: item?.product_name || item?.product_title_en || item?.product_title_ar || 'Unknown Product',
+            product_title_en: item?.product_title_en || item?.product_name || 'Unknown Product',
+            product_title_ar: item?.product_title_ar || null,
+            product_sku: item?.product_sku || item?.sku || null,
+            quantity: Number(item?.quantity || 0),
+            unit_price: Number(item?.unit_price || item?.price || 0),
+            total_price: Number(item?.total_price || (item?.unit_price || item?.price || 0) * (item?.quantity || 0)),
+            variant_id: item?.variant_id || null,
+            variant_name: item?.variant_name || null,
+            variant_value: item?.variant_value || null,
+            variant_sku: item?.variant_sku || null,
+            product_image: item?.product_image || item?.main_image || null
+          })) : [],
+          
+          // Status history
+          status_history: Array.isArray(status_history) ? status_history : []
+        };
+        
+        console.log('Processed complete order:', completeOrder);
+        setSelectedOrder(completeOrder);
+      } else {
+        console.error('Invalid API response structure:', response);
+        message.warning('Order details loaded with limited information');
+        // Keep the safe order data if API response is invalid
+      }
+      
+    } catch (error) {
+      console.error('Failed to fetch order details:', error);
+      message.error('Failed to load order details');
+      // Still show modal with basic data if API fails
+      // selectedOrder should already be set with safe data
+    } finally {
+      setDetailsLoading(false);
+    }
   };
 
   // Bulk selection functions
@@ -490,33 +2108,142 @@ const Orders = () => {
     if (!hasSelected) return;
     
     const selectedOrders = orders.filter(order => selectedRowKeys.includes(order.id));
-    const csvData = selectedOrders.map(order => ({
-      'Order ID': order.id,
-      'Order Number': order.order_number,
-      'Customer': order.customer_name,
-      'Status': order.order_status,
-      'Total': order.total_amount,
-      'Date': new Date(order.created_at).toLocaleDateString(),
-      'Payment Method': order.payment_method,
-      'Order Type': order.order_type
-    }));
     
+    // Create comprehensive CSV data with organized structure
+    const csvData = selectedOrders.map(order => {
+      // Format order date
+      const orderDate = new Date(order.created_at);
+      const formattedDate = orderDate.toLocaleDateString();
+      const formattedTime = orderDate.toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+      });
+      
+      // Calculate age
+      const now = new Date();
+      const diffMs = now - orderDate;
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffHours / 24);
+      const orderAge = diffDays > 0 ? `${diffDays}d` : `${diffHours}h`;
+      
+      // Format delivery address
+      let deliveryAddress = '-';
+      if (order.order_type === 'delivery' && order.delivery_address) {
+        deliveryAddress = `${order.delivery_address.address_line}, ${order.delivery_address.city}, ${order.delivery_address.governorate}`;
+      }
+      
+      // Get payment status display
+      const paymentStatusText = order.payment_status ? 
+        (t(`orders.payment_status_${order.payment_status}`) || order.payment_status) : 
+        'Pending';
+      
+      return {
+        // Order Information
+        'Order ID': `#${order.id}`,
+        'Order Number': order.order_number || `ORD-${order.id}`,
+        'Order Status': t(`orders.status_${order.order_status}`) || order.order_status,
+        'Order Type': t(`orders.${order.order_type}`) || order.order_type,
+        'Order Date': formattedDate,
+        'Order Time': formattedTime,
+        'Order Age': orderAge,
+        
+        // Customer Information
+        'Customer Name': order.customer_name || 'Unknown',
+        'Customer Phone': order.customer_phone || '-',
+        'Customer Email': order.customer_email || '-',
+        
+        // Financial Information
+        'Subtotal': `$${Number(order.subtotal || 0).toFixed(2)}`,
+        'Delivery Fee': `$${Number(order.delivery_fee || 0).toFixed(2)}`,
+        'Tax Amount': `$${Number(order.tax_amount || 0).toFixed(2)}`,
+        'Discount': `$${Number(order.discount_amount || 0).toFixed(2)}`,
+        'Total Amount': `$${Number(order.total_amount || 0).toFixed(2)}`,
+        
+        // Payment Information
+        'Payment Method': t(`orders.payment_${order.payment_method}`) || order.payment_method || 'Unknown',
+        'Payment Status': paymentStatusText,
+        'Points Used': order.points_used || 0,
+        'Points Earned': order.points_earned || 0,
+        
+        // Order Details
+        'Items Count': order.items_count || 0,
+        'Delivery Address': deliveryAddress,
+        'Special Instructions': order.special_instructions || '-',
+        'Promo Code': order.promo_code || '-',
+        
+        // Timing Information
+        'Estimated Delivery': order.estimated_delivery_time ? 
+          new Date(order.estimated_delivery_time).toLocaleString() : '-',
+        'Delivered At': order.delivered_at ? 
+          new Date(order.delivered_at).toLocaleString() : '-',
+        'Cancelled At': order.cancelled_at ? 
+          new Date(order.cancelled_at).toLocaleString() : '-',
+        'Cancellation Reason': order.cancellation_reason || '-',
+        
+        // Branch Information
+        'Branch': order.branch_title_en || order.branch_title_ar || 'Unknown Branch',
+        
+        // Additional Information
+        'Last Updated': order.updated_at ? 
+          new Date(order.updated_at).toLocaleString() : '-'
+      };
+    });
+    
+    // Create organized CSV content with proper headers
+    const headers = Object.keys(csvData[0]);
     const csvContent = [
-      Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
+      // Add title and export info
+      `FECS Restaurant - Orders Export`,
+      `Export Date: ${new Date().toLocaleString()}`,
+      `Total Orders: ${selectedRowKeys.length}`,
+      '', // Empty line
+      // Headers
+      headers.join(','),
+      // Data rows
+      ...csvData.map(row => 
+        headers.map(header => {
+          const value = row[header];
+          // Escape commas and quotes in values
+          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+            return `"${value.replace(/"/g, '""')}"`;
+          }
+          return value;
+        }).join(',')
+      )
     ].join('\n');
     
+    // Create and download file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `orders_export_${new Date().toISOString().split('T')[0]}.csv`);
+    
+    // Generate descriptive filename
+    const dateStr = new Date().toISOString().split('T')[0];
+    const timeStr = new Date().toLocaleTimeString('en-US', { 
+      hour12: false, 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    }).replace(':', '');
+    const filename = `FECS_Orders_Export_${dateStr}_${timeStr}_${selectedRowKeys.length}orders.csv`;
+    
+    link.setAttribute('download', filename);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     
-    message.success(t('orders.exported_successfully', { count: selectedRowKeys.length }));
+    message.success({
+      content: (
+        <div>
+          <strong>{t('orders.exported_successfully') || 'Export completed successfully!'}</strong>
+          <br />
+          <small>{selectedRowKeys.length} {t('orders.orders_exported') || 'orders exported'} • {filename}</small>
+        </div>
+      ),
+      duration: 5
+    });
   };
 
   const clearSelection = () => {
@@ -575,10 +2302,16 @@ const Orders = () => {
   };
 
   const formatPrice = (price) => {
+    // Handle undefined, null, NaN, or invalid numbers
+    const numPrice = Number(price);
+    if (!isFinite(numPrice) || isNaN(numPrice)) {
+      return '$0.00';
+    }
+    
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD'
-    }).format(price);
+    }).format(numPrice);
   };
 
   const columns = [
@@ -586,11 +2319,11 @@ const Orders = () => {
       title: t('orders.order_number'),
       dataIndex: 'order_number',
       key: 'order_number',
-      width: 120,
+      width: 60,
       ...getColumnSortProps('order_number', 'string'),
-      render: (orderNumber) => (
-        <Text strong style={{ color: '#1890ff' }}>
-          {orderNumber}
+      render: (orderNumber, record) => (
+        <Text strong style={{ color: '#1890ff', fontSize: '12px' }}>
+          #{record.id}
         </Text>
       )
     },
@@ -602,15 +2335,66 @@ const Orders = () => {
       ...getColumnSortProps('customer_name', 'string'),
       render: (_, record) => (
         <div>
-          <div style={{ fontWeight: 'bold' }}>{record.customer_name}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'flex-start',
+            marginBottom: '4px'
+          }}>
+            <div style={{ fontWeight: 'bold', fontSize: '13px', flex: 1 }}>
+              {record.customer_name}
+            </div>
+            <div style={{ 
+              fontSize: '10px', 
+              color: '#999', 
+              textAlign: 'right',
+              marginLeft: '8px',
+              lineHeight: '1.2'
+            }}>
+              {(() => {
+                const now = new Date();
+                const orderDate = new Date(record.created_at);
+                const diffMs = now - orderDate;
+                const diffMins = Math.floor(diffMs / 60000);
+                const diffHours = Math.floor(diffMins / 60);
+                const diffDays = Math.floor(diffHours / 24);
+                
+                if (diffMins < 60) return `${diffMins}m`;
+                if (diffHours < 24) return `${diffHours}h`;
+                return `${diffDays}d`;
+              })()}
+            </div>
+          </div>
+          <div style={{ fontSize: '11px', color: '#666' }}>
             <PhoneOutlined style={{ marginRight: 4 }} />
             {record.customer_phone}
           </div>
           {record.customer_email && (
-            <div style={{ fontSize: '12px', color: '#666' }}>
+            <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
               <MailOutlined style={{ marginRight: 4 }} />
               {record.customer_email}
+            </div>
+          )}
+          <div style={{ 
+            fontSize: '10px', 
+            color: '#888', 
+            marginTop: '3px',
+            borderTop: '1px solid #f0f0f0',
+            paddingTop: '3px'
+          }}>
+            <ClockCircleOutlined style={{ marginRight: 4 }} />
+            {new Date(record.created_at).toLocaleDateString()} {new Date(record.created_at).toLocaleTimeString([], { 
+              hour: '2-digit', 
+              minute: '2-digit',
+              hour12: true 
+            })}
+          </div>
+          {record.order_type === 'delivery' && record.delivery_address && (
+            <div style={{ fontSize: '11px', color: '#666', marginTop: '4px', padding: '4px', backgroundColor: '#f5f5f5', borderRadius: '3px' }}>
+              <EnvironmentOutlined style={{ marginRight: 4 }} />
+              <div style={{ fontWeight: 'bold' }}>{record.delivery_address.full_name}</div>
+              <div>{record.delivery_address.address_line}</div>
+              <div>{record.delivery_address.city}, {record.delivery_address.governorate}</div>
             </div>
           )}
         </div>
@@ -620,207 +2404,206 @@ const Orders = () => {
       title: t('orders.status'),
       dataIndex: 'order_status',
       key: 'status',
-      width: 120,
+      width: 100,
       ...getColumnSortProps('order_status', 'string'),
-      render: (status) => (
-        <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
-          {t(`orders.status_${status}`)}
-        </Tag>
-      )
+      render: (status, record) => {
+        const orderStatus = status || 'pending';
+        return (
+          <Dropdown
+            overlay={
+              <Menu onClick={({ key }) => handleQuickStatusUpdate(record, key)}>
+                <Menu.Item key="pending" icon={<ClockCircleOutlined />}>
+                  {t('orders.status_pending')}
+                </Menu.Item>
+                <Menu.Item key="confirmed" icon={<CheckCircleOutlined />}>
+                  {t('orders.status_confirmed')}
+                </Menu.Item>
+                <Menu.Item key="preparing" icon={<ShoppingCartOutlined />}>
+                  {t('orders.status_preparing')}
+                </Menu.Item>
+                <Menu.Item key="ready" icon={<CheckCircleOutlined />}>
+                  {t('orders.status_ready')}
+                </Menu.Item>
+                <Menu.Item key="out_for_delivery" icon={<TruckOutlined />}>
+                  {t('orders.status_out_for_delivery')}
+                </Menu.Item>
+                <Menu.Item key="delivered" icon={<CheckCircleOutlined />}>
+                  {t('orders.status_delivered')}
+                </Menu.Item>
+                <Menu.Item key="cancelled" icon={<CloseCircleOutlined />} danger>
+                  {t('orders.status_cancelled')}
+                </Menu.Item>
+              </Menu>
+            }
+            trigger={['click']}
+            placement="bottomLeft"
+          >
+            <div style={{ cursor: 'pointer' }}>
+              <Tag 
+                color={getStatusColor(orderStatus)} 
+                icon={getStatusIcon(orderStatus)}
+                style={{ cursor: 'pointer', fontSize: '11px' }}
+              >
+                {t(`orders.status_${orderStatus}`)}
+              </Tag>
+            </div>
+          </Dropdown>
+        );
+      }
     },
     {
       title: t('orders.type'),
       dataIndex: 'order_type',
       key: 'order_type',
-      width: 100,
+      width: 90,
       ...getColumnSortProps('order_type', 'string'),
       render: (type) => (
-        <Tag color={type === 'delivery' ? 'blue' : 'green'}>
-          {type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
-          {t(`orders.${type}`)}
-        </Tag>
+        <div>
+          <Tag color={type === 'delivery' ? 'blue' : 'green'} style={{ fontSize: '10px', marginBottom: '2px' }}>
+            {type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
+            {t(`orders.${type}`)}
+          </Tag>
+        </div>
       )
     },
     {
       title: t('orders.total'),
       dataIndex: 'total_amount',
       key: 'total',
-      width: 100,
-      ...getColumnSortProps('total_amount', 'currency'),
-      render: (total) => (
-        <Text strong style={{ color: '#52c41a' }}>
-          {formatPrice(total)}
-        </Text>
-      )
-    },
-    {
-      title: t('orders.payment'),
-      key: 'payment',
-      width: 120,
-      ...getColumnSortProps('payment_status', 'string'),
-      render: (_, record) => (
-        <div>
-          <Tag>{t(`orders.payment_${record.payment_method}`)}</Tag>
-          <div style={{ fontSize: '12px', marginTop: 2 }}>
-            <Tag size="small" color={record.payment_status === 'paid' ? 'green' : record.payment_status === 'failed' ? 'red' : 'orange'}>
-              {t(`orders.payment_status_${record.payment_status}`)}
-            </Tag>
-          </div>
-        </div>
-      )
-    },
-    {
-      title: t('orders.created_at'),
-      dataIndex: 'created_at',
-      key: 'created_at',
       width: 140,
-      ...getColumnSortProps('created_at', 'date'),
-      render: (date) => new Date(date).toLocaleString()
-    },
-    {
-      title: t('orders.points'),
-      key: 'points',
-      width: 100,
-      ...getColumnSortProps('points_earned', 'number'),
-      render: (_, record) => (
-        <div style={{ fontSize: '12px' }}>
-          {record.points_earned > 0 && (
-            <div>
-              <Text type="success">+{record.points_earned}</Text>
-            </div>
-          )}
-          {record.points_used > 0 && (
-            <div>
-              <Text type="warning">-{record.points_used}</Text>
-            </div>
-          )}
-          {record.points_earned === 0 && record.points_used === 0 && (
-            <Text type="secondary">-</Text>
-          )}
-        </div>
-      )
-    },
-    {
-      title: t('orders.items_count'),
-      dataIndex: 'items_count',
-      key: 'items_count',
-      width: 180,
-      ...getColumnSortProps('items_count', 'number'),
-      render: (count, record) => (
+      ...getColumnSortProps('total_amount', 'currency'),
+      render: (total, record) => (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '4px' }}>
-            <Badge count={count} style={{ backgroundColor: '#52c41a', marginRight: '8px' }} />
-            <Text strong style={{ fontSize: '12px' }}>
-              {count} item{count > 1 ? 's' : ''}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+            <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
+              {formatPrice(total)}
             </Text>
+            <Badge 
+              count={record.items_count || 0} 
+              style={{ 
+                backgroundColor: '#1890ff',
+                fontSize: '9px',
+                minWidth: '16px',
+                height: '16px',
+                lineHeight: '16px',
+                padding: '0 4px'
+              }} 
+              title={`${record.items_count || 0} items`}
+            />
           </div>
-          <OrderItemsPreview 
-            items={record.items} 
-            formatPrice={formatPrice} 
-            maxItems={2}
-          />
+          <Tag 
+            color={
+              record.payment_method === 'cash' ? 'orange' : 
+              record.payment_method === 'card' ? 'purple' : 
+              record.payment_method === 'online' ? 'cyan' : 'default'
+            } 
+            style={{ fontSize: '9px', marginTop: '2px' }}
+          >
+            {record.payment_method === 'cash' ? '💵' : 
+             record.payment_method === 'card' ? '💳' : 
+             record.payment_method === 'online' ? '🌐' : '❓'}
+            {record.payment_method ? t(`orders.payment_${record.payment_method}`) : 'Unknown'}
+          </Tag>
+          <div style={{ fontSize: '10px', color: '#888', marginTop: '1px' }}>
+            <span style={{ 
+              padding: '1px 4px', 
+              borderRadius: '2px',
+              backgroundColor: record.payment_status === 'paid' ? '#f6ffed' : 
+                              record.payment_status === 'failed' ? '#fff1f0' : '#fff7e6',
+              color: record.payment_status === 'paid' ? '#52c41a' : 
+                     record.payment_status === 'failed' ? '#ff4d4f' : '#fa8c16'
+            }}>
+              {record.payment_status === 'paid' ? '✓' : 
+               record.payment_status === 'failed' ? '✗' : '⏳'}
+              {record.payment_status ? t(`orders.payment_status_${record.payment_status}`) : 'Pending'}
+            </span>
+            <span style={{ marginLeft: '4px', color: '#666' }}>
+              • {record.items_count || 0} {t('orders.items') || 'items'}
+            </span>
+          </div>
         </div>
       )
     },
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 120,
+      width: 80,
       fixed: 'right',
       render: (_, record) => (
-        <Space size="small">
-          <Tooltip title={t('common.view_details')}>
-            <Button
-              type="text"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={async () => {
-                try {
-                  // Fetch complete order details
-                  const response = await ordersService.getOrder(record.id);
-                  setSelectedOrder(response.data.order);
-                  setDetailsVisible(true);
-                } catch (error) {
-                  message.error('Failed to fetch order details');
-                  console.error(error);
-                }
-              }}
-            />
-          </Tooltip>
-          <Dropdown
-            overlay={
-              <Menu>
-                <Menu.Item 
-                  key="edit" 
-                  icon={<EditOutlined />}
-                  onClick={() => showEditModal(record)}
-                  disabled={!['pending', 'confirmed'].includes(record.order_status)}
-                >
-                  {t('common.edit')}
-                </Menu.Item>
-                {canAdvanceStatus(record.order_status) && (
-                  <Menu.Item 
-                    key="advance" 
-                    icon={<CheckCircleOutlined />}
-                    onClick={() => {
-                      setSelectedOrder(record);
-                      setSelectedStatus(getNextStatus(record.order_status));
-                      setStatusUpdateVisible(true);
-                    }}
-                  >
-                    {t(`orders.status_${getNextStatus(record.order_status)}`)}
-                  </Menu.Item>
-                )}
-                <Menu.Item 
-                  key="update_status" 
-                  icon={<FileTextOutlined />}
-                  onClick={() => {
-                    setSelectedOrder(record);
-                    setSelectedStatus(record.order_status);
-                    setStatusUpdateVisible(true);
-                  }}
-                >
-                  {t('orders.update_status')}
-                </Menu.Item>
-                {['pending', 'confirmed'].includes(record.order_status) && (
-                  <>
-                    <Menu.Divider />
-                    <Menu.Item 
-                      key="cancel" 
-                      icon={<CloseCircleOutlined />}
-                      danger
-                      onClick={() => {
-                        Modal.confirm({
-                          title: t('orders.cancel_confirm_title'),
-                          content: t('orders.cancel_confirm_message'),
-                          okText: t('common.confirm'),
-                          cancelText: t('common.cancel'),
-                          okType: 'danger',
-                          onOk: () => handleDeleteOrder(record)
-                        });
-                      }}
-                    >
-                      {t('orders.cancel_order')}
-                    </Menu.Item>
-                  </>
-                )}
-              </Menu>
-            }
-            trigger={['click']}
-          >
-            <Button
-              type="text"
-              size="small"
-              icon={<MoreOutlined />}
-            />
-          </Dropdown>
-        </Space>
+        <Dropdown
+          overlay={
+            <Menu>
+              <Menu.Item 
+                key="view_details" 
+                icon={<EyeOutlined />}
+                onClick={() => handleViewDetails(record)}
+              >
+                {t('common.view_details')}
+              </Menu.Item>
+              <Menu.Item 
+                key="print_invoice" 
+                icon={<PrinterOutlined />}
+                onClick={() => handlePrintInvoice(record)}
+                style={{ color: '#52c41a' }}
+              >
+                {t('orders.print_invoice')}
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item 
+                key="edit" 
+                icon={<EditOutlined />}
+                onClick={() => showEditModal(record)}
+              >
+                {t('common.edit')}
+              </Menu.Item>
+              <Menu.Item 
+                key="cancel" 
+                icon={<CloseCircleOutlined />}
+                danger
+                onClick={() => handleCancelOrder(record)}
+              >
+                {t('orders.cancel_order')}
+              </Menu.Item>
+            </Menu>
+          }
+          trigger={['click']}
+          placement="bottomRight"
+        >
+          <Button
+            type="text"
+            size="small"
+            icon={<MoreOutlined />}
+            style={{ 
+              border: '1px solid #d9d9d9',
+              borderRadius: '4px',
+              padding: '4px 6px'
+            }}
+          />
+        </Dropdown>
       )
     }
   ];
 
   return (
     <div style={{ padding: '24px' }}>
+      {/* Socket.io Connection Status */}
+      <Alert
+        message={
+          <span>
+            Socket.io Status: {' '}
+            {isConnected ? (
+              <span style={{ color: '#52c41a' }}>🟢 Connected</span>
+            ) : (
+              <span style={{ color: '#ff4d4f' }}>🔴 Disconnected</span>
+            )}
+          </span>
+        }
+        type={isConnected ? 'success' : 'warning'}
+        showIcon={false}
+        style={{ marginBottom: 16 }}
+        closable
+      />
+      
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={24}>
           <Card>
@@ -854,6 +2637,13 @@ const Orders = () => {
                             >
                               {t('common.refresh')}
                             </Menu.Item>
+                            <Menu.Item 
+                              key="test-socket" 
+                              icon={<ExclamationCircleOutlined />}
+                              onClick={testSocketConnection}
+                            >
+                              Test Socket Connection
+                            </Menu.Item>
                           </Menu>
                         }
                         trigger={['click']}
@@ -875,56 +2665,149 @@ const Orders = () => {
         </Col>
       </Row>
 
-      {/* Order Statistics */}
+      {/* Order Insights Dashboard */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={6}>
-          <Card>
+          <Card hoverable>
             <Statistic
-              title={t('orders.total_orders')}
-              value={orderStats.total_orders || 0}
-              prefix={<ShoppingCartOutlined />}
-              loading={statsLoading}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={6}>
-          <Card>
-            <Statistic
-              title={t('orders.pending_orders')}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>{t('orders.pending_orders')}</span>
+                  {pendingOrdersCount > 10 && (
+                    <Tag color="warning" size="small">HIGH</Tag>
+                  )}
+                </div>
+              }
               value={pendingOrdersCount}
               prefix={<ClockCircleOutlined />}
-              valueStyle={{ color: '#fa8c16' }}
+              valueStyle={{ 
+                color: pendingOrdersCount > 10 ? '#ff4d4f' : pendingOrdersCount > 5 ? '#fa8c16' : '#52c41a' 
+              }}
+              suffix={
+                <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '4px' }}>
+                  {pendingOrdersCount > 10 
+                    ? '🚨 Action needed!' 
+                    : pendingOrdersCount > 5 
+                    ? '⚠️ Monitor closely' 
+                    : '✅ Under control'
+                  }
+                </div>
+              }
             />
           </Card>
         </Col>
         <Col xs={24} sm={6}>
-          <Card>
+          <Card hoverable>
             <Statistic
-              title={t('orders.total_revenue')}
-              value={orderStats.total_revenue || 0}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>{t('orders.todays_revenue')}</span>
+                  <Tag color="success" size="small">TODAY</Tag>
+                </div>
+              }
+              value={orderStats.today_revenue || 0}
               prefix={<DollarOutlined />}
               precision={2}
               loading={statsLoading}
               valueStyle={{ color: '#52c41a' }}
+              suffix={
+                <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '4px' }}>
+                  {orderStats.today_orders || 0} orders today
+                </div>
+              }
             />
           </Card>
         </Col>
         <Col xs={24} sm={6}>
-          <Card>
+          <Card hoverable>
             <Statistic
-              title={t('orders.avg_order_value')}
-              value={orderStats.avg_order_value || 0}
-              prefix={<DollarOutlined />}
-              precision={2}
-              loading={statsLoading}
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>{t('orders.delivery_queue')}</span>
+                  <Tag color="processing" size="small">ACTIVE</Tag>
+                </div>
+              }
+              value={orders.filter(o => ['confirmed', 'preparing', 'ready', 'out_for_delivery'].includes(o.order_status)).length}
+              prefix={<TruckOutlined />}
+              valueStyle={{ color: '#1890ff' }}
+              suffix={
+                <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '4px' }}>
+                  Orders in progress
+                </div>
+              }
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={6}>
+          <Card hoverable>
+            <Statistic
+              title={
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span>{t('orders.avg_prep_time')}</span>
+                  <Tag color="cyan" size="small">AVG</Tag>
+                </div>
+              }
+              value={orderStats.avg_preparation_time || 25}
+              prefix={<ClockCircleOutlined />}
+              suffix={
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <span style={{ fontSize: '14px' }}>min</span>
+                  <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '2px' }}>
+                    {(orderStats.avg_preparation_time || 25) > 30 ? '🔥 Too slow' : '⚡ Good pace'}
+                  </div>
+                </div>
+              }
+              valueStyle={{ 
+                color: (orderStats.avg_preparation_time || 25) > 30 ? '#ff4d4f' : '#52c41a' 
+              }}
             />
           </Card>
         </Col>
       </Row>
 
+      {/* Quick Action Alerts */}
+      {(pendingOrdersCount > 10 || (orderStats.avg_preparation_time || 25) > 30) && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <Card style={{ border: '1px solid #ff7875', backgroundColor: '#fff2f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <ExclamationCircleOutlined style={{ color: '#ff4d4f', fontSize: '20px' }} />
+                <div style={{ flex: 1 }}>
+                  <Text strong style={{ color: '#cf1322' }}>Action Required:</Text>
+                  <div style={{ marginTop: '4px' }}>
+                    {pendingOrdersCount > 10 && (
+                      <Text style={{ color: '#595959', display: 'block' }}>
+                        • {pendingOrdersCount} pending orders need immediate attention
+                      </Text>
+                    )}
+                    {(orderStats.avg_preparation_time || 25) > 30 && (
+                      <Text style={{ color: '#595959', display: 'block' }}>
+                        • Average preparation time is {orderStats.avg_preparation_time || 25} minutes (target: &lt;30 min)
+                      </Text>
+                    )}
+                  </div>
+                </div>
+                <Button type="primary" danger size="small" onClick={() => setFilters({ ...filters, status: 'pending' })}>
+                  View Pending Orders
+                </Button>
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      )}
+
       {/* Filters */}
       <Card style={{ marginBottom: 24 }}>
         <Row gutter={16}>
+          <Col xs={24} sm={6} md={5}>
+            <Input
+              placeholder={t('orders.search_orders') || t('orders.search_placeholder') || 'Search orders...'}
+              prefix={<SearchOutlined />}
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              allowClear
+            />
+          </Col>
           <Col xs={24} sm={6} md={4}>
             <Select
               style={{ width: '100%' }}
@@ -942,7 +2825,7 @@ const Orders = () => {
               <Option value="cancelled">{t('orders.status_cancelled')}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={6} md={4}>
+          <Col xs={24} sm={6} md={3}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_type')}
@@ -954,7 +2837,7 @@ const Orders = () => {
               <Option value="pickup">{t('orders.pickup')}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={6} md={4}>
+          <Col xs={24} sm={6} md={3}>
             <Select
               style={{ width: '100%' }}
               placeholder={t('orders.filter_payment')}
@@ -984,7 +2867,7 @@ const Orders = () => {
             </Select>
           </Col>
           {filters.date_range === 'custom' && (
-            <Col xs={24} sm={12} md={8}>
+            <Col xs={24} sm={12} md={5}>
               <DatePicker.RangePicker
                 style={{ width: '100%' }}
                 value={filters.custom_date_range}
@@ -1058,41 +2941,79 @@ const Orders = () => {
           rowKey="id"
           loading={loading}
           size='small'
-          scroll={{ x: 1400 }}
+          scroll={{ x: 1050 }}
           onChange={() => {}} // Disable default sorting
           pagination={{
+            current: currentPage,
+            pageSize: pageSize,
             total: sortedOrders.length,
-            pageSize: 20,
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total, range) =>
-              `${range[0]}-${range[1]} ${t('common.of')} ${total} ${t('orders.items')}`
+              `${range[0]}-${range[1]} ${t('common.of')} ${total} ${t('orders.items')}`,
+            onChange: (page, size) => {
+              setCurrentPage(page);
+              if (size !== pageSize) {
+                setPageSize(size);
+                setCurrentPage(1); // Reset to first page when page size changes
+              }
+            },
+            onShowSizeChange: (current, size) => {
+              setPageSize(size);
+              setCurrentPage(1); // Reset to first page when page size changes
+            }
           }}
         />
       </Card>
 
       {/* Order Details Modal */}
       <Modal
-        title={`${t('orders.details')} #${selectedOrder?.id}`}
+        title={`${t('orders.details')} #${selectedOrder?.order_number || selectedOrder?.id || 'N/A'}`}
         open={detailsVisible}
-        onCancel={() => setDetailsVisible(false)}
+        onCancel={() => {
+          setDetailsVisible(false);
+          setDetailsLoading(false);
+          setSelectedOrder(null);
+        }}
         width={800}
-        footer={null}
+        footer={[
+          <Button key="print" type="primary" icon={<PrinterOutlined />} onClick={() => handlePrintInvoice(selectedOrder)} disabled={detailsLoading}>
+            {t('orders.print_invoice')}
+          </Button>,
+          <Button key="close" onClick={() => {
+            setDetailsVisible(false);
+            setDetailsLoading(false);
+            setSelectedOrder(null);
+          }}>
+            {t('common.close')}
+          </Button>
+        ]}
       >
         {selectedOrder && (
           <div>
-            <Descriptions bordered column={2}>
+            {detailsLoading && (
+              <div style={{ textAlign: 'center', padding: '20px' }}>
+                <Spin size="large" />
+                <div style={{ marginTop: '16px' }}>
+                  <Text type="secondary">Loading order details...</Text>
+                </div>
+              </div>
+            )}
+            
+            {!detailsLoading && (
+              <>
+                <Descriptions bordered column={2}>
               <Descriptions.Item label={t('orders.order_number')}>
                 <Text strong style={{ color: '#1890ff' }}>
-                  {selectedOrder.order_number}
+                  {selectedOrder.order_number || 'N/A'}
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.customer_name')}>
-                {selectedOrder.customer_name}
+                {selectedOrder.customer_name || 'N/A'}
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.customer_phone')}>
                 <PhoneOutlined style={{ marginRight: 8 }} />
-                {selectedOrder.customer_phone}
+                {selectedOrder.customer_phone || 'N/A'}
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.customer_email')}>
                 {selectedOrder.customer_email ? (
@@ -1106,28 +3027,25 @@ const Orders = () => {
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.status')}>
                 <Tag color={getStatusColor(selectedOrder.order_status)} icon={getStatusIcon(selectedOrder.order_status)}>
-                  {t(`orders.status_${selectedOrder.order_status}`)}
+                  {selectedOrder.order_status ? t(`orders.status_${selectedOrder.order_status}`) : 'Unknown'}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.payment_status')}>
                 <Tag color={selectedOrder.payment_status === 'paid' ? 'green' : selectedOrder.payment_status === 'failed' ? 'red' : 'orange'}>
-                  {t(`orders.payment_status_${selectedOrder.payment_status}`)}
+                  {selectedOrder.payment_status ? t(`orders.payment_status_${selectedOrder.payment_status}`) : 'Unknown'}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.type')}>
                 <Tag color={selectedOrder.order_type === 'delivery' ? 'blue' : 'green'}>
                   {selectedOrder.order_type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
-                  {t(`orders.${selectedOrder.order_type}`)}
+                  {selectedOrder.order_type ? t(`orders.${selectedOrder.order_type}`) : 'Unknown'}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.payment_method')}>
-                <Tag>{t(`orders.payment_${selectedOrder.payment_method}`)}</Tag>
+                <Tag>{selectedOrder.payment_method ? t(`orders.payment_${selectedOrder.payment_method}`) : 'Unknown'}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.branch')}>
                 {selectedOrder.branch_title_en || selectedOrder.branch_title_ar || '-'}
-              </Descriptions.Item>
-              <Descriptions.Item label={t('orders.delivery_address')}>
-                {selectedOrder.delivery_address || '-'}
               </Descriptions.Item>
               {selectedOrder.shipping_zone_name_en && (
                 <Descriptions.Item label="Shipping Zone">
@@ -1146,7 +3064,10 @@ const Orders = () => {
                 </Descriptions.Item>
               )}
               <Descriptions.Item label={t('orders.created_at')}>
-                {new Date(selectedOrder.created_at).toLocaleString()}
+                {selectedOrder.created_at ? 
+                  new Date(selectedOrder.created_at).toLocaleString() : 
+                  <Text type="secondary">-</Text>
+                }
               </Descriptions.Item>
               <Descriptions.Item label={t('orders.estimated_delivery_time')}>
                 {selectedOrder.estimated_delivery_time ? 
@@ -1218,7 +3139,7 @@ const Orders = () => {
             <Row gutter={16}>
               <Col span={12}>
                 <Text strong>{t('orders.subtotal')}: </Text>
-                <Text>{formatPrice(selectedOrder.subtotal)}</Text>
+                <Text>{formatPrice(selectedOrder.subtotal || 0)}</Text>
               </Col>
               <Col span={12}>
                 <Text strong>{t('orders.delivery_fee')}: </Text>
@@ -1248,60 +3169,113 @@ const Orders = () => {
               <Col span={24} style={{ marginTop: 16, borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
                 <Text strong style={{ fontSize: '18px' }}>{t('orders.final_total')}: </Text>
                 <Text strong style={{ fontSize: '18px', color: '#52c41a' }}>
-                  {formatPrice(selectedOrder.total_amount)}
+                  {formatPrice(selectedOrder.total_amount || 0)}
                 </Text>
               </Col>
             </Row>
+              </>
+            )}
           </div>
         )}
       </Modal>
 
-      {/* Status Update Modal */}
+      {/* Status Update Modal - Improved UI */}
       <Modal
-        title={t('orders.update_status')}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <FileTextOutlined style={{ color: '#1890ff' }} />
+            {t('orders.update_status')} - Order #{selectedOrder?.order_number}
+          </div>
+        }
         open={statusUpdateVisible}
-        onCancel={() => setStatusUpdateVisible(false)}
+        onCancel={() => {
+          setStatusUpdateVisible(false);
+          setSelectedStatus('');
+          setStatusNotes('');
+        }}
         onOk={handleStatusUpdate}
         confirmLoading={statusUpdateLoading}
         okText={t('common.update')}
         cancelText={t('common.cancel')}
+        width={600}
+        okButtonProps={{ 
+          disabled: !selectedStatus,
+          size: 'large',
+          icon: <CheckCircleOutlined />
+        }}
+        cancelButtonProps={{ size: 'large' }}
       >
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <div>
-            <Text strong>{t('orders.current_status')}: </Text>
-            <Tag color={getStatusColor(selectedOrder?.order_status)}>
+        <div style={{ marginBottom: '24px' }}>
+          <div style={{ marginBottom: '16px' }}>
+            <Text strong style={{ fontSize: '16px' }}>{t('orders.current_status')}: </Text>
+            <Tag 
+              color={getStatusColor(selectedOrder?.order_status)}
+              style={{ fontSize: '14px', padding: '4px 12px' }}
+              icon={getStatusIcon(selectedOrder?.order_status)}
+            >
               {selectedOrder && t(`orders.status_${selectedOrder.order_status}`)}
             </Tag>
           </div>
           
-          <div>
-            <Text strong>{t('orders.new_status')}: </Text>
-            <Select
-              style={{ width: '100%' }}
-              value={selectedStatus}
-              onChange={setSelectedStatus}
-              placeholder={t('orders.select_status')}
-            >
-              <Option value="pending">{t('orders.status_pending')}</Option>
-              <Option value="confirmed">{t('orders.status_confirmed')}</Option>
-              <Option value="preparing">{t('orders.status_preparing')}</Option>
-              <Option value="ready">{t('orders.status_ready')}</Option>
-              <Option value="out_for_delivery">{t('orders.status_out_for_delivery')}</Option>
-              <Option value="delivered">{t('orders.status_delivered')}</Option>
-              <Option value="cancelled">{t('orders.status_cancelled')}</Option>
-            </Select>
+          <div style={{ marginBottom: '20px' }}>
+            <Text strong style={{ fontSize: '16px', display: 'block', marginBottom: '8px' }}>
+              {t('orders.change_to')}:
+            </Text>
+            
+            {/* Visual Status Selection Cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+              {[
+                { value: 'pending', color: 'orange', icon: <ClockCircleOutlined /> },
+                { value: 'confirmed', color: 'blue', icon: <CheckCircleOutlined /> },
+                { value: 'preparing', color: 'purple', icon: <ShoppingCartOutlined /> },
+                { value: 'ready', color: 'cyan', icon: <CheckCircleOutlined /> },
+                { value: 'out_for_delivery', color: 'gold', icon: <TruckOutlined /> },
+                { value: 'delivered', color: 'green', icon: <CheckCircleOutlined /> },
+                { value: 'cancelled', color: 'red', icon: <CloseCircleOutlined /> }
+              ].map(status => (
+                <Card
+                  key={status.value}
+                  size="small"
+                  hoverable
+                  onClick={() => setSelectedStatus(status.value)}
+                  style={{
+                    cursor: 'pointer',
+                    border: selectedStatus === status.value ? '2px solid #1890ff' : '1px solid #d9d9d9',
+                    backgroundColor: selectedStatus === status.value ? '#f0f8ff' : '#fff',
+                    textAlign: 'center'
+                  }}
+                  bodyStyle={{ padding: '8px' }}
+                >
+                  <div style={{ marginBottom: '4px', fontSize: '16px', color: status.color === 'gold' ? '#faad14' : status.color === 'cyan' ? '#13c2c2' : status.color }}>
+                    {status.icon}
+                  </div>
+                  <Text 
+                    style={{ 
+                      fontSize: '12px', 
+                      fontWeight: selectedStatus === status.value ? 'bold' : 'normal',
+                      color: selectedStatus === status.value ? '#1890ff' : undefined
+                    }}
+                  >
+                    {t(`orders.status_${status.value}`)}
+                  </Text>
+                </Card>
+              ))}
+            </div>
           </div>
           
           <div>
-            <Text strong>{t('orders.notes')}: </Text>
+            <Text strong style={{ fontSize: '16px', display: 'block', marginBottom: '8px' }}>
+              {t('orders.notes')} <Text type="secondary">({t('common.optional')})</Text>:
+            </Text>
             <TextArea
               rows={3}
               value={statusNotes}
               onChange={(e) => setStatusNotes(e.target.value)}
               placeholder={t('orders.status_notes_placeholder')}
+              style={{ fontSize: '14px' }}
             />
           </div>
-        </Space>
+        </div>
       </Modal>
 
       {/* Create Order Modal */}
@@ -1336,8 +3310,20 @@ const Orders = () => {
                 label={t('orders.customer_phone')}
                 rules={[{ required: true, message: t('common.required') }]}
               >
-                <Input placeholder={t('orders.customer_phone_placeholder')} />
+                <Input 
+                  placeholder={t('orders.customer_phone_placeholder')} 
+                  onChange={(e) => handleCustomerPhoneChange(e.target.value)}
+                />
               </Form.Item>
+              
+              {/* Show message when addresses are being loaded */}
+              {customerAddresses.length > 0 && (
+                <div style={{ marginTop: '-12px', marginBottom: '12px' }}>
+                  <Text type="success" style={{ fontSize: '12px' }}>
+                    ✓ Found {customerAddresses.length} saved address{customerAddresses.length !== 1 ? 'es' : ''} for this customer
+                  </Text>
+                </div>
+              )}
             </Col>
           </Row>
 
@@ -1388,7 +3374,32 @@ const Orders = () => {
                 label={t('orders.branch')}
                 rules={[{ required: true, message: t('common.required') }]}
               >
-                <Select placeholder={t('orders.select_branch')} optionLabelProp="label">
+                <Select 
+                  placeholder={t('orders.select_branch')} 
+                  optionLabelProp="label"
+                  onChange={async (branchId) => {
+                    // Trigger shipping recalculation when branch changes
+                    const addressId = orderForm.getFieldValue('delivery_address_id');
+                    const subtotal = orderForm.getFieldValue('subtotal') || 0;
+                    const orderType = orderForm.getFieldValue('order_type');
+                    
+                    if (orderType === 'delivery' && addressId && branchId) {
+                      try {
+                        const calculation = await calculateShippingCost(addressId, branchId, subtotal);
+                        if (calculation) {
+                          setShippingCalculation(calculation);
+                          orderForm.setFieldsValue({
+                            delivery_fee: calculation.total_shipping_cost || 0
+                          });
+                          message.success(`Shipping updated: ${calculation.total_shipping_cost || 0} AED`);
+                        }
+                      } catch (error) {
+                        console.error('Error recalculating shipping:', error);
+                        message.warning('Could not auto-calculate shipping for this branch');
+                      }
+                    }
+                  }}
+                >
                   {branches.map(branch => (
                     <Option 
                       key={branch.id} 
@@ -1428,25 +3439,84 @@ const Orders = () => {
                   }),
                 ]}
               >
-                <Input 
-                  placeholder={t('orders.delivery_address_placeholder')} 
-                  onChange={async (e) => {
-                    const addressId = e.target.value;
-                    const branchId = orderForm.getFieldValue('branch_id');
-                    const subtotal = orderForm.getFieldValue('subtotal') || 0;
-                    
-                    if (addressId && branchId) {
-                      const calculation = await calculateShippingCost(addressId, branchId, subtotal);
-                      if (calculation) {
-                        setShippingCalculation(calculation);
-                        orderForm.setFieldsValue({
-                          delivery_fee: calculation.total_shipping_cost || 0
-                        });
+                {customerAddresses.length > 0 ? (
+                  <Select 
+                    placeholder={t('orders.delivery_address_placeholder')}
+                    showSearch
+                    optionFilterProp="children"
+                    onChange={(addressId) => handleAddressChange(addressId)}
+                    notFoundContent="No addresses found"
+                  >
+                    {customerAddresses.map(address => (
+                      <Option key={address.id} value={address.id}>
+                        <div>
+                          <Text strong>{address.name}</Text>
+                          <br />
+                          <Text type="secondary" style={{ fontSize: '12px' }}>
+                            {address.city_title_en}, {address.area_title_en}
+                            {address.building_no && ` - Building ${address.building_no}`}
+                            {address.is_default && <Tag color="gold" size="small" style={{ marginLeft: 4 }}>Default</Tag>}
+                            {(!address.latitude || !address.longitude) && (
+                              <div style={{ marginTop: '4px' }}>
+                                <Tag color="orange" size="small">
+                                  ⚠️ No GPS coordinates
+                                </Tag>
+                                <Text type="secondary" style={{ fontSize: '11px', display: 'block' }}>
+                                  Manual shipping fee required or will use default zone pricing
+                                </Text>
+                              </div>
+                            )}
+                          </Text>
+                        </div>
+                      </Option>
+                    ))}
+                  </Select>
+                ) : (
+                  <Input 
+                    placeholder={t('orders.delivery_address_placeholder')}
+                    onChange={async (e) => {
+                      const addressText = e.target.value;
+                      const branchId = orderForm.getFieldValue('branch_id');
+                      
+                      // For manual address entry, we can't calculate shipping automatically
+                      // User will need to set delivery fee manually
+                      if (addressText && branchId) {
+                        message.info('Please enter delivery fee manually for custom addresses');
                       }
-                    }
-                  }}
-                />
+                    }}
+                  />
+                )}
               </Form.Item>
+              
+              {/* Show instruction when customer addresses are loaded */}
+              {customerAddresses.length > 0 && (
+                <div style={{ marginTop: '-12px', marginBottom: '12px' }}>
+                  {customerAddresses.some(addr => !addr.latitude || !addr.longitude) ? (
+                    <div>
+                      <Text type="warning" style={{ fontSize: '12px' }}>
+                        ⚠️ Some addresses are missing GPS coordinates - default zone pricing will be used
+                      </Text>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: '12px' }}>
+                        For accurate shipping costs, ask customer to update addresses with precise location
+                      </Text>
+                    </div>
+                  ) : (
+                    <Text type="success" style={{ fontSize: '12px' }}>
+                      ✓ All addresses have GPS coordinates - automatic shipping calculation available
+                    </Text>
+                  )}
+                </div>
+              )}
+              
+              {/* Show instruction when no customer addresses are found */}
+              {customerAddresses.length === 0 && (
+                <div style={{ marginTop: '-12px', marginBottom: '12px' }}>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    💡 Enter customer phone number to load saved addresses with automatic shipping calculation
+                  </Text>
+                </div>
+              )}
             </Col>
           </Row>
 
@@ -1516,8 +3586,57 @@ const Orders = () => {
                   step={0.01}
                   precision={2}
                   placeholder="0.00"
+                  onChange={(value) => {
+                    // Recalculate total when delivery fee changes
+                    const subtotal = orderForm.getFieldValue('subtotal') || 0;
+                    const pointsUsed = orderForm.getFieldValue('points_to_use') || 0;
+                    const newTotal = (subtotal + (value || 0) - pointsUsed).toFixed(2);
+                    
+                    orderForm.setFieldsValue({
+                      total_amount: parseFloat(newTotal)
+                    });
+                  }}
                 />
               </Form.Item>
+              
+              {/* Shipping Calculation Display */}
+              {shippingCalculation && (
+                <div style={{ 
+                  marginTop: '8px',
+                  padding: '8px 12px',
+                  backgroundColor: shippingCalculation.calculation_method === 'zone-fallback' ? '#fff7e6' : '#f6ffed',
+                  border: `1px solid ${shippingCalculation.calculation_method === 'zone-fallback' ? '#ffd591' : '#b7eb8f'}`,
+                  borderRadius: '6px',
+                  fontSize: '12px'
+                }}>
+                  <div style={{ 
+                    color: shippingCalculation.calculation_method === 'zone-fallback' ? '#d46b08' : '#52c41a', 
+                    fontWeight: 'bold', 
+                    marginBottom: '4px' 
+                  }}>
+                    {shippingCalculation.calculation_method === 'zone-fallback' ? 
+                      '⚠️ Default Zone Pricing' : 
+                      '📍 Auto-calculated Shipping'
+                    }
+                  </div>
+                  <div style={{ color: '#595959' }}>
+                    Zone: {shippingCalculation.zone_name} | 
+                    {shippingCalculation.distance > 0 ? 
+                      ` Distance: ${shippingCalculation.distance}km |` : 
+                      ' Distance: Estimated |'
+                    }
+                    Base: {shippingCalculation.base_cost}AED
+                    {shippingCalculation.free_shipping_threshold && 
+                      ` | Free shipping over ${shippingCalculation.free_shipping_threshold}AED`
+                    }
+                  </div>
+                  {shippingCalculation.calculation_method === 'zone-fallback' && (
+                    <div style={{ color: '#d46b08', fontSize: '11px', marginTop: '2px' }}>
+                      💡 For accurate pricing, update customer address with GPS coordinates
+                    </div>
+                  )}
+                </div>
+              )}
             </Col>
           </Row>
 
@@ -1577,118 +3696,617 @@ const Orders = () => {
 
       {/* Edit Order Modal */}
       <Modal
-        title={t('orders.edit_order')}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <EditOutlined style={{ color: '#1890ff' }} />
+            {t('orders.edit_order')} - #{editingOrder?.order_number || editingOrder?.id}
+          </div>
+        }
         open={editOrderVisible}
         onCancel={() => {
           setEditOrderVisible(false);
           setEditingOrder(null);
+          setEditOrderItems([]);
           orderForm.resetFields();
         }}
         footer={null}
-        width={600}
+        width={900}
+        styles={{ body: { maxHeight: '80vh', overflowY: 'auto' } }}
       >
         <Form
           form={orderForm}
           layout="vertical"
           onFinish={handleEditOrder}
         >
-          <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="customer_name"
-                label={t('orders.customer_name')}
-                rules={[{ required: true, message: t('common.required') }]}
-              >
-                <Input placeholder={t('orders.customer_name_placeholder')} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="customer_phone"
-                label={t('orders.customer_phone')}
-                rules={[{ required: true, message: t('common.required') }]}
-              >
-                <Input placeholder={t('orders.customer_phone_placeholder')} />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item
-            name="customer_email"
-            label={t('orders.customer_email')}
-            rules={[{ type: 'email', message: t('common.invalidEmail') }]}
-          >
-            <Input placeholder={t('orders.customer_email_placeholder')} />
-          </Form.Item>
-
-          <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="order_type"
-                label={t('orders.order_type')}
-              >
-                <Select 
-                  placeholder={t('orders.select_order_type')}
-                  onChange={() => orderForm.validateFields(['delivery_address_id'])}
+          {/* Customer Information */}
+          <Card size="small" title={t('orders.customer_information')} style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="customer_name"
+                  label={t('orders.customer_name')}
+                  rules={[{ required: true, message: t('common.required') }]}
                 >
-                  <Select.Option value="pickup">{t('orders.pickup')}</Select.Option>
-                  <Select.Option value="delivery">{t('orders.delivery')}</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="delivery_address_id"
-                label={t('orders.delivery_address')}
-                dependencies={['order_type']}
-                rules={[
-                  ({ getFieldValue }) => ({
-                    validator(_, value) {
-                      if (getFieldValue('order_type') === 'delivery' && !value) {
-                        return Promise.reject(new Error(t('orders.delivery_address_required')));
-                      }
-                      return Promise.resolve();
-                    },
-                  }),
-                ]}
-              >
-                <Input placeholder={t('orders.delivery_address_placeholder')} />
-              </Form.Item>
-            </Col>
-          </Row>
+                  <Input placeholder={t('orders.customer_name_placeholder')} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="customer_phone"
+                  label={t('orders.customer_phone')}
+                  rules={[{ required: true, message: t('common.required') }]}
+                >
+                  <Input placeholder={t('orders.customer_phone_placeholder')} />
+                </Form.Item>
+              </Col>
+            </Row>
 
-          <Form.Item
-            name="special_instructions"
-            label={t('orders.special_instructions')}
+            <Form.Item
+              name="customer_email"
+              label={t('orders.customer_email')}
+              rules={[{ type: 'email', message: t('common.invalidEmail') }]}
+            >
+              <Input placeholder={t('orders.customer_email_placeholder')} />
+            </Form.Item>
+          </Card>
+
+          {/* Order Details */}
+          <Card size="small" title={t('orders.order_details')} style={{ marginBottom: 16 }}>
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="order_type"
+                  label={t('orders.type')}
+                >
+                  <Select 
+                    placeholder={t('orders.select_order_type')}
+                    onChange={() => orderForm.validateFields(['delivery_address_id'])}
+                  >
+                    <Select.Option value="pickup">{t('orders.pickup')}</Select.Option>
+                    <Select.Option value="delivery">{t('orders.delivery')}</Select.Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="delivery_address_id"
+                  label={t('orders.delivery_address')}
+                  dependencies={['order_type']}
+                  rules={[
+                    ({ getFieldValue }) => ({
+                      validator(_, value) {
+                        const orderType = getFieldValue('order_type');
+                        // Accept number IDs or non-empty strings
+                        const isEmpty = value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+                        if (orderType === 'delivery' && isEmpty) {
+                          return Promise.reject(new Error(t('orders.delivery_address_required') || 'Delivery address is required for delivery orders'));
+                        }
+                        return Promise.resolve();
+                      },
+                    }),
+                  ]}
+                >
+                  {customerAddresses && customerAddresses.length > 0 ? (
+                    <Select 
+                      placeholder={t('orders.delivery_address_placeholder')}
+                      showSearch
+                      optionFilterProp="children"
+                      optionLabelProp="label"
+                      value={orderForm.getFieldValue('delivery_address_id')}
+                      onChange={async (addressIdRaw) => {
+                        const addressId = String(addressIdRaw);
+                        // Persist selection
+                        orderForm.setFieldsValue({ delivery_address_id: addressId });
+                        // Trigger shipping recalculation when address changes
+                        const branchId = orderForm.getFieldValue('branch_id');
+                        const subtotal = calculateOrderTotal();
+                        if (orderForm.getFieldValue('order_type') === 'delivery' && addressId && branchId) {
+                          try {
+                            const calculation = await calculateShippingCost(addressId, branchId, subtotal);
+                            if (calculation) {
+                              setShippingCalculation(calculation);
+                              orderForm.setFieldsValue({
+                                delivery_fee: calculation.total_shipping_cost || 0
+                              });
+                              message.success(`Shipping updated: ${formatPrice(calculation.total_shipping_cost || 0)}`);
+                            }
+                          } catch (err) {
+                            console.error('Edit: Error recalculating shipping:', err);
+                            message.warning('Could not auto-calculate shipping for this address');
+                          }
+                        }
+                      }}
+                      notFoundContent="No addresses found"
+                    >
+                      {customerAddresses.map(address => {
+                        const label = [
+                          (address.name || address.address_name || `Address #${address.id || address.address_id}`),
+                          [(address.city_title_en || address.city), (address.area_title_en || address.area)].filter(Boolean).join(', '),
+                          address.building_no && `Building ${address.building_no}`
+                        ].filter(Boolean).join(' | ');
+                        return (
+                        <Option key={String(address.id || address.address_id)} value={String(address.id || address.address_id)} label={label}>
+                          <div>
+                            <Text strong>{address.name || address.address_name || `Address #${address.id || address.address_id}`}</Text>
+                            <br />
+                            <Text type="secondary" style={{ fontSize: '12px' }}>
+                              {(address.city_title_en || address.city) || 'City'}, {(address.area_title_en || address.area) || 'Area'}
+                              {address.building_no && ` - Building ${address.building_no}`}
+                              {address.is_default && <Tag color="gold" size="small" style={{ marginLeft: 4 }}>Default</Tag>}
+                              {(!address.latitude || !address.longitude) && (
+                                <div style={{ marginTop: '4px' }}>
+                                  <Tag color="orange" size="small">
+                                    ⚠️ No GPS coordinates
+                                  </Tag>
+                                  <Text type="secondary" style={{ fontSize: '11px', display: 'block' }}>
+                                    Manual shipping fee required or will use default zone pricing
+                                  </Text>
+                                </div>
+                              )}
+                            </Text>
+                          </div>
+                        </Option>
+                        );
+                      })}
+                    </Select>
+                  ) : (
+                    <Input.TextArea 
+                      rows={3}
+                      placeholder={t('orders.delivery_address_placeholder') || 'Enter delivery address or select from existing addresses'} 
+                      style={{ resize: 'vertical' }}
+                    />
+                  )}
+                </Form.Item>
+              </Col>
+            </Row>
+
+            {/* Delivery Fee (Edit) */}
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="delivery_fee"
+                  label={t('orders.delivery_fee')}
+                >
+                  <InputNumber
+                    style={{ width: '100%' }}
+                    min={0}
+                    step={0.01}
+                    precision={2}
+                    placeholder="0.00"
+                    onChange={(value) => {
+                      // Recompute total preview when delivery fee changes
+                      const newTotal = (calculateOrderTotal() + (value || 0)).toFixed(2);
+                      orderForm.setFieldsValue({ total_amount: parseFloat(newTotal) });
+                    }}
+                  />
+                </Form.Item>
+                {shippingCalculation && (
+                  <div style={{ 
+                    marginTop: '-8px',
+                    padding: '8px 12px',
+                    backgroundColor: shippingCalculation.calculation_method === 'zone-fallback' ? '#fff7e6' : '#f6ffed',
+                    border: `1px solid ${shippingCalculation.calculation_method === 'zone-fallback' ? '#ffd591' : '#b7eb8f'}`,
+                    borderRadius: '6px',
+                    fontSize: '12px'
+                  }}>
+                    <div style={{ 
+                      color: shippingCalculation.calculation_method === 'zone-fallback' ? '#d46b08' : '#52c41a', 
+                      fontWeight: 'bold', 
+                      marginBottom: '4px' 
+                    }}>
+                      {shippingCalculation.calculation_method === 'zone-fallback' ? '⚠️ Default Zone Pricing' : '📍 Auto-calculated Shipping'}
+                    </div>
+                    <div style={{ color: '#595959' }}>
+                      Zone: {shippingCalculation.zone_name_en || shippingCalculation.zone_name} |
+                      {shippingCalculation.distance_km > 0 ? ` Distance: ${shippingCalculation.distance_km}km |` : ' Distance: Estimated |'}
+                      Base: {shippingCalculation.base_cost}AED
+                      {shippingCalculation.free_shipping_threshold && ` | Free over ${shippingCalculation.free_shipping_threshold}AED`}
+                    </div>
+                  </div>
+                )}
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="special_instructions"
+                  label={t('orders.special_instructions')}
+                >
+                  <TextArea rows={3} placeholder={t('orders.special_instructions_placeholder')} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="estimated_delivery_time"
+                  label={t('orders.estimated_delivery_time')}
+                >
+                  <DatePicker
+                    showTime
+                    style={{ width: '100%' }}
+                    placeholder={t('orders.select_delivery_time')}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          </Card>
+
+          {/* Order Items Management */}
+          <Card 
+            size="small" 
+            title={
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  {t('orders.order_items') || 'Order Items'} ({editOrderItems.length})
+                  {editOrderItems.length > 0 && (
+                    <span style={{ color: '#52c41a', marginLeft: 8 }}>
+                      • {t('orders.subtotal') || 'Subtotal'}: {formatPrice(calculateOrderTotal() + (parseFloat(orderForm.getFieldValue('delivery_fee')) || 0))}
+                    </span>
+                  )}
+                </span>
+                <Button 
+                  type="primary" 
+                  size="small" 
+                  icon={<PlusOutlined />}
+                  onClick={addItemToOrder}
+                >
+                  {t('orders.add_item') || 'Add Item'}
+                </Button>
+              </div>
+            }
+            style={{ marginBottom: 16 }}
           >
-            <TextArea rows={3} placeholder={t('orders.special_instructions_placeholder')} />
-          </Form.Item>
-
-          <Form.Item
-            name="estimated_delivery_time"
-            label={t('orders.estimated_delivery_time')}
-          >
-            <DatePicker
-              showTime
-              style={{ width: '100%' }}
-              placeholder={t('orders.select_delivery_time')}
-            />
-          </Form.Item>
-
-          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
-            <Space>
-              <Button onClick={() => {
-                setEditOrderVisible(false);
-                setEditingOrder(null);
-                orderForm.resetFields();
+            {editOrderItems.length === 0 ? (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '40px 20px',
+                backgroundColor: '#fafafa',
+                borderRadius: 8,
+                border: '2px dashed #d9d9d9'
               }}>
-                {t('common.cancel')}
-              </Button>
-              <Button type="primary" htmlType="submit" icon={<SaveOutlined />}>
-                {t('common.update')}
-              </Button>
-            </Space>
-          </Form.Item>
+                <ShoppingCartOutlined style={{ fontSize: 32, color: '#d9d9d9', marginBottom: 8 }} />
+                <div style={{ color: '#999', marginBottom: 16 }}>
+                  {t('orders.no_items_in_order') || 'No items in this order yet'}
+                </div>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />}
+                  onClick={addItemToOrder}
+                >
+                  {t('orders.add_first_item') || 'Add First Item'}
+                </Button>
+              </div>
+            ) : (
+              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {editOrderItems.map((item, index) => (
+                  <Card 
+                    key={item.id} 
+                    size="small" 
+                    style={{ 
+                      marginBottom: 12,
+                      border: '1px solid #e8e8e8',
+                      borderRadius: 8,
+                      backgroundColor: item.product_id ? '#fff' : '#fff7e6'
+                    }}
+                    bodyStyle={{ padding: '12px 16px' }}
+                  >
+                    <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text strong style={{ fontSize: '13px', color: '#1890ff' }}>
+                        {t('orders.item') || 'Item'} #{index + 1}
+                        {item.product_name && (
+                          <span style={{ color: '#666', fontWeight: 'normal', marginLeft: 8 }}>
+                            - {item.product_name}
+                          </span>
+                        )}
+                      </Text>
+                      {!item.product_id && (
+                        <Tag color="orange" size="small">
+                          {t('orders.incomplete_item') || 'Incomplete'}
+                        </Tag>
+                      )}
+                    </div>
+                    
+                    <Row gutter={16} align="middle">
+                      <Col xs={24} md={8}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: '12px', color: '#666' }}>
+                            {t('orders.product') || 'Product'} *
+                          </Text>
+                        </div>
+                        <Select
+                          style={{ width: '100%' }}
+                          placeholder={t('orders.select_product') || 'Select Product'}
+                          value={item.product_id}
+                          onChange={(value) => {
+                            updateOrderItem(item.id, 'product_id', value);
+                          }}
+                          showSearch
+                          filterOption={(input, option) => {
+                            const product = products.find(p => p.id === option.value);
+                            if (!product) return false;
+                            const productName = language === 'ar' ? 
+                              (product.title_ar || product.title_en || product.name) :
+                              (product.title_en || product.title_ar || product.name);
+                            return productName.toLowerCase().indexOf(input.toLowerCase()) >= 0;
+                          }}
+                          allowClear
+                          notFoundContent={products.length === 0 ? "Loading products..." : "No products found"}
+                        >
+                          {products.map(product => {
+                            // Use correct backend price fields
+                            const productPrice = product.final_price || product.sale_price || product.base_price || 0;
+                            console.log(`Product ${product.id} display price:`, {
+                              final_price: product.final_price,
+                              sale_price: product.sale_price, 
+                              base_price: product.base_price,
+                              calculated: productPrice,
+                              formatted: formatPrice(productPrice)
+                            });
+                            return (
+                            <Option key={product.id} value={product.id}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                                <span style={{ flex: 1 }}>
+                                  {language === 'ar' ? 
+                                    (product.title_ar || product.title_en || product.name) :
+                                    (product.title_en || product.title_ar || product.name)
+                                  }
+                                </span>
+                                <span style={{ color: '#52c41a', fontWeight: 'bold', marginLeft: '8px' }}>
+                                  {formatPrice(productPrice)}
+                                </span>
+                              </div>
+                            </Option>
+                            );
+                          })}
+                        </Select>
+                      </Col>
+
+                      <Col xs={12} md={4}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: '12px', color: '#666' }}>
+                            {t('orders.quantity') || 'Quantity'} *
+                          </Text>
+                        </div>
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          min={1}
+                          max={999}
+                          value={item.quantity}
+                          onChange={(value) => {
+                            updateOrderItem(item.id, 'quantity', value || 1);
+                            updateOrderItem(item.id, 'total_price', (value || 1) * item.unit_price);
+                          }}
+                          placeholder="1"
+                        />
+                      </Col>
+
+                      <Col xs={12} md={4}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: '12px', color: '#666' }}>
+                            {t('orders.unit_price') || 'Unit Price'} *
+                          </Text>
+                        </div>
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          min={0}
+                          step={0.01}
+                          precision={2}
+                          value={item.unit_price}
+                          onChange={(value) => {
+                            updateOrderItem(item.id, 'unit_price', value || 0);
+                            updateOrderItem(item.id, 'total_price', (value || 0) * item.quantity);
+                          }}
+                          formatter={value => `$ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                          parser={value => value.replace(/\$\s?|(,*)/g, '')}
+                          placeholder="0.00"
+                        />
+                      </Col>
+
+                      <Col xs={12} md={4}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: '12px', color: '#666' }}>
+                            {t('orders.item_total') || 'Item Total'}
+                          </Text>
+                        </div>
+                        <div style={{ 
+                          padding: '6px 11px',
+                          backgroundColor: '#f6ffed',
+                          border: '1px solid #b7eb8f',
+                          borderRadius: 6,
+                          textAlign: 'center',
+                          minHeight: '32px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
+                            {formatPrice(item.total_price || 0)}
+                          </Text>
+                        </div>
+                      </Col>
+
+                      <Col xs={12} md={4}>
+                        <div style={{ marginBottom: 8 }}>
+                          <Text strong style={{ fontSize: '12px', color: '#666' }}>
+                            {t('common.actions') || 'Actions'}
+                          </Text>
+                        </div>
+                        <Space size="small">
+                          <Tooltip title={t('orders.duplicate_item') || 'Duplicate Item'}>
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<CopyOutlined />}
+                              onClick={() => {
+                                const duplicatedItem = {
+                                  ...item,
+                                  id: Date.now() + Math.random()
+                                };
+                                setEditOrderItems([...editOrderItems, duplicatedItem]);
+                                message.success(t('orders.item_duplicated') || 'Item duplicated successfully');
+                              }}
+                              style={{ 
+                                border: '1px solid #d9d9d9',
+                                borderRadius: '4px'
+                              }}
+                            />
+                          </Tooltip>
+                          <Tooltip title={t('orders.remove_item') || 'Remove Item'}>
+                            <Button
+                              type="text"
+                              size="small"
+                              danger
+                              icon={<DeleteOutlined />}
+                              onClick={() => {
+                                Modal.confirm({
+                                  title: t('orders.confirm_remove_item') || 'Remove Item',
+                                  content: t('orders.confirm_remove_item_message') || 'Are you sure you want to remove this item from the order?',
+                                  okText: t('common.remove') || 'Remove',
+                                  cancelText: t('common.cancel') || 'Cancel',
+                                  okType: 'danger',
+                                  onOk: () => {
+                                    removeItemFromOrder(item.id);
+                                    message.success(t('orders.item_removed') || 'Item removed successfully');
+                                  }
+                                });
+                              }}
+                              style={{ 
+                                border: '1px solid #ff4d4f',
+                                borderRadius: '4px'
+                              }}
+                            />
+                          </Tooltip>
+                        </Space>
+                      </Col>
+                    </Row>
+                  </Card>
+                ))}
+              </div>
+            )}
+
+            {/* Order Summary */}
+            {editOrderItems.length > 0 && (
+              <Card 
+                size="small" 
+                style={{ 
+                  marginTop: 16,
+                  backgroundColor: '#f8f9fa',
+                  border: '1px solid #e9ecef'
+                }}
+              >
+                <Row justify="space-between" align="middle">
+                  <Col>
+                    <Space direction="vertical" size="small">
+                      <div>
+                        <Text strong>{t('orders.total_items') || 'Total Items'}: </Text>
+                        <Tag color="blue">{editOrderItems.length} {t('orders.items') || 'items'}</Tag>
+                      </div>
+                      <div>
+                        <Text strong>{t('orders.total_quantity') || 'Total Quantity'}: </Text>
+                        <Tag color="green">
+                          {editOrderItems.reduce((total, item) => total + Number(item.quantity || 0), 0)} {t('orders.pieces') || 'pieces'}
+                        </Tag>
+                      </div>
+                    </Space>
+                  </Col>
+                  <Col>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ marginBottom: 4 }}>
+                        <Text style={{ fontSize: '14px', color: '#666' }}>
+                          {t('orders.items_subtotal') || 'Items Subtotal'}:
+                        </Text>
+                      </div>
+                      <Text strong style={{ fontSize: '18px', color: '#52c41a' }}>
+                        {formatPrice(calculateOrderTotal() + (parseFloat(orderForm.getFieldValue('delivery_fee')) || 0))}
+                      </Text>
+                    </div>
+                  </Col>
+                </Row>
+              </Card>
+            )}
+          </Card>
+
+          {/* Form Actions */}
+          <Card size="small">
+            <Row justify="space-between" align="middle">
+              <Col>
+                <Space>
+                  <Button 
+                    onClick={() => {
+                      setEditOrderVisible(false);
+                      setEditingOrder(null);
+                      setEditOrderItems([]);
+                      orderForm.resetFields();
+                    }}
+                    icon={<CloseCircleOutlined />}
+                  >
+                    {t('common.cancel') || 'Cancel'}
+                  </Button>
+                  <Button 
+                    type="default"
+                    icon={<ReloadOutlined />}
+                    onClick={() => {
+                      Modal.confirm({
+                        title: t('orders.reset_items_confirm') || 'Reset Items',
+                        content: t('orders.reset_items_message') || 'Are you sure you want to reset all items to their original state? This will undo all changes made to the items.',
+                        okText: t('common.reset') || 'Reset',
+                        cancelText: t('common.cancel') || 'Cancel',
+                        okType: 'danger',
+                        onOk: () => {
+                          // Reset items to original state
+                          if (editingOrder && editingOrder.items) {
+                            const orderItems = editingOrder.items.map(item => ({
+                              id: item.id || Date.now() + Math.random(),
+                              product_id: item.product_id,
+                              product_name: item.product_name || item.product_title_en || item.product_title_ar || 'Unknown Product',
+                              quantity: Number(item.quantity || 1),
+                              unit_price: Number(item.unit_price || item.price || 0),
+                              total_price: Number(item.total_price || (item.unit_price || item.price || 0) * (item.quantity || 1))
+                            }));
+                            setEditOrderItems(orderItems);
+                            message.success(t('orders.items_reset_success') || 'Items have been reset to original state');
+                          } else {
+                            setEditOrderItems([]);
+                            message.success(t('orders.items_cleared_success') || 'All items have been cleared');
+                          }
+                        }
+                      });
+                    }}
+                  >
+                    {t('orders.reset_items') || 'Reset Items'}
+                  </Button>
+                </Space>
+              </Col>
+              <Col>
+                <Space>
+                  <Button 
+                    type="primary" 
+                    htmlType="submit" 
+                    icon={<SaveOutlined />}
+                    disabled={editOrderItems.length === 0}
+                    loading={loading}
+                  >
+                    {t('orders.update_order') || 'Update Order'}
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+            
+            {editOrderItems.length === 0 && (
+              <div style={{ 
+                marginTop: 12, 
+                padding: '8px 12px', 
+                backgroundColor: '#fff7e6', 
+                border: '1px solid #ffd591',
+                borderRadius: 4,
+                fontSize: '12px',
+                color: '#d46b08'
+              }}>
+                <ExclamationCircleOutlined style={{ marginRight: 4 }} />
+                {t('orders.no_items_warning') || 'Warning: Orders must have at least one item. Please add items before updating.'}
+              </div>
+            )}
+          </Card>
         </Form>
       </Modal>
 
@@ -1702,6 +4320,67 @@ const Orders = () => {
         }}
         t={t}
       />
+    </div>
+  );
+};
+
+// Shipping Calculation Display Component
+const ShippingCalculationDisplay = ({ shippingCalculation, loading = false }) => {
+  if (loading) {
+    return (
+      <div style={{ 
+        padding: '12px', 
+        backgroundColor: '#f6f6f6', 
+        borderRadius: '6px', 
+        border: '1px solid #d9d9d9',
+        marginTop: '8px'
+      }}>
+        <Spin size="small" />
+        <span style={{ marginLeft: '8px', fontSize: '13px', color: '#666' }}>
+          Calculating shipping cost...
+        </span>
+      </div>
+    );
+  }
+
+  if (!shippingCalculation) return null;
+
+  const { 
+    delivery_fee, 
+    free_shipping_applied, 
+    shipping_zone_name, 
+    distance_km, 
+    calculation_method 
+  } = shippingCalculation;
+
+  return (
+    <div style={{ 
+      padding: '12px', 
+      backgroundColor: free_shipping_applied ? '#f6ffed' : '#e6f7ff', 
+      borderRadius: '6px', 
+      border: `1px solid ${free_shipping_applied ? '#b7eb8f' : '#91d5ff'}`,
+      marginTop: '8px'
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        <Text strong style={{ color: free_shipping_applied ? '#52c41a' : '#1890ff', fontSize: '14px' }}>
+          🚚 Shipping: {formatPrice(delivery_fee)}
+          {free_shipping_applied && (
+            <Tag color="green" size="small" style={{ marginLeft: '8px' }}>
+              FREE SHIPPING!
+            </Tag>
+          )}
+        </Text>
+      </div>
+      
+      <div style={{ fontSize: '12px', color: '#666' }}>
+        <div>📍 Zone: {shipping_zone_name}</div>
+        {distance_km && (
+          <div>📏 Distance: {distance_km.toFixed(1)} km</div>
+        )}
+        {calculation_method && (
+          <div>⚙️ Method: {calculation_method}</div>
+        )}
+      </div>
     </div>
   );
 };

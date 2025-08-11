@@ -152,6 +152,30 @@ const productsService = {
     }
   },
 
+  // Update product sort order
+  async updateSortOrder(productId, sortOrder) {
+    try {
+      const response = await api.put(`/products/${productId}/sort-order`, {
+        sort_order: sortOrder
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update product sort order')
+    }
+  },
+
+  // Increment/Decrement product sort order
+  async adjustSortOrder(productId, direction) {
+    try {
+      const response = await api.put(`/products/${productId}/sort-order`, {
+        direction: direction // 'increment' or 'decrement'
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to adjust product sort order')
+    }
+  },
+
   // Get product reviews
   async getProductReviews(productId, params = {}) {
     try {
@@ -248,6 +272,43 @@ const productsService = {
       return response.data
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to fetch low stock products')
+    }
+  },
+
+  // Product Variants Management
+  async getProductVariants(productId) {
+    try {
+      const response = await api.get(`/products/${productId}/variants`)
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to fetch product variants')
+    }
+  },
+
+  async createProductVariant(productId, variantData) {
+    try {
+      const response = await api.post(`/products/${productId}/variants`, variantData)
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to create product variant')
+    }
+  },
+
+  async updateProductVariant(productId, variantId, variantData) {
+    try {
+      const response = await api.put(`/products/${productId}/variants/${variantId}`, variantData)
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update product variant')
+    }
+  },
+
+  async deleteProductVariant(productId, variantId) {
+    try {
+      const response = await api.delete(`/products/${productId}/variants/${variantId}`)
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to delete product variant')
     }
   }
 }

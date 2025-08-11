@@ -124,8 +124,8 @@ const MapAddressSelector = ({
     if (disabled) return;
     
     const location = {
-      lat: event.latLng.lat(),
-      lng: event.latLng.lng()
+      lat: Number(event.latLng.lat()),
+      lng: Number(event.latLng.lng())
     };
     
     updateMapLocation(location);
@@ -135,7 +135,13 @@ const MapAddressSelector = ({
   const updateMapLocation = (location) => {
     if (!map) return;
 
-    setSelectedLocation(location);
+    // Normalize coordinates to ensure they're numbers
+    const normalizedLocation = {
+      lat: Number(location.lat),
+      lng: Number(location.lng)
+    };
+
+    setSelectedLocation(normalizedLocation);
     
     // Remove existing marker
     if (marker) {
@@ -143,14 +149,14 @@ const MapAddressSelector = ({
     }
     
     // Add new marker
-    addMarker(location, map);
+    addMarker(normalizedLocation, map);
     
     // Center map on location
-    map.setCenter(location);
+    map.setCenter(normalizedLocation);
     
     // Notify parent component
     if (onLocationSelect) {
-      onLocationSelect(location);
+      onLocationSelect(normalizedLocation);
     }
   };
 
@@ -175,8 +181,8 @@ const MapAddressSelector = ({
     if (!disabled) {
       newMarker.addListener('dragend', (event) => {
         const newLocation = {
-          lat: event.latLng.lat(),
-          lng: event.latLng.lng()
+          lat: Number(event.latLng.lat()),
+          lng: Number(event.latLng.lng())
         };
         setSelectedLocation(newLocation);
         performReverseGeocoding(newLocation);
@@ -243,8 +249,8 @@ const MapAddressSelector = ({
                 country: addressData.country,
                 postal_code: addressData.postal_code,
                 full_address: addressData.formatted_address,
-                latitude: location.lat,
-                longitude: location.lng
+                latitude: Number(location.lat),
+                longitude: Number(location.lng)
               };
               
               onAddressChange(formattedAddress);
@@ -273,8 +279,8 @@ const MapAddressSelector = ({
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const location = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude
+          lat: Number(position.coords.latitude),
+          lng: Number(position.coords.longitude)
         };
         updateMapLocation(location);
         performReverseGeocoding(location);
@@ -448,9 +454,9 @@ const MapAddressSelector = ({
         )}
       </div>
       
-      {selectedLocation && (
+      {selectedLocation && selectedLocation.lat && selectedLocation.lng && (
         <div style={{ marginTop: 12, fontSize: '12px', color: '#666' }}>
-          <strong>{t ? t('map.coordinates') : 'Coordinates'}:</strong> {selectedLocation.lat.toFixed(6)}, {selectedLocation.lng.toFixed(6)}
+          <strong>{t ? t('map.coordinates') : 'Coordinates'}:</strong> {Number(selectedLocation.lat).toFixed(6)}, {Number(selectedLocation.lng).toFixed(6)}
         </div>
       )}
     </Card>

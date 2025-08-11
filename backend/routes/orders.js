@@ -46,7 +46,8 @@ const generateOrderNumber = async () => {
 
 /**
  * Calculate delivery fee using enhanced shipping system
- * Supports both legacy area-based and new distance-based calculation
+ * Supports both legacy area-based and new distance-based calculation.
+ * If coordinates are provided but branch_id is missing, automatically uses the nearest branch.
  */
 const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderAmount = 0) => {
   if (orderType === 'pickup') {
@@ -58,33 +59,87 @@ const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderA
   }
 
   try {
+    console.log('🚚 Delivery fee calculation started:', {
+      customerData,
+      orderType,
+      orderAmount,
+      hasCoordinates: !!(customerData.latitude && customerData.longitude),
+      hasBranchId: !!customerData.branch_id,
+      hasAreaId: !!customerData.area_id
+    });
+
     // Enhanced shipping calculation with coordinates
-    if (customerData.latitude && customerData.longitude && customerData.branch_id) {
-      const calculation = await shippingService.calculateShipping(
-        customerData.latitude,
-        customerData.longitude,
-        customerData.branch_id,
-        orderAmount
-      );
-      
-      return {
-        delivery_fee: calculation.total_shipping_cost,
-        calculation_method: 'distance_based',
-        distance_km: calculation.distance_km,
-        zone_name: calculation.zone?.name_en,
-        free_shipping_applied: calculation.free_shipping_applied,
-        shipping_calculation_id: calculation.calculation_id
-      };
+    if (customerData.latitude && customerData.longitude) {
+      // Use provided branch_id or auto-pick nearest branch when missing
+      let branchId = customerData.branch_id;
+      if (!branchId) {
+        console.log('🔍 No branch_id provided, finding nearest branch...');
+        try {
+          const nearest = await shippingService.getNearestBranch(
+            customerData.latitude,
+            customerData.longitude
+          );
+          branchId = nearest?.id;
+          console.log('🎯 Nearest branch found:', branchId);
+        } catch (e) {
+          console.log('⚠️ Nearest branch lookup failed:', e.message);
+          console.log('⚠️ Falling back to area-based calculation');
+          // Fall through to area-based if nearest branch lookup fails
+          branchId = null;
+        }
+      } else {
+        console.log('🏢 Using provided branch_id:', branchId);
+      }
+
+      if (branchId) {
+        console.log('📏 Calculating distance-based shipping from branch', branchId, 'to customer coordinates:', {
+          lat: customerData.latitude,
+          lng: customerData.longitude
+        });
+        
+        try {
+          const calculation = await shippingService.calculateShipping(
+            customerData.latitude,
+            customerData.longitude,
+            branchId,
+            orderAmount
+          );
+
+          console.log('✅ Distance-based calculation completed:', {
+            distance: calculation.distance_km,
+            zone: calculation.zone_name_en,
+            deliveryFee: calculation.total_cost,
+            fullCalculation: calculation
+          });
+
+          return {
+            delivery_fee: calculation.total_cost,
+            calculation_method: 'distance_based',
+            distance_km: calculation.distance_km,
+            zone_name: calculation.zone_name_en || calculation.zone?.name_en,
+            free_shipping_applied: calculation.free_shipping_applied,
+            shipping_calculation_id: calculation.calculation_id,
+            branch_id: branchId
+          };
+        } catch (shippingError) {
+          console.error('💥 Distance-based shipping calculation failed:', shippingError.message);
+          console.log('🔄 Falling back to area-based calculation');
+          // Continue to area-based fallback
+        }
+      }
     }
 
     // Fallback to legacy area-based calculation
     if (customerData.area_id) {
+      console.log('📍 Using area-based calculation for area_id:', customerData.area_id);
       const [area] = await executeQuery(
         'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
         [customerData.area_id]
       );
       
+      console.log('🏢 Area lookup result:', area);
       const areaFee = area ? parseFloat(area.delivery_fee) : 0;
+      console.log('💰 Area-based delivery fee calculated:', areaFee);
       
       return {
         delivery_fee: areaFee,
@@ -94,6 +149,7 @@ const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderA
     }
 
     // No delivery location provided
+    console.log('❌ No delivery location data provided - returning 0 fee');
     return {
       delivery_fee: 0,
       calculation_method: 'unknown',
@@ -101,28 +157,44 @@ const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderA
     };
 
   } catch (error) {
-    console.error('Error calculating delivery fee:', error);
+    console.error('💥 Error calculating delivery fee:', error.message);
+    console.error('📊 Error details:', {
+      customerData,
+      orderType,
+      orderAmount,
+      errorStack: error.stack
+    });
     
     // Fallback to area-based if distance calculation fails
     if (customerData.area_id) {
-      const [area] = await executeQuery(
-        'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
-        [customerData.area_id]
-      );
-      
-      const areaFee = area ? parseFloat(area.delivery_fee) : 0;
-      
-      return {
-        delivery_fee: areaFee,
-        calculation_method: 'area_based_fallback',
-        free_shipping_applied: false
-      };
+      console.log('🔄 Attempting area-based fallback calculation...');
+      try {
+        const [area] = await executeQuery(
+          'SELECT delivery_fee FROM areas WHERE id = ? AND is_active = 1',
+          [customerData.area_id]
+        );
+        
+        const areaFee = area ? parseFloat(area.delivery_fee) : 0;
+        console.log('✅ Fallback area-based fee calculated:', areaFee);
+        
+        return {
+          delivery_fee: areaFee,
+          calculation_method: 'area_based_fallback',
+          free_shipping_applied: false,
+          error_occurred: true
+        };
+      } catch (fallbackError) {
+        console.error('💥 Area-based fallback also failed:', fallbackError.message);
+      }
     }
 
+    // Ultimate fallback
+    console.log('⚠️ All delivery calculations failed, returning 0');
     return {
       delivery_fee: 0,
       calculation_method: 'error_fallback',
-      free_shipping_applied: false
+      free_shipping_applied: false,
+      error_occurred: true
     };
   }
 };
@@ -166,12 +238,29 @@ const applyPromoCode = async (code, subtotal, userId) => {
     }
   }
   
-  // Calculate discount
+  // Calculate discount based on promo type
   let discountAmount = 0;
-  if (promo.discount_type === 'percentage') {
-    discountAmount = subtotal * (promo.discount_value / 100);
-  } else {
-    discountAmount = promo.discount_value;
+  
+  switch (promo.discount_type) {
+    case 'percentage':
+      discountAmount = subtotal * (promo.discount_value / 100);
+      break;
+    case 'fixed_amount':
+      discountAmount = promo.discount_value;
+      break;
+    case 'free_shipping':
+      // Free shipping promos don't affect subtotal discount, handled separately
+      discountAmount = 0;
+      break;
+    case 'bxgy':
+      // Buy X Get Y promos need item-level calculation, for now treat as 0
+      // This should be implemented based on cart items
+      discountAmount = 0;
+      break;
+    default:
+      // Legacy support: treat unknown types as fixed amount
+      discountAmount = promo.discount_value;
+      break;
   }
   
   // Apply maximum discount limit
@@ -245,7 +334,7 @@ const validateAndCalculateOrderItems = async (items) => {
       }
       
       if (variant.stock_quantity < quantity) {
-        throw new Error(`Insufficient stock for variant "${variant.title_en}"`);
+        throw new Error(`Insufficient stock for variant with ID ${variant_id}`);
       }
       
       unitPrice = variant.price;
@@ -276,23 +365,25 @@ const validateAndCalculateOrderItems = async (items) => {
 };
 
 /**
- * Valid order status transitions
- */
-const validStatusTransitions = {
-  'pending': ['confirmed', 'cancelled'],
-  'confirmed': ['preparing', 'cancelled'],
-  'preparing': ['ready', 'cancelled'],
-  'ready': ['out_for_delivery', 'delivered', 'cancelled'],
-  'out_for_delivery': ['delivered', 'cancelled'],
-  'delivered': [],
-  'cancelled': []
-};
-
-/**
- * Check if status transition is valid
+ * Check if status transition is valid (relaxed for admin users)
  */
 const isValidStatusTransition = (currentStatus, newStatus) => {
-  return validStatusTransitions[currentStatus]?.includes(newStatus) || false;
+  // Allow all status transitions for admin users to provide more flexibility
+  // Only prevent transitions that are logically impossible
+  if (currentStatus === newStatus) {
+    return false; // No change
+  }
+  
+  // Allow most transitions except some logical restrictions
+  if (currentStatus === 'delivered' && newStatus !== 'cancelled') {
+    return false; // Can only cancel delivered orders
+  }
+  
+  if (currentStatus === 'cancelled' && newStatus === 'delivered') {
+    return false; // Cannot deliver cancelled orders
+  }
+  
+  return true; // Allow all other transitions
 };
 
 // =============================================================================
@@ -317,42 +408,49 @@ const sendOrderStatusNotification = async (order, newStatus, oldStatus) => {
         title_ar: 'تم تأكيد الطلب',
         message_en: `Your order #${order.order_number} has been confirmed and is being prepared.`,
         message_ar: `تم تأكيد طلبك رقم #${order.order_number} وجاري تحضيره.`,
-        type: 'order_confirmed'
+        type: 'order'
       },
       preparing: {
         title_en: 'Order Being Prepared',
         title_ar: 'جاري تحضير الطلب',
         message_en: `Your order #${order.order_number} is being prepared in our kitchen.`,
         message_ar: `جاري تحضير طلبك رقم #${order.order_number} في مطبخنا.`,
-        type: 'order_preparing'
+        type: 'order'
+      },
+      ready: {
+        title_en: 'Order Ready',
+        title_ar: 'الطلب جاهز',
+        message_en: `Your order #${order.order_number} is ready!`,
+        message_ar: `طلبك رقم #${order.order_number} جاهز!`,
+        type: 'order'
       },
       ready_for_pickup: {
         title_en: 'Order Ready for Pickup',
         title_ar: 'الطلب جاهز للاستلام',
         message_en: `Your order #${order.order_number} is ready for pickup!`,
         message_ar: `طلبك رقم #${order.order_number} جاهز للاستلام!`,
-        type: 'order_ready'
+        type: 'order'
       },
       out_for_delivery: {
         title_en: 'Order Out for Delivery',
         title_ar: 'الطلب في الطريق',
         message_en: `Your order #${order.order_number} is out for delivery and will arrive soon.`,
         message_ar: `طلبك رقم #${order.order_number} في الطريق وسيصل قريباً.`,
-        type: 'order_out_for_delivery'
+        type: 'order'
       },
       delivered: {
         title_en: 'Order Delivered',
         title_ar: 'تم توصيل الطلب',
         message_en: `Your order #${order.order_number} has been delivered. Enjoy your meal!`,
         message_ar: `تم توصيل طلبك رقم #${order.order_number}. نتمنى لك وجبة شهية!`,
-        type: 'order_delivered'
+        type: 'order'
       },
       cancelled: {
         title_en: 'Order Cancelled',
         title_ar: 'تم إلغاء الطلب',
         message_en: `Your order #${order.order_number} has been cancelled.`,
         message_ar: `تم إلغاء طلبك رقم #${order.order_number}.`,
-        type: 'order_cancelled'
+        type: 'order'
       }
     };
 
@@ -466,7 +564,17 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
         u.first_name, u.last_name, u.email as user_email,
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
         pc.code as promo_code,
-        CONCAT(addr.name, ', ', c.title_en, ', ', a.title_en) as delivery_address,
+        addr.name as address_name, 
+        addr.building_no, 
+        addr.floor_no, 
+        addr.apartment_no, 
+        addr.details as address_details,
+        addr.latitude as address_latitude,
+        addr.longitude as address_longitude,
+        c.title_ar as city_title_ar, 
+        c.title_en as city_title_en,
+        a.title_ar as area_title_ar, 
+        a.title_en as area_title_en,
         (SELECT COUNT(*) FROM order_items oi WHERE oi.order_id = o.id) as items_count
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
@@ -481,9 +589,52 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
 
     const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
 
+    // Transform the data to structure delivery address properly
+    const transformedData = result.data.map(order => {
+      const transformed = { ...order };
+      
+      // Structure delivery address object if delivery address fields exist
+      if (order.address_name || order.city_title_en || order.area_title_en) {
+        transformed.delivery_address = {
+          full_name: order.address_name || '',
+          address_line: [
+            order.building_no ? `Building ${order.building_no}` : '',
+            order.floor_no ? `Floor ${order.floor_no}` : '',
+            order.apartment_no ? `Apt ${order.apartment_no}` : '',
+            order.address_details
+          ].filter(Boolean).join(', ') || order.address_details || 'Address details not available',
+          city: order.city_title_en || '',
+          city_ar: order.city_title_ar || '',
+          area: order.area_title_en || '',
+          area_ar: order.area_title_ar || '',
+          governorate: order.city_title_en || '', // Use city as governorate since no governorate table
+          governorate_ar: order.city_title_ar || '',
+          latitude: order.address_latitude || null,
+          longitude: order.address_longitude || null
+        };
+      } else {
+        transformed.delivery_address = null;
+      }
+      
+      // Clean up the individual address fields from the main object
+      delete transformed.address_name;
+      delete transformed.building_no;
+      delete transformed.floor_no;
+      delete transformed.apartment_no;
+      delete transformed.address_details;
+      delete transformed.address_latitude;
+      delete transformed.address_longitude;
+      delete transformed.city_title_ar;
+      delete transformed.city_title_en;
+      delete transformed.area_title_ar;
+      delete transformed.area_title_en;
+      
+      return transformed;
+    });
+
     res.json({
       success: true,
-      data: result.data,
+      data: transformedData,
       pagination: result.pagination
     });
 
@@ -507,10 +658,19 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
         b.phone as branch_phone, b.address_ar as branch_address_ar, b.address_en as branch_address_en,
         pc.code as promo_code, pc.title_ar as promo_title_ar, pc.title_en as promo_title_en,
-        addr.name as address_name, addr.building_no, addr.floor_no, addr.apartment_no, addr.details as address_details,
-        c.title_ar as city_title_ar, c.title_en as city_title_en,
-        a.title_ar as area_title_ar, a.title_en as area_title_en,
-        s.title_ar as street_title_ar, s.title_en as street_title_en
+        addr.name as address_name, 
+        addr.building_no, 
+        addr.floor_no, 
+        addr.apartment_no, 
+        addr.details as address_details,
+        addr.latitude as address_latitude,
+        addr.longitude as address_longitude,
+        c.title_ar as city_title_ar, 
+        c.title_en as city_title_en,
+        a.title_ar as area_title_ar, 
+        a.title_en as area_title_en,
+        s.title_ar as street_title_ar, 
+        s.title_en as street_title_en
       FROM orders o
       LEFT JOIN users u ON o.user_id = u.id
       LEFT JOIN branches b ON o.branch_id = b.id
@@ -544,12 +704,9 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       SELECT 
         oi.*,
         p.title_ar as product_title_ar, p.title_en as product_title_en,
-        p.main_image as product_image, p.sku as product_sku,
-        pv.title_ar as variant_title_ar, pv.title_en as variant_title_en,
-        pv.sku as variant_sku
+        p.main_image as product_image, p.sku as product_sku
       FROM order_items oi
       LEFT JOIN products p ON oi.product_id = p.id
-      LEFT JOIN product_variants pv ON oi.variant_id = pv.id
       WHERE oi.order_id = ?
       ORDER BY oi.id ASC
     `, [req.params.id]);
@@ -564,6 +721,44 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       WHERE osh.order_id = ?
       ORDER BY osh.created_at ASC
     `, [req.params.id]);
+
+    // Structure delivery address object if delivery address fields exist
+    if (order.address_name || order.city_title_en || order.area_title_en) {
+      order.delivery_address = {
+        full_name: order.address_name || '',
+        address_line: [
+          order.building_no ? `Building ${order.building_no}` : '',
+          order.floor_no ? `Floor ${order.floor_no}` : '',
+          order.apartment_no ? `Apt ${order.apartment_no}` : '',
+          order.address_details
+        ].filter(Boolean).join(', ') || order.address_details || 'Address details not available',
+        city: order.city_title_en || '',
+        city_ar: order.city_title_ar || '',
+        area: order.area_title_en || '',
+        area_ar: order.area_title_ar || '',
+        governorate: order.city_title_en || '', // Use city as governorate since no governorate table
+        governorate_ar: order.city_title_ar || '',
+        latitude: order.address_latitude || null,
+        longitude: order.address_longitude || null
+      };
+      
+      // Clean up the individual address fields from the main object
+      delete order.address_name;
+      delete order.building_no;
+      delete order.floor_no;
+      delete order.apartment_no;
+      delete order.address_details;
+      delete order.address_latitude;
+      delete order.address_longitude;
+      delete order.city_title_ar;
+      delete order.city_title_en;
+      delete order.area_title_ar;
+      delete order.area_title_en;
+      delete order.street_title_ar;
+      delete order.street_title_en;
+    } else {
+      order.delivery_address = null;
+    }
 
     res.json({
       success: true,
@@ -586,17 +781,50 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
  */
 router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, next) => {
   try {
+    console.log('🧮 Order calculation request received:', {
+      body: req.body,
+      user: req.user ? `User ID: ${req.user.id}` : 'No user (guest)',
+      timestamp: new Date().toISOString()
+    });
+
     const {
       items,
       delivery_address_id,
+  delivery_coordinates,
       guest_delivery_address,
       order_type = 'delivery',
       promo_code,
       points_to_use = 0,
-      is_guest = false
+      is_guest = false,
+      branch_id // Add branch_id parameter for proper delivery calculation
     } = req.body;
 
+    console.log('📋 Extracted parameters:', {
+      items_count: items?.length || 0,
+      delivery_address_id,
+      guest_delivery_address: guest_delivery_address ? 'Provided' : 'Not provided',
+      order_type,
+      branch_id,
+      is_guest
+    });
+
     const isGuestOrder = is_guest || !req.user;
+
+    // Validate branch if provided (required for accurate delivery calculation)
+    if (branch_id) {
+      const [branch] = await executeQuery(
+        'SELECT id FROM branches WHERE id = ? AND is_active = 1',
+        [branch_id]
+      );
+
+      if (!branch) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid branch selected',
+          message_ar: 'فرع غير صالح'
+        });
+      }
+    }
 
     // Validate and calculate items
     const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items);
@@ -604,43 +832,98 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
     // Calculate delivery fee
     let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
     
+    console.log('🚚 Starting delivery fee calculation for /calculate endpoint:', {
+      order_type,
+      has_branch_id: !!branch_id,
+      branch_id,
+      delivery_address_id,
+      has_guest_delivery_address: !!guest_delivery_address,
+      isGuestOrder,
+      subtotal
+    });
+    
     if (order_type === 'delivery') {
-      if (isGuestOrder && guest_delivery_address) {
+      console.log('📍 Order type is delivery, proceeding with fee calculation...');
+      
+      if (!branch_id) {
+        console.log('⚠️ Warning: No branch_id provided for delivery calculation');
+        return res.status(400).json({
+          success: false,
+          message: 'Branch ID is required for delivery fee calculation'
+        });
+      }
+      // Highest priority: explicit coordinates provided by client (e.g., mobile app)
+      if (delivery_coordinates && delivery_coordinates.latitude && delivery_coordinates.longitude) {
+        const customerData = {
+          latitude: Number(delivery_coordinates.latitude),
+          longitude: Number(delivery_coordinates.longitude),
+          branch_id: branch_id,
+          area_id: delivery_coordinates.area_id || null
+        };
+        console.log('🧭 Using provided delivery_coordinates for calculation:', customerData);
+        deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
+      } else if (isGuestOrder && guest_delivery_address) {
         // Handle both string and object formats for guest_delivery_address
         if (typeof guest_delivery_address === 'object' && guest_delivery_address.latitude && guest_delivery_address.longitude) {
           // For guest orders with address coordinates (object format)
           const customerData = {
             latitude: guest_delivery_address.latitude,
             longitude: guest_delivery_address.longitude,
-            branch_id: guest_delivery_address.branch_id,
+            branch_id: branch_id, // Use the selected branch from the order
             area_id: guest_delivery_address.area_id
           };
           deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
         } else {
-          // For guest orders with text address only (string format) - use default delivery fee
+          // For guest orders with text address only (string format) - use default delivery fee with branch context
           console.log('Guest delivery address is text format, using default delivery fee');
-          deliveryCalculation = await calculateDeliveryFee({}, order_type, subtotal);
+          deliveryCalculation = await calculateDeliveryFee({ branch_id: branch_id }, order_type, subtotal);
         }
       } else if (delivery_address_id) {
-        // For registered user orders
-        const [address] = await executeQuery(`
-          SELECT area_id, latitude, longitude, shipping_zone_id
-          FROM user_addresses 
-          WHERE id = ? AND user_id = ?
-        `, [delivery_address_id, req.user.id]);
+        // For registered user orders (admins can use any address_id)
+        console.log('🏠 Looking up delivery address:', {
+          delivery_address_id,
+          user_id: req.user.id,
+          user_type: req.user.user_type
+        });
+
+        let addressRows;
+        if (['admin', 'staff'].includes(req.user?.user_type)) {
+          // Admin/Staff can fetch any address by ID (calculation-only, does not change ownership)
+          addressRows = await executeQuery(`
+            SELECT area_id, latitude, longitude, shipping_zone_id, user_id
+            FROM user_addresses
+            WHERE id = ?
+          `, [delivery_address_id]);
+        } else {
+          // Customers can only use their own addresses
+          addressRows = await executeQuery(`
+            SELECT area_id, latitude, longitude, shipping_zone_id, user_id
+            FROM user_addresses 
+            WHERE id = ? AND user_id = ?
+          `, [delivery_address_id, req.user.id]);
+        }
+
+        const [address] = addressRows || [];
+        console.log('📍 Address lookup result:', address);
         
         if (address) {
+          const hasCoords = !!(address.latitude && address.longitude);
           const customerData = {
-            latitude: address.latitude,
-            longitude: address.longitude,
-            branch_id: null, // Will use nearest branch
+            latitude: hasCoords ? address.latitude : undefined,
+            longitude: hasCoords ? address.longitude : undefined,
+            branch_id: branch_id,
             area_id: address.area_id
           };
+
+          console.log('🧮 Calling calculateDeliveryFee with:', customerData);
           deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
+          console.log('💰 Delivery calculation result:', deliveryCalculation);
+        } else {
+          console.log('❌ No address found for delivery_address_id:', delivery_address_id, 'user_id:', req.user.id);
         }
       } else {
         // Fallback for legacy orders without address coordinates
-        deliveryCalculation = await calculateDeliveryFee({}, order_type, subtotal);
+        deliveryCalculation = await calculateDeliveryFee({ branch_id: branch_id }, order_type, subtotal);
       }
     }
     
@@ -734,12 +1017,34 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       });
     }
 
-    if (!branch_id || !customer_name || !customer_phone) {
+    // Relaxed validation - more flexible for admin-created orders
+    if (!branch_id) {
       return res.status(400).json({
         success: false,
-        message: 'Branch, customer name, and phone are required',
-        message_ar: 'الفرع واسم العميل والهاتف مطلوبة'
+        message: 'Branch is required',
+        message_ar: 'الفرع مطلوب'
       });
+    }
+
+    // For admin-created orders, allow more flexibility
+    if (req.user && req.user.user_type === 'admin') {
+      // Admin can create orders with minimal info
+      if (!customer_name) {
+        return res.status(400).json({
+          success: false,
+          message: 'Customer name is required',
+          message_ar: 'اسم العميل مطلوب'
+        });
+      }
+    } else {
+      // For regular/guest orders, require more strict validation
+      if (!customer_name || !customer_phone) {
+        return res.status(400).json({
+          success: false,
+          message: 'Customer name and phone are required',
+          message_ar: 'اسم العميل والهاتف مطلوبان'
+        });
+      }
     }
 
     // Validate branch
@@ -833,13 +1138,16 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         const customerData = {
           latitude: addressDetails.latitude,
           longitude: addressDetails.longitude,
-          branch_id: null, // Will find nearest branch
+          branch_id: branch_id, // Use the selected branch from the order
           area_id: addressDetails.area_id
         };
         deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
       } else {
-        // Fallback to area-based calculation
-        const customerData = { area_id: addressAreaId };
+        // Fallback to area-based calculation with branch context
+        const customerData = { 
+          area_id: addressAreaId,
+          branch_id: branch_id // Include branch for potential calculation improvements
+        };
         deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
       }
     }
@@ -982,6 +1290,44 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       WHERE o.id = ?
     `, [orderId]);
 
+    // Emit socket event for new order
+    if (global.socketManager) {
+      global.socketManager.broadcastNewOrder({
+        orderId: newOrder.id,
+        orderNumber: newOrder.order_number,
+        customerName: newOrder.customer_name,
+        customerPhone: newOrder.customer_phone,
+        customerEmail: newOrder.customer_email,
+        orderType: newOrder.order_type,
+        paymentMethod: newOrder.payment_method,
+        paymentStatus: newOrder.payment_status,
+        orderTotal: newOrder.total_amount,
+        createdAt: newOrder.created_at,
+        itemsCount: items.length,
+        items: items,
+        branchTitle: newOrder.title_en || newOrder.title_ar,
+        ...newOrder
+      });
+      
+      // Send notification to admins
+      global.socketManager.sendNotificationToAdmins({
+        type: 'info',
+        message: `New order #${orderNumber} received from ${customer_name}`,
+        timestamp: new Date().toISOString(),
+        orderId: orderId,
+        orderNumber: orderNumber
+      });
+
+      // Update admin dashboard counts for new pending order
+      const pendingCount = await executeQuery(
+        'SELECT COUNT(*) as count FROM orders WHERE order_status = "pending"'
+      );
+      global.socketManager.emitToAdmins('orderCountsUpdated', {
+        pendingOrders: pendingCount[0].count,
+        lastUpdated: new Date().toISOString()
+      });
+    }
+
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
@@ -1015,7 +1361,10 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
       special_instructions,
       estimated_delivery_time,
       delivery_address_id,
-      order_type
+      order_type,
+      items,
+      subtotal,
+      total_amount
     } = req.body;
 
     // Get current order
@@ -1082,9 +1431,34 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
         estimated_delivery_time = COALESCE(?, estimated_delivery_time),
         delivery_address_id = COALESCE(?, delivery_address_id),
         order_type = COALESCE(?, order_type),
+        subtotal = COALESCE(?, subtotal),
+        total_amount = COALESCE(?, total_amount),
         updated_at = NOW()
       WHERE id = ?
-    `, [customer_name, customer_phone, customer_email, special_instructions, estimated_delivery_time, delivery_address_id, order_type, req.params.id]);
+    `, [customer_name, customer_phone, customer_email, special_instructions, estimated_delivery_time, delivery_address_id, order_type, subtotal, total_amount, req.params.id]);
+
+    // Update order items if provided
+    if (items && Array.isArray(items)) {
+      // Delete existing order items
+      await executeQuery('DELETE FROM order_items WHERE order_id = ?', [req.params.id]);
+      
+      // Insert new order items
+      for (const item of items) {
+        if (item.product_id && item.quantity && item.unit_price) {
+          await executeQuery(`
+            INSERT INTO order_items (
+              order_id, product_id, quantity, unit_price, total_price
+            ) VALUES (?, ?, ?, ?, ?)
+          `, [
+            req.params.id,
+            item.product_id,
+            item.quantity,
+            item.unit_price,
+            item.total_price || (item.quantity * item.unit_price)
+          ]);
+        }
+      }
+    }
 
     // Get updated order
     const [updatedOrder] = await executeQuery(`
@@ -1141,14 +1515,8 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       });
     }
 
-    // Validate status transition
-    if (!isValidStatusTransition(currentOrder.order_status, status)) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot change status from ${currentOrder.order_status} to ${status}`,
-        message_ar: 'لا يمكن تغيير حالة الطلب'
-      });
-    }
+    // Allow any status change for admin flexibility - removed strict transitions
+    // This gives admins full control over order status management
 
     const queries = [
       {
@@ -1207,6 +1575,37 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
 
     // Send notification to customer about status change
     await sendOrderStatusNotification(updatedOrder, status, currentOrder.order_status);
+
+    // Emit socket events for real-time updates
+    if (global.socketManager) {
+      // Emit order status update to all admin users
+      global.socketManager.emitToAdmins('orderStatusUpdated', {
+        orderId: updatedOrder.id,
+        previousStatus: currentOrder.order_status,
+        newStatus: updatedOrder.order_status,
+        customerName: updatedOrder.customer_name,
+        orderTotal: updatedOrder.total_amount,
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user.username || req.user.email
+      });
+
+      // Emit to specific customer if they are connected
+      global.socketManager.emitToUser(updatedOrder.user_id, 'orderStatusChanged', {
+        orderId: updatedOrder.id,
+        status: updatedOrder.order_status,
+        customerMessage: `Your order #${updatedOrder.id} status has been updated to: ${updatedOrder.order_status}`,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Update admin dashboard counts
+      const pendingCount = await executeQuery(
+        'SELECT COUNT(*) as count FROM orders WHERE order_status = "pending"'
+      );
+      global.socketManager.emitToAdmins('orderCountsUpdated', {
+        pendingOrders: pendingCount[0].count,
+        lastUpdated: new Date().toISOString()
+      });
+    }
 
     res.json({
       success: true,
@@ -1320,6 +1719,36 @@ router.delete('/:id', authenticate, validateId, async (req, res, next) => {
 
     // Send notification to customer about order cancellation
     await sendOrderStatusNotification(currentOrder, 'cancelled', currentOrder.order_status);
+
+    // Emit socket events for real-time updates
+    if (global.socketManager) {
+      // Emit order cancellation to all admin users
+      global.socketManager.emitToAdmins('orderCancelled', {
+        orderId: currentOrder.id,
+        customerName: currentOrder.customer_name,
+        orderTotal: currentOrder.total_amount,
+        cancellationReason: reason || 'Cancelled by user',
+        cancelledBy: req.user.user_type === 'customer' ? 'Customer' : req.user.username || req.user.email,
+        cancelledAt: new Date().toISOString()
+      });
+
+      // Emit to specific customer if they are connected
+      global.socketManager.emitToUser(currentOrder.user_id, 'orderCancelled', {
+        orderId: currentOrder.id,
+        customerMessage: `Your order #${currentOrder.id} has been cancelled`,
+        reason: reason || 'Cancelled by user',
+        cancelledAt: new Date().toISOString()
+      });
+
+      // Update admin dashboard counts
+      const pendingCount = await executeQuery(
+        'SELECT COUNT(*) as count FROM orders WHERE order_status = "pending"'
+      );
+      global.socketManager.emitToAdmins('orderCountsUpdated', {
+        pendingOrders: pendingCount[0].count,
+        lastUpdated: new Date().toISOString()
+      });
+    }
 
     res.json({
       success: true,
@@ -1787,47 +2216,16 @@ router.get('/stats', authenticate, authorize('admin', 'staff'), async (req, res,
  * @route   GET /api/orders/recent
  * @desc    Get recent orders since timestamp for real-time updates
  * @access  Private
+ * @deprecated This endpoint is deprecated - real-time updates now use Socket.IO
  */
 router.get('/recent', authenticate, async (req, res, next) => {
   try {
-    const { since } = req.query;
-
-    if (!since) {
-      return res.status(400).json({
-        success: false,
-        message: 'Since timestamp is required',
-        message_ar: 'الطابع الزمني مطلوب'
-      });
-    }
-
-    const sinceDate = new Date(parseInt(since));
-    let whereConditions = ['o.created_at > ?'];
-    let queryParams = [sinceDate];
-
-    // Role-based filtering
-    if (req.user.user_type === 'customer') {
-      whereConditions.push('o.user_id = ?');
-      queryParams.push(req.user.id);
-    }
-
-    const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
-
-    const recentOrders = await executeQuery(`
-      SELECT 
-        o.id, o.order_number, o.customer_name, o.order_status, 
-        o.total_amount, o.created_at,
-        b.title_en as branch_name
-      FROM orders o
-      LEFT JOIN branches b ON o.branch_id = b.id
-      ${whereClause}
-      ORDER BY o.created_at DESC
-      LIMIT 10
-    `, queryParams);
-
+    // This endpoint is deprecated - return empty array for now to avoid breaking existing clients
     res.json({
       success: true,
-      data: recentOrders,
-      count: recentOrders.length
+      message: 'This endpoint is deprecated. Real-time updates now use Socket.IO.',
+      data: [],
+      count: 0
     });
 
   } catch (error) {
@@ -2055,11 +2453,9 @@ router.get('/export', authenticate, authorize('admin', 'staff'), async (req, res
       const items = await executeQuery(`
         SELECT 
           oi.quantity, oi.unit_price, oi.total_price,
-          p.title_en as product_name, p.sku as product_sku,
-          pv.title_en as variant_name, pv.sku as variant_sku
+          p.title_en as product_name, p.sku as product_sku
         FROM order_items oi
         LEFT JOIN products p ON oi.product_id = p.id
-        LEFT JOIN product_variants pv ON oi.variant_id = pv.id
         WHERE oi.order_id = (SELECT id FROM orders WHERE order_number = ?)
       `, [order.order_number]);
       

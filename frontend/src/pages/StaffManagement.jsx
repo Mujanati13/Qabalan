@@ -89,9 +89,9 @@ const StaffManagement = () => {
   
   const sanitizeInput = (value) => {
     if (typeof value === 'string') {
-      return value.trim();
+      return value.trim() || null;
     }
-    return value;
+    return value || null;
   };
   
   // Centralized error handler
@@ -106,11 +106,37 @@ const StaffManagement = () => {
     
     console.error(`Error in ${operation}:`, error);
     
-    // Extract meaningful error message
+    // Extract detailed error information from server response
     let errorMessage = 'An unexpected error occurred';
+    let serverErrors = [];
     
-    if (error?.response?.data?.message) {
-      errorMessage = error.response.data.message;
+    if (error?.response?.data) {
+      const errorData = error.response.data;
+      
+      // Check for validation errors array
+      if (errorData.errors && Array.isArray(errorData.errors)) {
+        serverErrors = errorData.errors;
+        errorMessage = 'Validation failed. Please check the following:';
+      }
+      // Check for single error message
+      else if (errorData.message) {
+        errorMessage = errorData.message;
+        
+        // Handle specific error types
+        if (errorData.message.includes('Duplicate entry')) {
+          if (errorData.message.includes('phone')) {
+            errorMessage = 'Phone number already exists. Please use a different phone number.';
+          } else if (errorData.message.includes('email')) {
+            errorMessage = 'Email address already exists. Please use a different email address.';
+          } else {
+            errorMessage = 'Duplicate entry detected. Please check your input and try again.';
+          }
+        }
+      }
+      // Check for error field
+      else if (errorData.error) {
+        errorMessage = errorData.error;
+      }
     } else if (error?.message) {
       errorMessage = error.message;
     } else if (typeof error === 'string') {
@@ -126,9 +152,25 @@ const StaffManagement = () => {
       if (showNotification) {
         notification.error({
           message: `${operation} Failed`,
-          description: errorMessage,
-          duration: 5,
+          description: (
+            <div>
+              <div style={{ marginBottom: serverErrors.length > 0 ? 8 : 0 }}>
+                {errorMessage}
+              </div>
+              {serverErrors.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {serverErrors.map((err, index) => (
+                    <li key={index} style={{ fontSize: '12px' }}>
+                      {typeof err === 'object' ? err.msg || err.message || JSON.stringify(err) : err}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ),
+          duration: 6,
           placement: 'topRight',
+          style: { width: 400 }
         });
       } else if (showMessage) {
         message.error(`${operation}: ${errorMessage}`);
@@ -656,6 +698,12 @@ const StaffManagement = () => {
         throw new Error('Please enter a valid email address');
       }
       
+      // Debug: Log sanitized values before sending to server
+      console.log('Sending staff data to server:', {
+        ...sanitizedValues,
+        password: sanitizedValues.password ? '[HIDDEN]' : 'not provided'
+      });
+      
       // Check for duplicate email (basic client-side check)
       if (!editMode) {
         const existingStaff = staff.find(member => 
@@ -663,6 +711,16 @@ const StaffManagement = () => {
         );
         if (existingStaff) {
           throw new Error('A staff member with this email already exists');
+        }
+        
+        // Check for duplicate phone number if provided
+        if (sanitizedValues.phone && sanitizedValues.phone.trim()) {
+          const existingPhone = staff.find(member => 
+            member.phone && member.phone === sanitizedValues.phone.trim()
+          );
+          if (existingPhone) {
+            throw new Error('A staff member with this phone number already exists');
+          }
         }
       }
       
@@ -707,10 +765,61 @@ const StaffManagement = () => {
       setRetryAttempts(prev => ({ ...prev, [operation]: 0 }));
       
     } catch (error) {
-      handleError(error, operation, { 
-        showNotification: true,
-        customMessage: `Failed to ${editMode ? 'update' : 'create'} staff member. Please check the information and try again.`
+      // Extract server error message
+      let errorMessage = `Failed to ${editMode ? 'update' : 'create'} staff member`;
+      let errorType = 'Unknown Error';
+      
+      console.error('Staff operation error details:', {
+        error,
+        response: error?.response,
+        status: error?.response?.status,
+        data: error?.response?.data
       });
+      
+      if (error?.response?.data?.error) {
+        errorMessage = error.response.data.error;
+        errorType = 'Server Error';
+      } else if (error?.response?.data?.message) {
+        errorMessage = error.response.data.message;
+        errorType = 'Server Error';
+      } else if (error?.response?.status === 400) {
+        errorMessage = 'Invalid data provided. Please check all fields and try again.';
+        errorType = 'Validation Error';
+      } else if (error?.response?.status === 409) {
+        errorMessage = 'Duplicate data found. Email or phone number may already exist.';
+        errorType = 'Duplicate Data';
+      } else if (error?.response?.status >= 500) {
+        errorMessage = 'Server error occurred. Please try again later.';
+        errorType = 'Server Error';
+      } else if (error?.message) {
+        errorMessage = error.message;
+        errorType = 'Client Error';
+      }
+      
+      // Show detailed error notification
+      notification.error({
+        message: `${operation} Failed - ${errorType}`,
+        description: (
+          <div>
+            <div style={{ marginBottom: 8 }}>{errorMessage}</div>
+            {error?.response?.status && (
+              <div style={{ fontSize: '12px', color: '#666' }}>
+                Status Code: {error.response.status}
+              </div>
+            )}
+          </div>
+        ),
+        duration: 10,
+        placement: 'topRight',
+      });
+      
+      // Also track for retry if it's a server error
+      if (error?.response?.status >= 500) {
+        handleError(error, operation, { 
+          silent: true, // Don't show duplicate notification
+          retryable: true
+        });
+      }
     } finally {
       setLoading(false);
       setOperationLoadingState(operation, false);
@@ -838,6 +947,17 @@ const StaffManagement = () => {
     try {
       setLoading(true);
       
+      // Validate for duplicate role names (client-side check)
+      if (!editMode) {
+        const existingRole = roles.find(role => 
+          role.name.toLowerCase() === values.name.toLowerCase() ||
+          role.display_name.toLowerCase() === values.display_name.toLowerCase()
+        );
+        if (existingRole) {
+          throw new Error('A role with this name or display name already exists');
+        }
+      }
+      
       // Convert form permissions to API format
       const permissions = [];
       permissionModules.forEach(module => {
@@ -872,7 +992,55 @@ const StaffManagement = () => {
       setRoleVisible(false);
       fetchRoles();
     } catch (error) {
-      message.error('Failed to save role: ' + error.message);
+      // Extract server error message for roles
+      let errorMessage = `Failed to ${editMode ? 'update' : 'create'} role`;
+      let errorType = 'Unknown Error';
+      
+      console.error('Role operation error details:', {
+        error,
+        response: error?.response,
+        status: error?.response?.status,
+        data: error?.response?.data
+      });
+      
+      if (error?.response?.data?.error) {
+        errorMessage = error.response.data.error;
+        errorType = 'Server Error';
+      } else if (error?.response?.data?.message) {
+        errorMessage = error.response.data.message;
+        errorType = 'Server Error';
+      } else if (error?.response?.status === 400) {
+        errorMessage = 'Invalid role data provided. Please check all fields and try again.';
+        errorType = 'Validation Error';
+      } else if (error?.response?.status === 409) {
+        errorMessage = 'Role name already exists. Please choose a different name.';
+        errorType = 'Duplicate Role';
+      } else if (error?.response?.status >= 500) {
+        errorMessage = 'Server error occurred. Please try again later.';
+        errorType = 'Server Error';
+      } else if (error?.message) {
+        errorMessage = error.message;
+        errorType = 'Client Error';
+      }
+      
+      // Show detailed error notification
+      notification.error({
+        message: `${editMode ? 'Update' : 'Create'} Role Failed - ${errorType}`,
+        description: (
+          <div>
+            <div style={{ marginBottom: 8 }}>{errorMessage}</div>
+            {error?.response?.status && (
+              <div style={{ fontSize: '12px', color: '#666' }}>
+                Status Code: {error.response.status}
+              </div>
+            )}
+          </div>
+        ),
+        duration: 10,
+        placement: 'topRight',
+      });
+      
+      console.error('Role operation error:', error);
     } finally {
       setLoading(false);
     }
@@ -1866,8 +2034,25 @@ const StaffManagement = () => {
               <Form.Item
                 label="Phone"
                 name="phone"
+                rules={[
+                  { 
+                    pattern: /^[0-9+\-\s()]+$/, 
+                    message: 'Please enter a valid phone number' 
+                  },
+                  {
+                    min: 10,
+                    message: 'Phone number must be at least 10 digits'
+                  },
+                  {
+                    max: 15,
+                    message: 'Phone number must not exceed 15 digits'
+                  }
+                ]}
               >
-                <Input disabled={selectedStaff && !editMode} />
+                <Input 
+                  disabled={selectedStaff && !editMode} 
+                  placeholder="e.g. 0606690217"
+                />
               </Form.Item>
             </Col>
           </Row>

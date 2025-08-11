@@ -18,11 +18,13 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3005,
-    open: true,
+    port: 3006,
+    host: '0.0.0.0', // Allow external connections
+    open: false,     // Don't try to open browser
+    strictPort: true, // Exit if port is already in use
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3015', // Match your backend port
         changeOrigin: true,
         secure: false
       }

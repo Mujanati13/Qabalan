@@ -295,10 +295,19 @@ router.post('/admin/tickets/:id/replies', authenticate, upload.array('attachment
     const { message, is_internal_note = false } = req.body;
     const attachments = req.files || [];
 
+    // Debug log the incoming request
+    console.log(`🎫 Admin reply request for ticket ${ticketId}:`, {
+      admin_id,
+      message: message?.substring(0, 50) + '...',
+      is_internal_note: is_internal_note,
+      is_internal_note_type: typeof is_internal_note,
+      attachments_count: attachments.length
+    });
+
     const reply = await supportService.addReply(ticketId, {
       admin_id,
       message,
-      is_internal_note: is_internal_note === 'true',
+      is_internal_note: is_internal_note === 'true' || is_internal_note === true,
       attachments
     });
 
@@ -408,6 +417,59 @@ router.get('/admin/statistics', authenticate, async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch statistics',
+      error: error.message
+    });
+  }
+});
+
+// Debug endpoint to check notification system status
+router.get('/admin/notification-debug', authenticate, async (req, res) => {
+  try {
+    // Check if user is admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: 'Admin access required'
+      });
+    }
+
+    const { executeQuery } = require('../config/database');
+    const fcmService = require('../services/fcmService');
+    
+    // Get recent admin replies and their notification status
+    const recentReplies = await executeQuery(`
+      SELECT 
+        sr.id as reply_id,
+        sr.ticket_id,
+        sr.message,
+        sr.is_internal_note,
+        sr.created_at as reply_created,
+        st.ticket_number,
+        st.user_id,
+        COUNT(ut.token) as user_fcm_tokens
+      FROM support_replies sr
+      JOIN support_tickets st ON sr.ticket_id = st.id
+      LEFT JOIN user_fcm_tokens ut ON st.user_id = ut.user_id AND ut.is_active = 1
+      WHERE sr.is_admin_reply = 1 
+      AND sr.created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)
+      GROUP BY sr.id, sr.ticket_id, sr.message, sr.is_internal_note, sr.created_at, st.ticket_number, st.user_id
+      ORDER BY sr.created_at DESC
+      LIMIT 10
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        fcm_service_initialized: fcmService.isInitialized,
+        recent_admin_replies: recentReplies,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error in notification debug:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Debug check failed',
       error: error.message
     });
   }

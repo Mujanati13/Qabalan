@@ -41,7 +41,11 @@ export const ar = {
     activate: 'تفعيل',
     deactivate: 'إلغاء التفعيل',
     next: 'التالي',
-    previous: 'السابق'
+    previous: 'السابق',
+    remove: 'إزالة',
+    reset: 'إعادة تعيين',
+    currency: 'دينار',
+    loadError: 'فشل في تحميل البيانات'
   },
 
   // Navigation
@@ -61,6 +65,7 @@ export const ar = {
     reports: 'التقارير',
     shipping_zones: 'مناطق الشحن',
     branches: 'الفروع',
+    locations: 'إدارة المواقع',
     settings: 'الإعدادات',
     profile: 'الملف الشخصي',
     logout: 'تسجيل الخروج'
@@ -136,6 +141,49 @@ export const ar = {
     stock_in_stock: 'متوفر',
     stock_out_of_stock: 'نفد المخزون',
     stock_limited: 'مخزون محدود',
+    actionableOrders: 'الطلبات التي تحتاج إجراء',
+    hotOrders: 'الطلبات العاجلة',
+    shippingAnalytics: 'تحليلات الشحن الأردني',
+    avgDistance: 'متوسط المسافة',
+    avgShippingCost: 'متوسط تكلفة الشحن',
+    freeShippingRate: 'معدل الشحن المجاني',
+    totalCalculations: 'إجمالي الحسابات',
+    popularZones: 'المناطق الشائعة',
+    ordersText: 'طلبات',
+    export: 'تصدير',
+    exportExcel: 'تصدير إلى Excel',
+    exportPDF: 'تصدير إلى PDF',
+    exportSuccess: 'تم تصدير لوحة التحكم بنجاح!',
+    exportError: 'فشل في تصدير لوحة التحكم. يرجى المحاولة مرة أخرى.',
+    statisticsOverview: 'نظرة عامة على الإحصائيات',
+    // New enhanced export translations
+    needsAction: 'تحتاج إجراء',
+    requiresAttention: 'تتطلب انتباه',
+    priorityOrders: 'الطلبات ذات الأولوية',
+    reportGenerated: 'تم إنشاء التقرير',
+    reportPeriod: 'فترة التقرير',
+    executiveSummary: 'ملخص تنفيذي',
+    growth: 'النمو',
+    report: 'التقرير',
+    bestSellers: 'الأكثر مبيعاً',
+    trendsAnalysis: 'تحليل الاتجاهات',
+    reportFooter: 'تم إنشاء التقرير بواسطة لوحة تحكم FECS',
+    allRightsReserved: 'جميع الحقوق محفوظة.',
+    rank: 'الترتيب',
+    performance: 'الأداء',
+    priority: 'الأولوية',
+    urgent: 'عاجل',
+    high: 'عالي',
+    medium: 'متوسط',
+    ready: 'جاهز',
+    trend: 'الاتجاه',
+    weekday: 'يوم الأسبوع',
+    increasing: 'متزايد',
+    decreasing: 'متناقص',
+    stable: 'مستقر',
+    excellent: 'ممتاز',
+    good: 'جيد',
+    growing: 'نامي',
     // ...existing dashboard content...
   },
 
@@ -154,6 +202,7 @@ export const ar = {
     basePriceRequired: 'السعر الأساسي مطلوب',
     salePrice: 'سعر التخفيض',
     stock: 'المخزون',
+    stockQuantity: 'كمية المخزون',
     category: 'الفئة',
     image: 'الصورة',
     mainImage: 'الصورة الرئيسية',
@@ -186,6 +235,7 @@ export const ar = {
     slugPlaceholder: 'يتم إنشاؤه تلقائياً من العنوان',
     weight: 'الوزن',
     weightUnit: 'وحدة الوزن',
+    numberOfPieces: 'عدد القطع',
     loyaltyPoints: 'نقاط الولاء',
     pieces: 'القطع',
     points: 'نقاط',
@@ -208,6 +258,7 @@ export const ar = {
     nameRequired: 'اسم المنتج مطلوب',
     priceRequired: 'السعر مطلوب',
     stockRequired: 'كمية المخزون مطلوبة',
+    stockQuantityRequired: 'كمية المخزون مطلوبة',
     categoryRequired: 'الفئة مطلوبة',
     skuRequired: 'رمز المنتج مطلوب',
     uploadImage: 'رفع صورة',
@@ -239,7 +290,36 @@ export const ar = {
     bulk_status_update_confirm_message: 'هل أنت متأكد من تغيير {count} منتج إلى {status}؟',
     bulk_status_updated_successfully: 'تم تحديث حالة {count} منتج بنجاح',
     bulk_status_update_error: 'فشل في تحديث حالة المنتجات المحددة',
-    exported_successfully: 'تم تصدير {count} منتج بنجاح'
+    exported_successfully: 'تم تصدير {count} منتج بنجاح',
+    
+    // Product Variants
+    variants: 'المتغيرات',
+    manageVariants: 'إدارة المتغيرات',
+    addVariants: 'إضافة متغيرات جديدة',
+    addVariant: 'إضافة متغير',
+    saveVariants: 'حفظ المتغيرات',
+    existingVariants: 'المتغيرات الموجودة',
+    noVariants: 'لا توجد متغيرات',
+    addVariantsToGetStarted: 'أضف متغيرات للبدء',
+    variantName: 'نوع المتغير',
+    variantValue: 'قيمة المتغير',
+    priceModifier: 'تعديل السعر',
+    variantSku: 'رمز المتغير',
+    variantNameRequired: 'نوع المتغير مطلوب',
+    variantValueRequired: 'قيمة المتغير مطلوبة',
+    variantValuePlaceholder: 'مثل: كبير، أزرق، قطن',
+    variantSkuPlaceholder: 'رمز المتغير',
+    selectVariantType: 'اختر نوع المتغير',
+    size: 'الحجم',
+    color: 'اللون',
+    material: 'المادة',
+    style: 'النمط',
+    variantsHelpText: 'المتغيرات تسمح لك بإنشاء إصدارات مختلفة من نفس المنتج (مثل أحجام مختلفة، ألوان، مواد).',
+    variantsAddedSuccess: 'تم إضافة المتغيرات بنجاح',
+    variantAddError: 'فشل في إضافة المتغيرات',
+    variantDeletedSuccess: 'تم حذف المتغير بنجاح',
+    variantDeleteError: 'فشل في حذف المتغير',
+    deleteVariantConfirm: 'هل أنت متأكد من حذف هذا المتغير؟'
   },
 
   // Categories
@@ -351,6 +431,94 @@ export const ar = {
     }
   },
 
+  // Locations
+  locations: {
+    title: 'إدارة المواقع',
+    cities: 'المدن',
+    areas: 'المناطق',
+    streets: 'الشوارع',
+    
+    // Statistics
+    totalCities: 'إجمالي المدن',
+    activeCities: 'المدن النشطة',
+    totalAreas: 'إجمالي المناطق',
+    activeAreas: 'المناطق النشطة',
+    totalStreets: 'إجمالي الشوارع',
+    activeStreets: 'الشوارع النشطة',
+    
+    // City Management
+    addCity: 'إضافة مدينة',
+    editCity: 'تعديل المدينة',
+    cityName: 'اسم المدينة',
+    cityNameAr: 'اسم المدينة (بالعربية)',
+    cityNameEn: 'اسم المدينة (بالإنجليزية)',
+    cityNameArRequired: 'اسم المدينة بالعربية مطلوب',
+    cityNameEnRequired: 'اسم المدينة بالإنجليزية مطلوب',
+    cityNameMinLength: 'يجب أن يكون اسم المدينة حرفين على الأقل',
+    cityRequired: 'المدينة مطلوبة',
+    selectCity: 'اختر المدينة',
+    areasCount: 'عدد المناطق',
+    searchCities: 'البحث في المدن...',
+    
+    // Area Management
+    addArea: 'إضافة منطقة',
+    editArea: 'تعديل المنطقة',
+    areaName: 'اسم المنطقة',
+    areaNameAr: 'اسم المنطقة (بالعربية)',
+    areaNameEn: 'اسم المنطقة (بالإنجليزية)',
+    areaNameArRequired: 'اسم المنطقة بالعربية مطلوب',
+    areaNameEnRequired: 'اسم المنطقة بالإنجليزية مطلوب',
+    areaNameMinLength: 'يجب أن يكون اسم المنطقة حرفين على الأقل',
+    areaRequired: 'المنطقة مطلوبة',
+    selectArea: 'اختر المنطقة',
+    deliveryFee: 'رسوم التوصيل',
+    deliveryFeeRequired: 'رسوم التوصيل مطلوبة',
+    deliveryFeeMin: 'يجب أن تكون رسوم التوصيل 0 أو أكثر',
+    streetsCount: 'عدد الشوارع',
+    searchAreas: 'البحث في المناطق...',
+    
+    // Street Management
+    addStreet: 'إضافة شارع',
+    editStreet: 'تعديل الشارع',
+    streetName: 'اسم الشارع',
+    streetNameAr: 'اسم الشارع (بالعربية)',
+    streetNameEn: 'اسم الشارع (بالإنجليزية)',
+    streetNameArRequired: 'اسم الشارع بالعربية مطلوب',
+    streetNameEnRequired: 'اسم الشارع بالإنجليزية مطلوب',
+    streetNameMinLength: 'يجب أن يكون اسم الشارع حرفين على الأقل',
+    searchStreets: 'البحث في الشوارع...',
+    
+    // Delete Confirmations
+    deleteCityConfirm: 'حذف المدينة',
+    deleteCityWarning: 'هل أنت متأكد من حذف هذه المدينة؟ لا يمكن التراجع عن هذا الإجراء.',
+    deleteAreaConfirm: 'حذف المنطقة',
+    deleteAreaWarning: 'هل أنت متأكد من حذف هذه المنطقة؟ لا يمكن التراجع عن هذا الإجراء.',
+    deleteStreetConfirm: 'حذف الشارع',
+    deleteStreetWarning: 'هل أنت متأكد من حذف هذا الشارع؟ لا يمكن التراجع عن هذا الإجراء.',
+    
+    // Success Messages
+    cityCreateSuccess: 'تم إنشاء المدينة بنجاح',
+    cityUpdateSuccess: 'تم تحديث المدينة بنجاح',
+    cityDeleteSuccess: 'تم حذف المدينة بنجاح',
+    areaCreateSuccess: 'تم إنشاء المنطقة بنجاح',
+    areaUpdateSuccess: 'تم تحديث المنطقة بنجاح',
+    areaDeleteSuccess: 'تم حذف المنطقة بنجاح',
+    streetCreateSuccess: 'تم إنشاء الشارع بنجاح',
+    streetUpdateSuccess: 'تم تحديث الشارع بنجاح',
+    streetDeleteSuccess: 'تم حذف الشارع بنجاح',
+    
+    // Error Messages
+    cityCreateError: 'فشل في إنشاء المدينة',
+    cityUpdateError: 'فشل في تحديث المدينة',
+    cityDeleteError: 'فشل في حذف المدينة',
+    areaCreateError: 'فشل في إنشاء المنطقة',
+    areaUpdateError: 'فشل في تحديث المنطقة',
+    areaDeleteError: 'فشل في حذف المنطقة',
+    streetCreateError: 'فشل في إنشاء الشارع',
+    streetUpdateError: 'فشل في تحديث الشارع',
+    streetDeleteError: 'فشل في حذف الشارع'
+  },
+
   // Orders
   orders: {
     title: 'إدارة الطلبات',
@@ -366,6 +534,7 @@ export const ar = {
     customer_name_placeholder: 'أدخل اسم العميل',
     customer_phone_placeholder: 'أدخل رقم الهاتف',
     customer_email_placeholder: 'أدخل البريد الإلكتروني',
+    search_placeholder: 'البحث في الطلبات...',
     branch: 'الفرع',
     select_branch: 'اختر الفرع',
     select_order_type: 'اختر نوع الطلب',
@@ -430,6 +599,9 @@ export const ar = {
     advance_status: 'تقديم الحالة',
     cancel_order: 'إلغاء الطلب',
     view_details: 'عرض التفاصيل',
+    print_invoice: 'طباعة الفاتورة',
+    quick_status_change: 'تغيير سريع للحالة',
+    update_status_with_notes: 'تحديث الحالة مع الملاحظات',
     current_status: 'الحالة الحالية',
     new_status: 'الحالة الجديدة',
     select_status: 'اختر الحالة',
@@ -451,6 +623,9 @@ export const ar = {
     pending_orders: 'الطلبات المعلقة',
     total_revenue: 'إجمالي الإيرادات',
     avg_order_value: 'متوسط قيمة الطلب',
+    todays_revenue: 'إيرادات اليوم',
+    delivery_queue: 'طابور التوصيل',
+    avg_prep_time: 'متوسط وقت التحضير',
     
     // Order Details
     order_items: 'عناصر الطلب',
@@ -464,6 +639,13 @@ export const ar = {
     discount_amount: 'مبلغ الخصم',
     discount: 'الخصم',
     final_total: 'المجموع النهائي',
+    
+    // Order Types
+    delivery: 'توصيل',
+    pickup: 'استلام',
+    
+    // Search
+    search_orders: 'البحث في الطلبات...',
     
     // Settings
     auto_refresh: 'تحديث تلقائي',
@@ -572,7 +754,40 @@ export const ar = {
     // Errors
     fetch_failed: 'فشل في جلب الطلبات',
     update_failed: 'فشل في تحديث الطلب',
-    cancel_failed: 'فشل في إلغاء الطلب'
+    cancel_failed: 'فشل في إلغاء الطلب',
+    status_update_error: 'فشل في تحديث حالة الطلب',
+    
+    // Quick Status Updates
+    quick_status_change: 'تغيير الحالة السريع',
+    update_status_with_notes: 'تحديث الحالة مع الملاحظات',
+    change_to: 'تغيير إلى',
+    
+    // Customer Information
+    customer_information: 'معلومات العميل',
+    
+    // Order Details
+    order_details: 'تفاصيل الطلب',
+    
+    // Item Management
+    add_item: 'إضافة عنصر',
+    remove_item: 'إزالة العنصر',
+    duplicate_item: 'تكرار العنصر',
+    remove_all_items: 'إزالة جميع العناصر',
+    reset_items: 'إعادة تعيين العناصر',
+    item_total: 'مجموع العنصر',
+    
+    // Validation Messages
+    select_product_first: 'يرجى اختيار منتج أولاً',
+    quantity_required: 'الكمية مطلوبة',
+    quantity_must_be_positive: 'يجب أن تكون الكمية أكبر من الصفر',
+    
+    // Confirmation Messages
+    confirm_remove_all_items: 'هل أنت متأكد من إزالة جميع العناصر؟',
+    confirm_reset_items: 'هل أنت متأكد من إعادة تعيين العناصر إلى الحالة الأصلية؟',
+    item_added: 'تمت إضافة عنصر جديد بنجاح',
+    item_add_error: 'فشل في إضافة عنصر جديد',
+    item_update_error: 'فشل في تحديث العنصر',
+    item_remove_error: 'فشل في إزالة العنصر',
   },
 
   // Notifications

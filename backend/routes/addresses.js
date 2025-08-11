@@ -43,80 +43,8 @@ const validateAreaId = (req, res, next) => {
  * Validate address data
  */
 const validateAddressData = (req, res, next) => {
-  const { 
-    name, 
-    city_id, 
-    area_id, 
-    street_id, 
-    building_no,
-    floor_no,
-    apartment_no,
-    details,
-    latitude,
-    longitude,
-    is_default
-  } = req.body;
-
-  const errors = [];
-
-  // Required fields for creation
-  if (req.method === 'POST') {
-    if (!name || name.trim().length < 2) {
-      errors.push('Address name must be at least 2 characters');
-    }
-    
-    // More flexible validation - allow any combination of location data
-    // We only require at least some form of location identification
-    const hasAnyLocationData = city_id || area_id || street_id || latitude || longitude || details;
-    
-    if (!hasAnyLocationData) {
-      errors.push('At least one form of location data is required (city/area/street, coordinates, or address details)');
-    }
-    
-    // If location IDs are provided, validate them individually
-    if (city_id !== undefined && city_id !== null && !Number.isInteger(Number(city_id))) {
-      errors.push('Valid city ID is required when city is specified');
-    }
-    if (area_id !== undefined && area_id !== null && !Number.isInteger(Number(area_id))) {
-      errors.push('Valid area ID is required when area is specified');
-    }
-    if (street_id !== undefined && street_id !== null && !Number.isInteger(Number(street_id))) {
-      errors.push('Valid street ID is required when street is specified');
-    }
-  }
-
-  // Optional validations for update
-  if (name !== undefined && name.trim().length < 2) {
-    errors.push('Address name must be at least 2 characters');
-  }
-  if (city_id !== undefined && !Number.isInteger(Number(city_id))) {
-    errors.push('Valid city ID is required');
-  }
-  if (area_id !== undefined && !Number.isInteger(Number(area_id))) {
-    errors.push('Valid area ID is required');
-  }
-  if (street_id !== undefined && !Number.isInteger(Number(street_id))) {
-    errors.push('Valid street ID is required');
-  }
-  if (latitude !== undefined && (isNaN(latitude) || latitude < -90 || latitude > 90)) {
-    errors.push('Latitude must be a valid number between -90 and 90');
-  }
-  if (longitude !== undefined && (isNaN(longitude) || longitude < -180 || longitude > 180)) {
-    errors.push('Longitude must be a valid number between -180 and 180');
-  }
-  if (is_default !== undefined && typeof is_default !== 'boolean') {
-    errors.push('is_default must be boolean');
-  }
-
-  if (errors.length > 0) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      message_ar: 'فشل في التحقق من البيانات',
-      errors
-    });
-  }
-
+  // Remove all backend validation - let mobile app handle validation
+  // Just pass through to the next middleware
   next();
 };
 
@@ -254,7 +182,7 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
 
     const query = `
       SELECT 
-        ua.id, ua.user_id, ua.name, ua.building_no, ua.floor_no, ua.apartment_no, 
+        ua.id, ua.user_id, ua.name, ua.phone, ua.building_no, ua.floor_no, ua.apartment_no, 
         ua.details, ua.latitude, ua.longitude, ua.is_default, ua.is_active, ua.created_at,
         u.first_name, u.last_name, u.email,
         c.id as city_id, c.title_ar as city_title_ar, c.title_en as city_title_en,
@@ -341,6 +269,7 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
     const {
       user_id,
       name,
+      phone,
       city_id,
       area_id,
       street_id,
@@ -373,12 +302,13 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
     // Create address
     const result = await executeQuery(`
       INSERT INTO user_addresses (
-        user_id, name, city_id, area_id, street_id, building_no, floor_no, 
+        user_id, name, phone, city_id, area_id, street_id, building_no, floor_no, 
         apartment_no, details, latitude, longitude, is_default, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
     `, [
       targetUserId,
-      name.trim(),
+      name ? name.trim() : null,
+      phone ? phone.trim() : null,
       city_id || null,
       area_id || null,
       street_id || null,
@@ -436,11 +366,12 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
  * @desc    Update address
  * @access  Private
  */
-router.put('/:id', authenticate, validateId, validateAddressData, async (req, res, next) => {
+router.put('/:id', authenticate, validateId, async (req, res, next) => {
   try {
     const addressId = req.params.id;
     const {
       name,
+      phone,
       city_id,
       area_id,
       street_id,
@@ -492,7 +423,11 @@ router.put('/:id', authenticate, validateId, validateAddressData, async (req, re
 
     if (name !== undefined) {
       updateFields.push('name = ?');
-      updateValues.push(name.trim());
+      updateValues.push(name ? name.trim() : null);
+    }
+    if (phone !== undefined) {
+      updateFields.push('phone = ?');
+      updateValues.push(phone ? phone.trim() : null);
     }
     if (city_id !== undefined) {
       updateFields.push('city_id = ?');

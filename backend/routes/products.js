@@ -80,15 +80,15 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
     
     // Validate sort fields
-    const allowedSortFields = ['created_at', 'title_ar', 'title_en', 'base_price', 'sale_price'];
-    const sortField = allowedSortFields.includes(sort) ? `p.${sort}` : 'p.created_at';
+    const allowedSortFields = ['created_at', 'title_ar', 'title_en', 'base_price', 'sale_price', 'sort_order'];
+    const sortField = allowedSortFields.includes(sort) ? `p.${sort}` : 'p.sort_order';
     const sortOrder = order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
     const query = `
       SELECT 
         p.id, p.title_ar, p.title_en, p.description_ar, p.description_en,
         p.base_price, p.sale_price, p.loyalty_points, p.main_image, 
-        p.is_active, p.is_featured, p.stock_status, p.sku,
+        p.is_active, p.is_featured, p.stock_status, p.sku, p.sort_order,
         c.title_ar as category_title_ar, c.title_en as category_title_en,
         COALESCE(p.sale_price, p.base_price) as final_price,
         ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}
@@ -142,7 +142,7 @@ router.get('/:id', optionalAuth, validateId, async (req, res, next) => {
     const variants = await executeQuery(`
       SELECT * FROM product_variants 
       WHERE product_id = ?
-      ORDER BY pieces_count ASC
+      ORDER BY id ASC
     `, [req.params.id]);
 
     // Get product images
@@ -202,6 +202,51 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
       main_image = req.body.main_image;
     }
 
+    // Validate weight unit and adjust weight value accordingly
+    const validWeightUnits = ['g', 'kg', 'lb', 'oz', 'pieces'];
+    if (weight_unit && !validWeightUnits.includes(weight_unit)) {
+      if (req.uploadedImage) {
+        await deleteImage(req.uploadedImage.filename, 'products');
+      }
+      return res.status(400).json({
+        success: false,
+        message: `Invalid weight unit. Allowed units: ${validWeightUnits.join(', ')}`,
+        message_ar: `وحدة الوزن غير صالحة. الوحدات المسموحة: ${validWeightUnits.join(', ')}`
+      });
+    }
+
+    // Process and validate weight value
+    let processedWeight = weight;
+    if (weight_unit === 'pieces' && weight !== null) {
+      const weightNum = parseFloat(weight);
+      if (isNaN(weightNum) || weightNum < 0 || !Number.isInteger(weightNum)) {
+        if (req.uploadedImage) {
+          await deleteImage(req.uploadedImage.filename, 'products');
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'When weight unit is "pieces", weight must be a positive whole number',
+          message_ar: 'عندما تكون وحدة الوزن "قطع"، يجب أن يكون الوزن رقمًا صحيحًا موجبًا'
+        });
+      }
+      // Convert to integer for pieces
+      processedWeight = Math.floor(weightNum);
+    } else if (weight !== null) {
+      // For other weight units, allow decimal values
+      const weightNum = parseFloat(weight);
+      if (isNaN(weightNum) || weightNum < 0) {
+        if (req.uploadedImage) {
+          await deleteImage(req.uploadedImage.filename, 'products');
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Weight must be a positive number',
+          message_ar: 'يجب أن يكون الوزن رقمًا موجبًا'
+        });
+      }
+      processedWeight = weightNum;
+    }
+
     // Basic validation
     if (!title_ar && !title_en) {
       // Clean up uploaded image if validation fails
@@ -259,7 +304,7 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
       base_price, 
       sale_price, 
       loyalty_points,
-      weight,
+      processedWeight,
       weight_unit,
       main_image, 
       is_featured ? 1 : 0,
@@ -332,6 +377,91 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
         message: 'Product not found',
         message_ar: 'المنتج غير موجود'
       });
+    }
+
+    // Weight unit validation - only validate if weight_unit is being updated
+    if (weight_unit !== undefined) {
+      const validWeightUnits = ['g', 'kg', 'lb', 'oz', 'pieces'];
+      
+      if (!validWeightUnits.includes(weight_unit)) {
+        if (req.uploadedImage) {
+          await deleteImage(req.uploadedImage.filename, 'products');
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid weight unit. Valid units are: g, kg, lb, oz, pieces',
+          message_ar: 'وحدة الوزن غير صحيحة. الوحدات الصحيحة هي: g, kg, lb, oz, pieces'
+        });
+      }
+
+      // Special validation for pieces - must be whole numbers
+      if (weight_unit === 'pieces' && weight !== undefined) {
+        const weightNum = parseFloat(weight);
+        
+        // Check if weight is a valid number
+        if (isNaN(weightNum)) {
+          if (req.uploadedImage) {
+            await deleteImage(req.uploadedImage.filename, 'products');
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Weight must be a valid number when unit is pieces',
+            message_ar: 'يجب أن يكون الوزن رقماً صحيحاً عندما تكون الوحدة قطع'
+          });
+        }
+
+        // Check if weight is a whole number (integer)
+        if (!Number.isInteger(weightNum)) {
+          if (req.uploadedImage) {
+            await deleteImage(req.uploadedImage.filename, 'products');
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Weight must be a whole number when unit is pieces',
+            message_ar: 'يجب أن يكون الوزن رقماً صحيحاً عندما تكون الوحدة قطع'
+          });
+        }
+
+        // Check if weight is positive
+        if (weightNum <= 0) {
+          if (req.uploadedImage) {
+            await deleteImage(req.uploadedImage.filename, 'products');
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Weight must be a positive number',
+            message_ar: 'يجب أن يكون الوزن رقماً موجباً'
+          });
+        }
+      }
+      // Validation for other weight units (g, kg, lb, oz)
+      else if (['g', 'kg', 'lb', 'oz'].includes(weight_unit) && weight !== undefined) {
+        const weightNum = parseFloat(weight);
+        
+        // Check if weight is a valid number
+        if (isNaN(weightNum)) {
+          if (req.uploadedImage) {
+            await deleteImage(req.uploadedImage.filename, 'products');
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Weight must be a valid number',
+            message_ar: 'يجب أن يكون الوزن رقماً صحيحاً'
+          });
+        }
+
+        // Check if weight is positive
+        if (weightNum <= 0) {
+          if (req.uploadedImage) {
+            await deleteImage(req.uploadedImage.filename, 'products');
+          }
+          return res.status(400).json({
+            success: false,
+            message: 'Weight must be a positive number',
+            message_ar: 'يجب أن يكون الوزن رقماً موجباً'
+          });
+        }
+      }
     }
 
     // Get new image - prioritize uploaded file, then URL, then keep existing
@@ -570,7 +700,8 @@ router.post('/:id/branches', authenticate, authorize('admin', 'staff'), validate
         branch_id, 
         variant_id = null, 
         stock_quantity = 0, 
-        min_stock_level = 0 
+        min_stock_level = 0,
+        price_override = null
       } = branchAssignment;
 
       try {
@@ -610,16 +741,17 @@ router.post('/:id/branches', authenticate, authorize('admin', 'staff'), validate
             UPDATE branch_inventory SET
               stock_quantity = ?,
               min_stock_level = ?,
+              price_override = ?,
               updated_at = NOW()
             WHERE id = ?
-          `, [stock_quantity, min_stock_level, existingAssignment.id]);
+          `, [stock_quantity, min_stock_level, price_override, existingAssignment.id]);
         } else {
           // Create new assignment
           await executeQuery(`
             INSERT INTO branch_inventory (
-              branch_id, product_id, variant_id, stock_quantity, min_stock_level
-            ) VALUES (?, ?, ?, ?, ?)
-          `, [branch_id, req.params.id, variant_id, stock_quantity, min_stock_level]);
+              branch_id, product_id, variant_id, stock_quantity, min_stock_level, price_override
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `, [branch_id, req.params.id, variant_id, stock_quantity, min_stock_level, price_override]);
         }
 
         assignments.push({
@@ -627,6 +759,7 @@ router.post('/:id/branches', authenticate, authorize('admin', 'staff'), validate
           variant_id,
           stock_quantity,
           min_stock_level,
+          price_override,
           status: 'success'
         });
 
@@ -674,11 +807,12 @@ router.get('/:id/branches', authenticate, authorize('admin', 'staff'), validateI
     const availability = await executeQuery(`
       SELECT 
         bi.id, bi.branch_id, bi.variant_id, bi.stock_quantity, 
-        bi.reserved_quantity, bi.min_stock_level, bi.updated_at,
+        bi.reserved_quantity, bi.min_stock_level, bi.price_override, bi.updated_at,
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
+        UPPER(LEFT(REPLACE(b.title_en, ' ', ''), 4)) as branch_code,
         b.is_active as branch_is_active,
-        pv.title_ar as variant_title_ar, pv.title_en as variant_title_en,
-        pv.price as variant_price,
+        pv.variant_name as variant_title_ar, pv.variant_value as variant_title_en,
+        pv.price_modifier as variant_price,
         (bi.stock_quantity - bi.reserved_quantity) as available_quantity,
         CASE 
           WHEN bi.stock_quantity <= bi.min_stock_level THEN 'low'
@@ -689,7 +823,7 @@ router.get('/:id/branches', authenticate, authorize('admin', 'staff'), validateI
       INNER JOIN branches b ON bi.branch_id = b.id
       LEFT JOIN product_variants pv ON bi.variant_id = pv.id
       WHERE bi.product_id = ?
-      ORDER BY b.title_en ASC, pv.title_en ASC
+      ORDER BY b.title_en ASC, pv.variant_name ASC, pv.variant_value ASC
     `, [req.params.id]);
 
     res.json({
@@ -716,7 +850,9 @@ router.put('/:id/branches/:branchId', authenticate, authorize('admin', 'staff'),
       variant_id,
       stock_quantity,
       min_stock_level,
-      reserved_quantity
+      reserved_quantity,
+      price_override,
+      is_available
     } = req.body;
 
     // Check if assignment exists
@@ -741,14 +877,61 @@ router.put('/:id/branches/:branchId', authenticate, authorize('admin', 'staff'),
       });
     }
 
+    // Convert undefined to null for SQL compatibility
+    const safeStockQuantity = stock_quantity !== undefined ? stock_quantity : null;
+    const safeMinStockLevel = min_stock_level !== undefined ? min_stock_level : null;
+    const safeReservedQuantity = reserved_quantity !== undefined ? reserved_quantity : null;
+    const safePriceOverride = price_override !== undefined ? price_override : null;
+    const safeIsAvailable = is_available !== undefined ? (is_available ? 1 : 0) : null;
+
+    // Build dynamic UPDATE query based on provided fields
+    const updateFields = [];
+    const updateParams = [];
+
+    if (safeStockQuantity !== null) {
+      updateFields.push('stock_quantity = ?');
+      updateParams.push(safeStockQuantity);
+    }
+
+    if (safeMinStockLevel !== null) {
+      updateFields.push('min_stock_level = ?');
+      updateParams.push(safeMinStockLevel);
+    }
+
+    if (safeReservedQuantity !== null) {
+      updateFields.push('reserved_quantity = ?');
+      updateParams.push(safeReservedQuantity);
+    }
+
+    if (safePriceOverride !== null) {
+      updateFields.push('price_override = ?');
+      updateParams.push(safePriceOverride);
+    }
+
+    if (safeIsAvailable !== null) {
+      updateFields.push('is_available = ?');
+      updateParams.push(safeIsAvailable);
+    }
+
+    // Always update the timestamp
+    updateFields.push('updated_at = NOW()');
+
+    if (updateFields.length === 1) { // Only timestamp update
+      return res.status(400).json({
+        success: false,
+        message: 'No valid fields provided for update',
+        message_ar: 'لم يتم تقديم حقول صالحة للتحديث'
+      });
+    }
+
+    // Add assignment ID for WHERE clause
+    updateParams.push(assignment.id);
+
     await executeQuery(`
       UPDATE branch_inventory SET
-        stock_quantity = COALESCE(?, stock_quantity),
-        min_stock_level = COALESCE(?, min_stock_level),
-        reserved_quantity = COALESCE(?, reserved_quantity),
-        updated_at = NOW()
+        ${updateFields.join(', ')}
       WHERE id = ?
-    `, [stock_quantity, min_stock_level, reserved_quantity, assignment.id]);
+    `, updateParams);
 
     res.json({
       success: true,
@@ -873,11 +1056,11 @@ router.get('/inventory/low-stock', authenticate, authorize('admin', 'staff'), as
     const query = `
       SELECT 
         bi.id, bi.branch_id, bi.product_id, bi.variant_id,
-        bi.stock_quantity, bi.min_stock_level, bi.reserved_quantity,
+        bi.stock_quantity, bi.min_stock_level, bi.reserved_quantity, bi.price_override,
         p.title_ar as product_title_ar, p.title_en as product_title_en,
         p.sku, p.main_image,
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
-        pv.title_ar as variant_title_ar, pv.title_en as variant_title_en,
+        pv.variant_name as variant_title_ar, pv.variant_value as variant_title_en,
         (bi.stock_quantity - bi.reserved_quantity) as available_quantity
       FROM branch_inventory bi
       INNER JOIN products p ON bi.product_id = p.id
@@ -1061,6 +1244,405 @@ router.put('/:id/images/:imageId/sort', authenticate, authorize('admin', 'staff'
       message: 'Image sort order updated successfully',
       message_ar: 'تم تحديث ترتيب الصورة بنجاح'
     });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// PRODUCT VARIANTS ROUTES
+// ============================================
+
+/**
+ * @route   GET /api/products/:id/variants
+ * @desc    Get all variants for a specific product
+ * @access  Private (Admin/Staff)
+ */
+router.get('/:id/variants', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    
+    // First check if product exists
+    const productResult = await executeQuery(
+      'SELECT id FROM products WHERE id = ?',
+      [productId]
+    );
+    
+    if (productResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+        message_ar: 'المنتج غير موجود'
+      });
+    }
+    
+    // Get all variants for this product
+    const variants = await executeQuery(`
+      SELECT 
+        id,
+        product_id,
+        variant_name,
+        variant_value,
+        price_modifier,
+        stock_quantity,
+        sku,
+        is_active,
+        created_at,
+        updated_at
+      FROM product_variants 
+      WHERE product_id = ? AND is_active = 1
+      ORDER BY variant_name, variant_value
+    `, [productId]);
+    
+    res.json({
+      success: true,
+      data: variants,
+      count: variants.length
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/products/:id/variants
+ * @desc    Create a new variant for a specific product
+ * @access  Private (Admin/Staff)
+ */
+router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const {
+      variant_name,
+      variant_value,
+      price_modifier,
+      stock_quantity,
+      sku
+    } = req.body;
+    
+    // Sanitize and validate parameters - convert undefined to null for database compatibility
+    const sanitizedPriceModifier = price_modifier !== undefined ? parseFloat(price_modifier) || 0 : 0;
+    const sanitizedStockQuantity = stock_quantity !== undefined ? parseInt(stock_quantity) || 0 : 0;
+    const sanitizedSku = sku !== undefined && sku !== '' ? sku : null;
+    
+    // Validate required fields
+    if (!variant_name || !variant_value) {
+      return res.status(400).json({
+        success: false,
+        message: 'Variant name and value are required',
+        message_ar: 'اسم وقيمة المتغير مطلوبان'
+      });
+    }
+    
+    // Check if product exists
+    const productResult = await executeQuery(
+      'SELECT id FROM products WHERE id = ?',
+      [productId]
+    );
+    
+    if (productResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+        message_ar: 'المنتج غير موجود'
+      });
+    }
+    
+    // Check if this variant combination already exists
+    const existingVariant = await executeQuery(
+      'SELECT id FROM product_variants WHERE product_id = ? AND variant_name = ? AND variant_value = ?',
+      [productId, variant_name, variant_value]
+    );
+    
+    if (existingVariant.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'This variant combination already exists',
+        message_ar: 'تركيبة المتغير هذه موجودة بالفعل'
+      });
+    }
+    
+    // Insert new variant
+    const result = await executeQuery(`
+      INSERT INTO product_variants 
+      (product_id, variant_name, variant_value, price_modifier, stock_quantity, sku)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [productId, variant_name, variant_value, sanitizedPriceModifier, sanitizedStockQuantity, sanitizedSku]);
+    
+    // Get the created variant
+    const newVariant = await executeQuery(
+      'SELECT * FROM product_variants WHERE id = ?',
+      [result.insertId]
+    );
+    
+    res.status(201).json({
+      success: true,
+      message: 'Product variant created successfully',
+      message_ar: 'تم إنشاء متغير المنتج بنجاح',
+      data: newVariant[0]
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/products/:id/variants/:variantId
+ * @desc    Update a specific product variant
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const variantId = req.params.variantId;
+    const {
+      variant_name,
+      variant_value,
+      price_modifier,
+      stock_quantity,
+      sku,
+      is_active
+    } = req.body;
+    
+    // Check if variant exists for this product
+    const variantResult = await executeQuery(
+      'SELECT id FROM product_variants WHERE id = ? AND product_id = ?',
+      [variantId, productId]
+    );
+    
+    if (variantResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product variant not found',
+        message_ar: 'متغير المنتج غير موجود'
+      });
+    }
+    
+    // Build dynamic update query
+    let updateFields = [];
+    let updateValues = [];
+    
+    if (variant_name !== undefined) {
+      updateFields.push('variant_name = ?');
+      updateValues.push(variant_name);
+    }
+    if (variant_value !== undefined) {
+      updateFields.push('variant_value = ?');
+      updateValues.push(variant_value);
+    }
+    if (price_modifier !== undefined) {
+      updateFields.push('price_modifier = ?');
+      updateValues.push(price_modifier !== null ? parseFloat(price_modifier) || 0 : 0);
+    }
+    if (stock_quantity !== undefined) {
+      updateFields.push('stock_quantity = ?');
+      updateValues.push(stock_quantity !== null ? parseInt(stock_quantity) || 0 : 0);
+    }
+    if (sku !== undefined) {
+      updateFields.push('sku = ?');
+      updateValues.push(sku !== null && sku !== '' ? sku : null);
+    }
+    if (is_active !== undefined) {
+      updateFields.push('is_active = ?');
+      updateValues.push(is_active);
+    }
+    
+    if (updateFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No fields to update',
+        message_ar: 'لا توجد حقول للتحديث'
+      });
+    }
+    
+    // Add updated_at
+    updateFields.push('updated_at = NOW()');
+    updateValues.push(variantId);
+    
+    // Update variant
+    await executeQuery(
+      `UPDATE product_variants SET ${updateFields.join(', ')} WHERE id = ?`,
+      updateValues
+    );
+    
+    // Get updated variant
+    const updatedVariant = await executeQuery(
+      'SELECT * FROM product_variants WHERE id = ?',
+      [variantId]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Product variant updated successfully',
+      message_ar: 'تم تحديث متغير المنتج بنجاح',
+      data: updatedVariant[0]
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/products/:id/variants/:variantId
+ * @desc    Delete a specific product variant
+ * @access  Private (Admin/Staff)
+ */
+router.delete('/:id/variants/:variantId', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const variantId = req.params.variantId;
+    
+    // Check if variant exists for this product
+    const variantResult = await executeQuery(
+      'SELECT id FROM product_variants WHERE id = ? AND product_id = ?',
+      [variantId, productId]
+    );
+    
+    if (variantResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product variant not found',
+        message_ar: 'متغير المنتج غير موجود'
+      });
+    }
+    
+    // Delete the variant
+    await executeQuery(
+      'DELETE FROM product_variants WHERE id = ? AND product_id = ?',
+      [variantId, productId]
+    );
+    
+    res.json({
+      success: true,
+      message: 'Product variant deleted successfully',
+      message_ar: 'تم حذف متغير المنتج بنجاح'
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/products/:id/variants/:variantId
+ * @desc    Get a specific product variant
+ * @access  Private (Admin/Staff)
+ */
+router.get('/:id/variants/:variantId', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const variantId = req.params.variantId;
+    
+    // Get the variant
+    const variantResult = await executeQuery(
+      'SELECT * FROM product_variants WHERE id = ? AND product_id = ?',
+      [variantId, productId]
+    );
+    
+    if (variantResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product variant not found',
+        message_ar: 'متغير المنتج غير موجود'
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: variantResult[0]
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ============================================
+// PRODUCT SORT ORDER ROUTES
+// ============================================
+
+/**
+ * @route   PUT /api/products/:id/sort-order
+ * @desc    Update product sort order
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/sort-order', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { sort_order, direction } = req.body;
+
+    // If direction is provided (increment/decrement), calculate new sort order
+    if (direction && ['increment', 'decrement'].includes(direction)) {
+      // Get current sort order
+      const [currentProduct] = await executeQuery(
+        'SELECT sort_order FROM products WHERE id = ?',
+        [id]
+      );
+
+      if (!currentProduct) {
+        return res.status(404).json({
+          success: false,
+          message: 'Product not found',
+          message_ar: 'المنتج غير موجود'
+        });
+      }
+
+      const currentSortOrder = currentProduct.sort_order;
+      const newSortOrder = direction === 'increment' 
+        ? currentSortOrder + 1 
+        : Math.max(0, currentSortOrder - 1);
+
+      // Update sort order
+      await executeQuery(
+        'UPDATE products SET sort_order = ?, updated_at = NOW() WHERE id = ?',
+        [newSortOrder, id]
+      );
+
+      res.json({
+        success: true,
+        message: 'Product sort order updated successfully',
+        message_ar: 'تم تحديث ترتيب المنتج بنجاح',
+        data: {
+          product_id: id,
+          old_sort_order: currentSortOrder,
+          new_sort_order: newSortOrder
+        }
+      });
+    } else if (sort_order !== undefined) {
+      // Direct sort order update
+      if (isNaN(sort_order) || sort_order < 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Valid sort order (non-negative number) is required',
+          message_ar: 'ترتيب صالح مطلوب (رقم غير سالب)'
+        });
+      }
+
+      await executeQuery(
+        'UPDATE products SET sort_order = ?, updated_at = NOW() WHERE id = ?',
+        [sort_order, id]
+      );
+
+      res.json({
+        success: true,
+        message: 'Product sort order updated successfully',
+        message_ar: 'تم تحديث ترتيب المنتج بنجاح',
+        data: {
+          product_id: id,
+          new_sort_order: sort_order
+        }
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Either sort_order or direction (increment/decrement) is required',
+        message_ar: 'إما ترتيب أو اتجاه (زيادة/نقصان) مطلوب'
+      });
+    }
 
   } catch (error) {
     next(error);

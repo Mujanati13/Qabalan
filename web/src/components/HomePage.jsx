@@ -12,7 +12,7 @@ import {
 import { Link } from 'react-router-dom';
 import AppLayout from './AppLayout';
 import { useSettings } from '../contexts/SettingsContext';
-import { useTranslation } from '../contexts/TranslationContext';
+// Removed TranslationContext to keep English-only UI
 
 // Enhanced animations and styles
 const addKeyframeAnimations = () => {
@@ -85,6 +85,15 @@ if (typeof document !== 'undefined') {
 const { Title, Paragraph, Text } = Typography;
 const { useBreakpoint } = Grid;
 
+// English-only helpers (no i18n)
+const isRTL = false;
+const t = (key, defaultText) => (defaultText != null ? defaultText : String(key));
+const getLocalizedField = (obj, field) => {
+  if (!obj) return '';
+  // English-only: prefer *_en then generic field; no Arabic fallback
+  return obj[`${field}_en`] ?? obj[field] ?? '';
+};
+
 const HomePage = () => {
   const [loading, setLoading] = useState(true);
   const [featuredProducts, setFeaturedProducts] = useState([]);
@@ -109,7 +118,6 @@ const HomePage = () => {
   
   const screens = useBreakpoint();
   const { settings } = useSettings();
-  const { t, isRTL, getLocalizedField } = useTranslation();
 
   useEffect(() => {
     let isMounted = true;
@@ -474,6 +482,39 @@ const HomePage = () => {
         </Row>
       </div>
     </div>
+  );
+
+  // About section with English-only content provided
+  const AboutSection = () => (
+    <section
+      style={{
+        padding: screens.lg ? '96px 0' : '56px 0',
+        background: '#fff',
+        direction: 'ltr'
+      }}
+    >
+      <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '0 24px' }}>
+        <Title level={2} style={{ color: '#111827', marginBottom: 16 }}>
+          About Qabalan Bakery
+        </Title>
+        <Paragraph style={{ color: '#4b5563', fontSize: 16, lineHeight: 1.8 }}>
+          Qabalan Bakeries was established in 1995 as a small family business. We entered the food industry inspired to make a difference in the market, and our mission was simple: to create high-quality bread and delicious pastries at a reasonable price. With years of hard work, passion, innovation and dedication, Qabalan Bakeries has become known across the Jordanian market as one of the unique bakeries. Moreover, our products have become favoured among several countries in the Middle East; thus, we have proudly expanded our sales in global supermarkets across the East and West.
+        </Paragraph>
+
+        <Title level={4} style={{ color: '#1f2937', marginTop: 24, marginBottom: 12 }}>
+          Gulfood 2025
+        </Title>
+        <Paragraph style={{ color: '#4b5563', fontSize: 16, lineHeight: 1.8 }}>
+          We are committed to making people happy with all our baked goods and products in which our quality exceeds expectations. We are distinguished by detail and proud of food safety. We continue to innovate and upgrade new and existing products. The Qabalan Group for Food Industries was established in 1995 as a family business specialising in bread, pastries and sweets. As a result of the group’s constant pursuit of innovation, development and leadership, it has become one of the most preferred destinations in the Jordanian market and has obtained the ISO 22000:2018 food-safety certification.
+        </Paragraph>
+
+        <div style={{ marginTop: 8 }}>
+          <a href="https://exhibitor-manual-004.s3.ap-south-1.amazonaws.com" target="_blank" rel="noreferrer" style={{ color: '#229A95', fontWeight: 600 }}>
+            exhibitor-manual-004.s3.ap-south-1.amazonaws.com
+          </a>
+        </div>
+      </div>
+    </section>
   );
 
   const FeaturedOffersSection = () => {
@@ -1695,7 +1736,7 @@ const HomePage = () => {
                                 color: '#1f2937',
                                 lineHeight: '1.3'
                               }}>
-                                {getLocalizedField(location, 'title') || location.title_en || location.title_ar}
+                                {getLocalizedField(location, 'title') || location.title_en || ''}
                               </Title>
                               
                               <Text style={{ 
@@ -1709,7 +1750,7 @@ const HomePage = () => {
                                 WebkitLineClamp: 2,
                                 WebkitBoxOrient: 'vertical'
                               }}>
-                                {getLocalizedField(location, 'address') || location.address_en || location.address_ar}
+                                {getLocalizedField(location, 'address') || location.address_en || ''}
                               </Text>
                               
                               <div style={{ 
@@ -2332,7 +2373,7 @@ const HomePage = () => {
           textAlign: 'center'
         }}>
           <Alert
-            message={t('general.error')}
+            message={'Error'}
             description={error}
             type="error"
             showIcon
@@ -2350,11 +2391,10 @@ const HomePage = () => {
   return (
     <AppLayout>
       <div style={{ minHeight: '100vh' }}>
-        <HeroSection />
-        <FeaturedOffersSection />
-        <FeaturedProductsSection />
-        <LocationSection />
-        <ContactInfoSection />
+  <HeroSection />
+  <AboutSection />
+  <LocationSection />
+  <ContactInfoSection />
       </div>
     </AppLayout>
   );
