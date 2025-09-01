@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
@@ -22,8 +22,8 @@ export default defineConfig({
     host: '0.0.0.0', // Allow external connections
     open: false,     // Don't try to open browser
     strictPort: true, // Exit if port is already in use
-    hmr: {
-      port: 24678, // Use a different port for HMR
+    hmr: mode === 'production' ? false : {
+      port: 24678, // Use a different port for HMR in development only
       host: 'localhost'
     },
     proxy: {
@@ -55,4 +55,4 @@ export default defineConfig({
       }
     }
   }
-})
+}))

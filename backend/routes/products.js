@@ -24,7 +24,8 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       min_price,
       max_price,
       stock_status,
-      include_inactive = false
+      include_inactive = false,
+      branch_id
     } = req.query;
 
     // Validate pagination parameters
@@ -77,6 +78,14 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       queryParams.push(max_price);
     }
 
+    // Branch filter - only show products available in specific branch
+    let branchJoin = '';
+    if (branch_id) {
+      branchJoin = 'INNER JOIN branch_inventory bi ON p.id = bi.product_id';
+      whereConditions.push('bi.branch_id = ?');
+      queryParams.push(branch_id);
+    }
+
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
     
     // Validate sort fields
@@ -91,9 +100,10 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
         p.is_active, p.is_featured, p.stock_status, p.sku, p.sort_order,
         c.title_ar as category_title_ar, c.title_en as category_title_en,
         COALESCE(p.sale_price, p.base_price) as final_price,
-        ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}
+        ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}${branch_id ? ',\n        bi.stock_quantity, bi.price_override' : ''}
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
+      ${branchJoin}
       ${whereClause}
       ORDER BY ${sortField} ${sortOrder}
     `;
@@ -477,46 +487,92 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       main_image = undefined;
     }
 
-    // Update product
-    await executeQuery(`
+    // Build update query dynamically to handle null values properly
+    let updateFields = [];
+    let updateValues = [];
+
+    // Handle category_id specially - allow it to be set to null
+    if (category_id !== undefined) {
+      updateFields.push('category_id = ?');
+      updateValues.push(category_id);
+    }
+
+    // Handle other fields with COALESCE
+    if (title_ar !== undefined) {
+      updateFields.push('title_ar = COALESCE(?, title_ar)');
+      updateValues.push(title_ar || null);
+    }
+    if (title_en !== undefined) {
+      updateFields.push('title_en = COALESCE(?, title_en)');
+      updateValues.push(title_en || null);
+    }
+    if (description_ar !== undefined) {
+      updateFields.push('description_ar = COALESCE(?, description_ar)');
+      updateValues.push(description_ar || null);
+    }
+    if (description_en !== undefined) {
+      updateFields.push('description_en = COALESCE(?, description_en)');
+      updateValues.push(description_en || null);
+    }
+    if (slug !== undefined) {
+      updateFields.push('slug = COALESCE(?, slug)');
+      updateValues.push(slug || null);
+    }
+    if (sku !== undefined) {
+      updateFields.push('sku = COALESCE(?, sku)');
+      updateValues.push(sku || null);
+    }
+    if (base_price !== undefined) {
+      updateFields.push('base_price = COALESCE(?, base_price)');
+      updateValues.push(base_price || null);
+    }
+    if (sale_price !== undefined) {
+      updateFields.push('sale_price = COALESCE(?, sale_price)');
+      updateValues.push(sale_price || null);
+    }
+    if (loyalty_points !== undefined) {
+      updateFields.push('loyalty_points = COALESCE(?, loyalty_points)');
+      updateValues.push(loyalty_points !== undefined ? loyalty_points : null);
+    }
+    if (weight !== undefined) {
+      updateFields.push('weight = COALESCE(?, weight)');
+      updateValues.push(weight || null);
+    }
+    if (weight_unit !== undefined) {
+      updateFields.push('weight_unit = COALESCE(?, weight_unit)');
+      updateValues.push(weight_unit || null);
+    }
+    if (main_image !== undefined) {
+      updateFields.push('main_image = COALESCE(?, main_image)');
+      updateValues.push(main_image || null);
+    }
+    if (is_featured !== undefined) {
+      updateFields.push('is_featured = COALESCE(?, is_featured)');
+      updateValues.push(is_featured !== undefined ? (is_featured ? 1 : 0) : null);
+    }
+    if (is_active !== undefined) {
+      updateFields.push('is_active = COALESCE(?, is_active)');
+      updateValues.push(is_active !== undefined ? (is_active ? 1 : 0) : null);
+    }
+    if (stock_status !== undefined) {
+      updateFields.push('stock_status = COALESCE(?, stock_status)');
+      updateValues.push(stock_status || null);
+    }
+
+    // Always update the timestamp
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+
+    // Build final query
+    const updateQuery = `
       UPDATE products SET
-        category_id = COALESCE(?, category_id),
-        title_ar = COALESCE(?, title_ar),
-        title_en = COALESCE(?, title_en),
-        description_ar = COALESCE(?, description_ar),
-        description_en = COALESCE(?, description_en),
-        slug = COALESCE(?, slug),
-        sku = COALESCE(?, sku),
-        base_price = COALESCE(?, base_price),
-        sale_price = COALESCE(?, sale_price),
-        loyalty_points = COALESCE(?, loyalty_points),
-        weight = COALESCE(?, weight),
-        weight_unit = COALESCE(?, weight_unit),
-        main_image = COALESCE(?, main_image),
-        is_featured = COALESCE(?, is_featured),
-        is_active = COALESCE(?, is_active),
-        stock_status = COALESCE(?, stock_status),
-        updated_at = CURRENT_TIMESTAMP
+        ${updateFields.join(', ')}
       WHERE id = ?
-    `, [
-      category_id || null, 
-      title_ar || null, 
-      title_en || null, 
-      description_ar || null, 
-      description_en || null,
-      slug || null,
-      sku || null,
-      base_price || null, 
-      sale_price || null,
-      loyalty_points !== undefined ? loyalty_points : null,
-      weight || null,
-      weight_unit || null,
-      main_image || null,
-      is_featured !== undefined ? (is_featured ? 1 : 0) : null,
-      is_active !== undefined ? (is_active ? 1 : 0) : null,
-      stock_status || null,
-      req.params.id
-    ]);
+    `;
+
+    updateValues.push(req.params.id);
+
+    // Update product
+    await executeQuery(updateQuery, updateValues);
 
     // Delete old image if a new one was uploaded
     if (req.uploadedImage && existingProduct.main_image && existingProduct.main_image !== req.uploadedImage.filename) {

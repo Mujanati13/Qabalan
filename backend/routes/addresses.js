@@ -299,6 +299,31 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
       await validateLocationHierarchy(city_id, area_id, street_id);
     }
 
+    // GPS Address Mode Handling - Ensure required fields for database constraints
+    let finalCityId = city_id;
+    let finalAreaId = area_id;
+    let finalStreetId = street_id;
+    
+    // If GPS coordinates are provided but location IDs are missing, use defaults
+    if ((latitude !== undefined && longitude !== undefined) && (!city_id || !area_id)) {
+      console.log('🌍 GPS address detected, using default location IDs for database constraints');
+      finalCityId = city_id || 1; // Default city ID
+      finalAreaId = area_id || 1;  // Default area ID
+      // street_id can remain null as it's less critical - ensure it's null, not undefined
+      finalStreetId = street_id || null;
+    } else {
+      // For traditional addresses, ensure no undefined values
+      finalCityId = city_id || null;
+      finalAreaId = area_id || null;
+      finalStreetId = street_id || null;
+    }
+
+    console.log('📍 Address creation data:', {
+      mode: (latitude !== undefined && longitude !== undefined) ? 'GPS' : 'Traditional',
+      coordinates: { latitude, longitude },
+      location_ids: { city_id: finalCityId, area_id: finalAreaId, street_id: finalStreetId }
+    });
+
     // Create address
     const result = await executeQuery(`
       INSERT INTO user_addresses (
@@ -309,9 +334,9 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
       targetUserId,
       name ? name.trim() : null,
       phone ? phone.trim() : null,
-      city_id || null,
-      area_id || null,
-      street_id || null,
+      finalCityId,
+      finalAreaId,
+      finalStreetId,
       building_no || null,
       floor_no || null,
       apartment_no || null,
@@ -324,6 +349,16 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
     // Handle default address logic
     if (is_default) {
       await handleDefaultAddress(targetUserId, result.insertId, true);
+    }
+
+    // Log successful GPS coordinate storage
+    if (latitude !== undefined && longitude !== undefined) {
+      console.log('✅ GPS coordinates stored successfully:', {
+        address_id: result.insertId,
+        latitude: latitude,
+        longitude: longitude,
+        user_id: targetUserId
+      });
     }
 
     // Get the created address with full details
@@ -485,10 +520,25 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
     updateFields.push('updated_at = NOW()');
     updateValues.push(addressId);
 
+    // Log GPS coordinate updates
+    if (latitude !== undefined && longitude !== undefined) {
+      console.log('🌍 GPS coordinates being updated:', {
+        address_id: addressId,
+        latitude: latitude,
+        longitude: longitude,
+        user_id: currentAddress.user_id
+      });
+    }
+
     // Update address
     await executeQuery(`
       UPDATE user_addresses SET ${updateFields.join(', ')} WHERE id = ?
     `, updateValues);
+
+    // Log successful GPS coordinate update
+    if (latitude !== undefined && longitude !== undefined) {
+      console.log('✅ GPS coordinates updated successfully for address:', addressId);
+    }
 
     // Handle default address logic
     if (is_default !== undefined) {

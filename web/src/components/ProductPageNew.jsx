@@ -25,6 +25,7 @@ const ProductPage = () => {
   const [relatedProducts, setRelatedProducts] = useState([]);
   const [quantity, setQuantity] = useState(1);
   const [selectedImage, setSelectedImage] = useState(0);
+  const [selectedVariant, setSelectedVariant] = useState(null);
   const [error, setError] = useState(null);
   const screens = useBreakpoint();
   const { addToCart, loading: cartLoading } = useCart();
@@ -87,8 +88,20 @@ const ProductPage = () => {
 
   const handleAddToCart = () => {
     if (product) {
-      addToCart(product, quantity);
+      const options = selectedVariant ? { variant: selectedVariant } : {};
+      addToCart(product, quantity, options);
     }
+  };
+
+  const handleVariantSelect = (variant) => {
+    setSelectedVariant(variant);
+  };
+
+  const getCurrentPrice = () => {
+    if (selectedVariant && selectedVariant.price) {
+      return selectedVariant.price;
+    }
+    return product.final_price || product.base_price || product.price || 0;
   };
 
   const ProductGallery = () => {
@@ -199,9 +212,9 @@ const ProductPage = () => {
 
         <div className="flex items-baseline space-x-3 mb-6">
           <Text className="text-3xl font-bold text-teal-600">
-            {formatPrice(product.final_price || product.base_price || product.price || 0)}
+            {formatPrice(getCurrentPrice())}
           </Text>
-          {product.sale_price && product.sale_price < (product.base_price || product.price) && (
+          {!selectedVariant && product.sale_price && product.sale_price < (product.base_price || product.price) && (
             <>
               <Text delete className="text-lg text-gray-400">
                 {formatPrice(product.base_price || product.price)}
@@ -211,6 +224,11 @@ const ProductPage = () => {
                 style={{ backgroundColor: '#ef4444' }}
               />
             </>
+          )}
+          {selectedVariant && (
+            <Text className="text-sm text-gray-500">
+              {selectedVariant.name}
+            </Text>
           )}
         </div>
       </div>
@@ -224,6 +242,38 @@ const ProductPage = () => {
       </div>
 
       <div className="space-y-4">
+        {/* Product Variants */}
+        {product.variants && product.variants.length > 0 && (
+          <div>
+            <Text strong className="block mb-3">Available Options:</Text>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {product.variants.map((variant) => (
+                <Button
+                  key={variant.id}
+                  type={selectedVariant?.id === variant.id ? 'primary' : 'default'}
+                  onClick={() => handleVariantSelect(variant)}
+                  className="h-auto p-3 text-left"
+                  block
+                >
+                  <div>
+                    <div className="font-medium">{variant.name}</div>
+                    {variant.price && (
+                      <div className="text-sm text-gray-500">
+                        {formatPrice(variant.price)}
+                      </div>
+                    )}
+                    {variant.sku && (
+                      <div className="text-xs text-gray-400">
+                        SKU: {variant.sku}
+                      </div>
+                    )}
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center space-x-4">
           <Text strong>Quantity:</Text>
           <InputNumber

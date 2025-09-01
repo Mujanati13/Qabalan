@@ -42,8 +42,11 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       
+      // Create a unique identifier that includes variant information
+      const itemKey = `${product.id}_${options.variant_id || 'no_variant'}`;
+      
       const existingItemIndex = cartItems.findIndex(
-        item => item.id === product.id && JSON.stringify(item.options) === JSON.stringify(options)
+        item => `${item.id}_${item.options?.variant_id || 'no_variant'}` === itemKey
       );
 
       if (existingItemIndex > -1) {
@@ -51,13 +54,21 @@ export const CartProvider = ({ children }) => {
         const updatedItems = [...cartItems];
         updatedItems[existingItemIndex].quantity += quantity;
         setCartItems(updatedItems);
-        message.success(`Updated ${product.title_en || product.name} quantity in cart`);
+        
+        const variantText = options.variant_name && options.variant_value ? 
+          ` (${options.variant_name}: ${options.variant_value})` : '';
+        message.success(`Updated ${product.title_en || product.name}${variantText} quantity in cart`);
       } else {
+        // Calculate final price including variant modifier
+        const basePrice = product.final_price || product.base_price || product.price || 0;
+        const variantModifier = options.price_modifier || 0;
+        const finalPrice = basePrice + variantModifier;
+        
         // Add new item to cart
         const cartItem = {
           id: product.id,
           title: product.title_en || product.name_en || product.name || 'Unnamed Product',
-          price: product.final_price || product.base_price || product.price || 0,
+          price: finalPrice,
           image: product.main_image,
           quantity,
           options,
@@ -65,8 +76,16 @@ export const CartProvider = ({ children }) => {
         };
         
         setCartItems(prev => [...prev, cartItem]);
-        message.success(`Added ${product.title_en || product.name} to cart`);
+        
+        const variantText = options.variant_name && options.variant_value ? 
+          ` (${options.variant_name}: ${options.variant_value})` : '';
+        message.success(`Added ${product.title_en || product.name}${variantText} to cart`);
       }
+      
+      // Show cart drawer briefly
+      setCartVisible(true);
+      setTimeout(() => setCartVisible(false), 2000);
+      
     } catch (error) {
       console.error('Error adding to cart:', error);
       message.error('Failed to add item to cart');
@@ -75,21 +94,25 @@ export const CartProvider = ({ children }) => {
     }
   };
 
-  const updateCartItem = (itemId, quantity) => {
+  const updateCartItem = (itemId, variantId, quantity) => {
     if (quantity <= 0) {
-      removeFromCart(itemId);
+      removeFromCart(itemId, variantId);
       return;
     }
 
+    const itemKey = `${itemId}_${variantId || 'no_variant'}`;
     setCartItems(prev =>
       prev.map(item =>
-        item.id === itemId ? { ...item, quantity } : item
+        `${item.id}_${item.options?.variant_id || 'no_variant'}` === itemKey ? { ...item, quantity } : item
       )
     );
   };
 
-  const removeFromCart = (itemId) => {
-    setCartItems(prev => prev.filter(item => item.id !== itemId));
+  const removeFromCart = (itemId, variantId = null) => {
+    const itemKey = `${itemId}_${variantId || 'no_variant'}`;
+    setCartItems(prev => prev.filter(item => 
+      `${item.id}_${item.options?.variant_id || 'no_variant'}` !== itemKey
+    ));
     message.success('Item removed from cart');
   };
 

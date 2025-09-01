@@ -53,20 +53,26 @@ import {
   EnvironmentOutlined,
   DownOutlined,
   ExportOutlined,
-  ClearOutlined,
+  UserOutlined ,
   FileTextOutlined,
   MoreOutlined,
-  CopyOutlined
+  CopyOutlined,
+  CreditCardOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useNavigate } from 'react-router-dom';
 import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import ordersService from '../services/ordersService';
+import customersService from '../services/customersService';
 import NotificationControls from '../components/notifications/NotificationControls';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
 import CreateOrderModal from '../components/common/CreateOrderModal';
+import EnhancedAddressForm from '../components/common/EnhancedAddressForm';
 import api from '../services/api';
+import googleMapsService from '../services/googleMapsService';
+import paymentsService from '../services/paymentsService';
 import moment from 'moment';
 import io from 'socket.io-client';
 const { Title, Text } = Typography;
@@ -211,10 +217,13 @@ const OrderItemCard = ({ item, formatPrice }) => {
 
 const Orders = () => {
   const { t, language } = useLanguage();
+  const navigate = useNavigate();
   const { 
     pendingOrdersCount, 
     updatePendingCount, 
-    refreshNotifications 
+    refreshNotifications,
+    triggerNewSupportTicketNotification,
+    triggerSupportReplyNotification
   } = useNotifications();
   const { getOrdersExportConfig } = useExportConfig();
   
@@ -247,6 +256,20 @@ const Orders = () => {
   const [shippingZones, setShippingZones] = useState([]);
   const [shippingCalculation, setShippingCalculation] = useState(null);
   const [customerAddresses, setCustomerAddresses] = useState([]);
+  
+  // Customer selection for order creation
+  const [customers, setCustomers] = useState([]);
+  const [selectedCustomerForOrder, setSelectedCustomerForOrder] = useState(null);
+  const [customerSearchLoading, setCustomerSearchLoading] = useState(false);
+  
+  // Address editing states
+  const [showAddressEditor, setShowAddressEditor] = useState(false);
+  const [editingAddress, setEditingAddress] = useState(null);
+  const [addressForm] = Form.useForm();
+  const [cities, setCities] = useState([]);
+  const [areas, setAreas] = useState([]);
+  const [streets, setStreets] = useState([]);
+  
   const [filters, setFilters] = useState({
     status: 'all',
     order_type: 'all',
@@ -266,6 +289,51 @@ const Orders = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [bulkActionVisible, setBulkActionVisible] = useState(false);
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
+  const [paymentLoadingId, setPaymentLoadingId] = useState(null); // Track loading for pay button
+
+  // Initiate MPGS Hosted Checkout for an order
+  const initiateCardPayment = async (order) => {
+    if (!order || paymentLoadingId) return;
+    if (order.payment_status === 'paid') {
+      message.info(t('orders.already_paid') || 'Order already paid');
+      return;
+    }
+    setPaymentLoadingId(order.id);
+    try {
+      // Use the new spec-compliant endpoint
+      const res = await paymentsService.createMPGSCheckoutSession(
+        order.id, 
+        order.total_amount, 
+        'JOD'
+      );
+      
+      if (!res?.success) {
+        message.error(res?.message || t('orders.payment_session_failed') || 'Failed to create payment session');
+        return;
+      }
+      
+  const { sessionId, checkoutUrl, orderId, redirectUrl, redirectUrlAbsolute, payPageUrl, scriptCheckoutUrl } = res;
+      if (!sessionId) {
+        message.error('Missing session information');
+        return;
+      }
+  // Prefer testFormUrl for debugging, then directPayUrl for immediate payment page redirection
+  let urlToOpen = res.testFormUrl || res.directPayUrl || res.scriptCheckoutUrl || res.redirectUrlAbsolute || res.redirectUrl || res.checkoutUrl;
+      if (!urlToOpen) {
+        message.error('Missing checkout URL');
+        return;
+      }
+  window.open(urlToOpen, '_blank', 'noopener,noreferrer,width=600,height=750');
+  console.log('MPGS payment URLs (opened):', { checkoutUrl, redirectUrl, redirectUrlAbsolute, payPageUrl, scriptCheckoutUrl });
+      message.success(t('orders.payment_redirecting') || 'Redirecting to secure payment page...');
+      console.log('Opened MPGS hosted page for order', order.id, 'session', sessionId);
+    } catch (err) {
+      console.error('Card payment init error:', err);
+      message.error(t('orders.payment_session_error') || 'Could not start card payment');
+    } finally {
+      setPaymentLoadingId(null);
+    }
+  };
 
   // Initialize table sorting with default sorting by created_at (newest first)
   const {
@@ -321,26 +389,89 @@ const Orders = () => {
       console.log('  Using socketUrl:', socketUrl);
       console.log('🔌 Attempting to connect to Socket.io server at:', socketUrl);
       
+      // Test basic HTTP connectivity first
+      console.log('🔍 Testing basic HTTP connectivity...');
+      fetch(`${socketUrl}/api/health`, { 
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(5000)
+      })
+      .then(response => {
+        console.log('✅ HTTP connectivity test result:', response.status, response.statusText);
+      })
+      .catch(httpError => {
+        console.error('❌ HTTP connectivity test failed:', httpError.message);
+        console.error('  This indicates the backend server may not be running on:', socketUrl);
+      });
+      
+      // Enhanced debugging
+      console.log('🔍 Socket.IO Debug Information:');
+      console.log('  - Token exists:', !!token);
+      console.log('  - Token preview:', token ? token.substring(0, 20) + '...' : 'None');
+      console.log('  - Connection config:', {
+        auth: { token: token ? 'Present' : 'Missing' },
+        transports: ['polling', 'websocket'], // Try polling first, then WebSocket
+        timeout: 30000, // Increased timeout
+        forceNew: true,
+        upgrade: true,
+        rememberUpgrade: false
+      });
+      
       try {
         socketRef.current = io(socketUrl, {
           auth: { token },
-          transports: ['websocket', 'polling'],
+          transports: ['polling', 'websocket'], // Try polling first
+          timeout: 30000,
           timeout: 20000,
-          forceNew: true
+          forceNew: true,
+          upgrade: true,
+          rememberUpgrade: false,
+          autoConnect: true,
+          reconnection: true,
+          reconnectionDelay: 1000,
+          reconnectionAttempts: 5,
+          maxReconnectionAttempts: 5
         });
 
+        // Enhanced connection success logging
         socketRef.current.on('connect', () => {
           console.log('✅ Socket.io connected successfully');
-          console.log('Socket ID:', socketRef.current.id);
+          console.log('  - Socket ID:', socketRef.current.id);
+          console.log('  - Transport used:', socketRef.current.io.engine.transport.name);
+          console.log('  - Connected to:', socketRef.current.io.uri);
+          console.log('  - Protocol version:', socketRef.current.protocol);
           setIsConnected(true);
         });
 
+        // Enhanced error logging
         socketRef.current.on('connect_error', (error) => {
           console.error('❌ Socket.io connection error:', error);
-          console.error('Error type:', error.type);
-          console.error('Error description:', error.description);
-          console.error('Error context:', error.context);
-          console.error('Error transport:', error.transport);
+          console.error('  - Error type:', error.type);
+          console.error('  - Error description:', error.description);
+          console.error('  - Error context:', error.context);
+          console.error('  - Error transport:', error.transport);
+          console.error('  - Error message:', error.message);
+          console.error('  - Full error object:', JSON.stringify(error, null, 2));
+          
+          // Network debugging
+          console.log('🌐 Network Debug:');
+          console.log('  - Current URL:', window.location.href);
+          console.log('  - Origin:', window.location.origin);
+          console.log('  - Is HTTPS:', window.location.protocol === 'https:');
+          console.log('  - Target URL:', socketUrl);
+          
+          // Specific error analysis
+          if (error.type === 'TransportError') {
+            console.log('🔍 Transport Error Analysis:');
+            console.log('  - This usually means the WebSocket connection failed');
+            console.log('  - Possible causes:');
+            console.log('    1. Backend server not running on:', socketUrl);
+            console.log('    2. Firewall blocking WebSocket connections');
+            console.log('    3. SSL/TLS certificate issues');
+            console.log('    4. CORS policy blocking the connection');
+            console.log('  - Socket.IO should automatically try HTTP polling next...');
+          }
+          
           setIsConnected(false);
         });
 
@@ -405,6 +536,7 @@ const Orders = () => {
         // Update counts and notifications
         updatePendingCount();
         fetchOrderStats();
+        fetchOrderCounts(); // Add this to update the counts display
       });
 
       socketRef.current.on('orderStatusUpdated', (orderData) => {
@@ -444,6 +576,7 @@ const Orders = () => {
         // Update counts
         updatePendingCount();
         fetchOrderStats();
+        fetchOrderCounts(); // Add this to update the counts display
       });
 
       socketRef.current.on('orderCancelled', (data) => {
@@ -528,6 +661,21 @@ const Orders = () => {
         
         refreshNotifications();
       });
+
+      // Support ticket socket events
+      socketRef.current.on('newSupportTicket', (ticketData) => {
+        console.log('🎟️ New support ticket received via socket:', ticketData);
+        
+        // Trigger notification through context
+        triggerNewSupportTicketNotification(ticketData);
+      });
+
+      socketRef.current.on('newSupportReply', (replyData) => {
+        console.log('💬 New support reply received via socket:', replyData);
+        
+        // Trigger notification through context
+        triggerSupportReplyNotification(replyData);
+      });
     };
 
     initializeSocket();
@@ -575,30 +723,44 @@ const Orders = () => {
     fetchBranches();
     fetchShippingZones();
     fetchProducts();
+    fetchCities(); // Fetch cities for address editing
   }, [filters]);
 
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      const params = {
-        ...filters,
-        status: filters.status === 'all' ? undefined : filters.status,
-        order_type: filters.order_type === 'all' ? undefined : filters.order_type,
-        payment_method: filters.payment_method === 'all' ? undefined : filters.payment_method,
-        limit: 50
-      };
+      const params = {};
       
-      // Handle custom date range
-      if (filters.date_range === 'custom' && filters.custom_date_range) {
-        const [startDate, endDate] = filters.custom_date_range;
-        if (startDate && endDate) {
-          params.start_date = startDate.format('YYYY-MM-DD');
-          params.end_date = endDate.format('YYYY-MM-DD');
-          // Remove the date_range parameter when using custom range
-          delete params.date_range;
+      // Apply filters properly
+      if (filters.status && filters.status !== 'all') {
+        params.status = filters.status;
+      }
+      if (filters.order_type && filters.order_type !== 'all') {
+        params.order_type = filters.order_type;
+      }
+      if (filters.payment_method && filters.payment_method !== 'all') {
+        params.payment_method = filters.payment_method;
+      }
+      if (filters.search && filters.search.trim()) {
+        params.search = filters.search.trim();
+      }
+      
+      // Handle date range
+      if (filters.date_range && filters.date_range !== 'all') {
+        if (filters.date_range === 'custom' && filters.custom_date_range) {
+          const [startDate, endDate] = filters.custom_date_range;
+          if (startDate && endDate) {
+            params.start_date = startDate.format('YYYY-MM-DD');
+            params.end_date = endDate.format('YYYY-MM-DD');
+          }
+        } else {
+          params.date_range = filters.date_range;
         }
       }
       
+      params.limit = 50;
+      
+      console.log('Fetching orders with params:', params);
       const response = await ordersService.getOrders(params);
       setOrders(response.data || []);
     } catch (error) {
@@ -636,7 +798,37 @@ const Orders = () => {
   const fetchOrderStats = async () => {
     try {
       setStatsLoading(true);
-      const response = await ordersService.getOrderStats(filters.date_range);
+      
+      // Use current filters for stats calculation
+      const statsParams = {};
+      
+      if (filters.date_range && filters.date_range !== 'all') {
+        if (filters.date_range === 'custom' && filters.custom_date_range) {
+          const [startDate, endDate] = filters.custom_date_range;
+          if (startDate && endDate) {
+            statsParams.start_date = startDate.format('YYYY-MM-DD');
+            statsParams.end_date = endDate.format('YYYY-MM-DD');
+          }
+        } else {
+          statsParams.date_range = filters.date_range;
+        }
+      } else {
+        statsParams.date_range = 'today'; // Default to today if no filter
+      }
+      
+      // Apply other filters to stats
+      if (filters.status && filters.status !== 'all') {
+        statsParams.status = filters.status;
+      }
+      if (filters.order_type && filters.order_type !== 'all') {
+        statsParams.order_type = filters.order_type;
+      }
+      if (filters.payment_method && filters.payment_method !== 'all') {
+        statsParams.payment_method = filters.payment_method;
+      }
+      
+      console.log('Fetching stats with params:', statsParams);
+      const response = await ordersService.getOrderStats(statsParams);
       setOrderStats(response.data || {});
     } catch (error) {
       console.error('Failed to fetch order stats:', error);
@@ -647,7 +839,9 @@ const Orders = () => {
 
   const fetchOrderCounts = async () => {
     try {
+      console.log('🔢 Fetching order counts...');
       const response = await ordersService.getOrderCounts();
+      console.log('📊 Order counts response:', response.data);
       setOrderCounts(response.data || {});
     } catch (error) {
       console.error('Failed to fetch order counts:', error);
@@ -733,6 +927,46 @@ const Orders = () => {
       setAvailableProducts(mockProducts);
       setProducts(mockProducts);
       return mockProducts;
+    }
+  };
+
+  // Fetch customers for selection in order creation
+  const fetchCustomers = async (searchTerm = '') => {
+    try {
+      setCustomerSearchLoading(true);
+      const response = await customersService.getCustomers({ 
+        search: searchTerm,
+        limit: 20 
+      });
+      
+      if (response.success) {
+        setCustomers(response.data || []);
+      } else {
+        setCustomers([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch customers:', error);
+      setCustomers([]);
+    } finally {
+      setCustomerSearchLoading(false);
+    }
+  };
+
+  // Handle customer selection in order form
+  const handleCustomerSelect = async (customerId) => {
+    const customer = customers.find(c => c.id === customerId);
+    if (customer) {
+      setSelectedCustomerForOrder(customer);
+      
+      // Auto-fill customer details in form
+      orderForm.setFieldsValue({
+        customer_name: `${customer.first_name} ${customer.last_name}`,
+        customer_phone: customer.phone,
+        customer_email: customer.email || ''
+      });
+      
+      // Fetch customer's addresses
+      await fetchCustomerAddresses(customer.phone, customer.id);
     }
   };
 
@@ -847,248 +1081,84 @@ const Orders = () => {
     }
   };
 
+  // Clean Google Maps + fallback shipping calculation
   const calculateShippingCost = async (deliveryAddressId, branchId, orderAmount = 0) => {
     try {
-      if (!deliveryAddressId || !branchId) {
-        console.log('Missing required parameters for shipping calculation:', { deliveryAddressId, branchId });
-        return null;
-      }
-      
-      console.log('Calculating shipping cost:', { deliveryAddressId, branchId, orderAmount });
-      
-  // First, try to get address details if deliveryAddressId is a number (address ID)
+      if (!deliveryAddressId || !branchId) return null;
+
+      // 1. Fetch address (must exist & have or produce coordinates)
+      let customerLocation = null;
       let addressData = null;
-      let customerLat = null;
-      let customerLng = null;
-      
-      // Check if deliveryAddressId is a valid address ID (numeric)
-      if (!isNaN(deliveryAddressId) && parseInt(deliveryAddressId) > 0) {
-        try {
-          // Get address details to extract coordinates
-          const addressResponse = await api.get(`/addresses/${deliveryAddressId}`);
-          if (addressResponse.data && addressResponse.data.success) {
-            addressData = addressResponse.data.data;
-            customerLat = addressData.latitude;
-            customerLng = addressData.longitude;
-            console.log('Address coordinates found:', { customerLat, customerLng });
-          }
-        } catch (addressError) {
-          console.warn('Could not fetch address details:', addressError);
-        }
-      }
-      
-      // Prepare shipping calculation payload
-      const shippingPayload = {
-        branch_id: branchId,
-        order_amount: orderAmount || 0
-      };
-      
-      // Add address information based on what we have
-      if (customerLat && customerLng) {
-        // Use coordinates if available
-        shippingPayload.customer_latitude = customerLat;
-        shippingPayload.customer_longitude = customerLng;
-        shippingPayload.delivery_address_id = deliveryAddressId;
-      } else if (!isNaN(deliveryAddressId)) {
-        // Use address ID if it's numeric, but warn about missing coordinates
-        shippingPayload.delivery_address_id = deliveryAddressId;
-        console.warn('Address coordinates missing for address ID:', deliveryAddressId);
-        
-        // Try fallback calculation using default zone
-        console.log('Attempting fallback shipping calculation...');
-        const fallbackResult = await calculateFallbackShipping(branchId, orderAmount);
-        if (fallbackResult) {
-          console.log('Fallback shipping calculation successful:', fallbackResult);
-          message.warning({
-            content: (
-              <div>
-                <div><strong>⚠️ Coordinates Missing</strong></div>
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  Using default zone pricing. For accurate shipping, please update customer address with GPS coordinates.
-                </div>
-              </div>
-            ),
-            duration: 6
-          });
-          setShippingCalculation(fallbackResult);
-          return fallbackResult;
-        } else {
-          message.error({
-            content: (
-              <div>
-                <div><strong>❌ Cannot Calculate Shipping</strong></div>
-                <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                  Address coordinates are missing and no default zones available. Please enter delivery fee manually.
-                </div>
-              </div>
-            ),
-            duration: 8
-          });
-          return null;
-        }
+      if (!isNaN(deliveryAddressId)) {
+        const addressResp = await api.get(`/addresses/${deliveryAddressId}`);
+        if (!addressResp.data?.success) throw new Error('Address not found');
+        addressData = addressResp.data.data;
+        if (addressData.latitude && addressData.longitude) {
+          customerLocation = { lat: parseFloat(addressData.latitude), lng: parseFloat(addressData.longitude) };
+        } else if (addressData.address_line) {
+          const fullAddress = `${addressData.address_line}, ${addressData.area || ''}, ${addressData.city || ''}, Jordan`;
+          const geo = await googleMapsService.geocodeAddress(fullAddress);
+          if (geo.success) {
+            customerLocation = geo.coordinates;
+            // Save back (best effort)
+            api.put(`/addresses/${deliveryAddressId}`, { latitude: customerLocation.lat, longitude: customerLocation.lng }).catch(() => {});
+          } else throw new Error('Unable to geocode address');
+        } else throw new Error('Incomplete address');
       } else {
-        // For text addresses, we can't calculate shipping automatically
-        console.log('Cannot calculate shipping for text address:', deliveryAddressId);
-        message.warning({
-          content: (
-            <div>
-              <div><strong>💡 Manual Address Entry</strong></div>
-              <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                Automatic shipping calculation is only available for saved addresses with GPS coordinates. Please enter delivery fee manually.
-              </div>
-            </div>
-          ),
-          duration: 6
-        });
-        return null;
+        return null; // text/manual address not supported for automatic calc
       }
-      
-      console.log('Shipping calculation payload:', shippingPayload);
-      
-      const response = await api.post('/shipping/calculate', shippingPayload);
-      
-    if (response.data && response.data.success) {
-        const shippingData = response.data.data;
-        console.log('Shipping calculation result:', shippingData);
-        
-        const calculationResult = {
-      total_shipping_cost: shippingData.total_cost || shippingData.total_shipping_cost || shippingData.delivery_fee || 0,
-          free_shipping_applied: shippingData.free_shipping_applied || false,
-          zone_name: shippingData.zone_name_en || shippingData.shipping_zone_name || 'Unknown Zone',
-          zone_name_en: shippingData.zone_name_en || 'Unknown Zone',
-      distance_km: shippingData.distance_km || 0,
-      distance: shippingData.distance_km || 0,
-      base_cost: shippingData.base_cost || shippingData.total_cost || shippingData.total_shipping_cost || 0,
-      calculation_method: shippingData.calculation_method || 'zone-based',
-          free_shipping_threshold: shippingData.free_shipping_threshold
+
+      // 2. Fetch branch
+      let branchLocation = null;
+      try {
+        const branchResp = await api.get(`/branches/${branchId}`);
+        const b = branchResp.data?.data;
+        if (b?.latitude && b?.longitude) branchLocation = { lat: parseFloat(b.latitude), lng: parseFloat(b.longitude) };
+        else throw new Error('Branch missing coordinates');
+      } catch (e) {
+        // Fallback central Amman coords
+        branchLocation = { lat: 31.9454, lng: 35.9284 };
+      }
+
+      // 3. Load zones (optional)
+      let zones = [];
+      try { zones = (await api.get('/shipping/zones')).data?.data?.zones || []; } catch (_) {}
+
+      // 4. Primary Google Maps distance-based calc
+      const gmResult = await googleMapsService.calculateDeliveryFee(branchLocation, customerLocation, zones, orderAmount);
+      if (gmResult.success) {
+        const d = gmResult.deliveryCalculation;
+        const result = {
+          total_shipping_cost: d.final_fee,
+          delivery_fee: d.final_fee,
+          free_shipping_applied: d.free_shipping_applied,
+          zone_name: d.selected_zone?.name || 'Distance-based',
+          zone_name_en: d.selected_zone?.name || 'Distance-based',
+          distance_km: d.distance_km,
+            distance: d.distance_km,
+          duration_minutes: d.duration_minutes,
+          duration_text: d.duration_text,
+          calculation_method: 'google_maps_distance',
+          base_cost: d.base_fee,
+          free_shipping_threshold: d.selected_zone?.free_shipping_threshold,
+          route_description: d.route_text
         };
-        // Alias for callers expecting delivery_fee
-        calculationResult.delivery_fee = calculationResult.total_shipping_cost;
-        calculationResult.shipping_zone_name = calculationResult.zone_name_en;
-        
-        setShippingCalculation(calculationResult);
-        return calculationResult;
-      } else {
-        throw new Error(response.data?.message || 'Invalid response from shipping service');
+        setShippingCalculation(result);
+        return result;
       }
-      
-    } catch (error) {
-      console.error('Failed to calculate shipping cost:', error);
-      
-      // Enhanced error handling with specific error messages
-      let errorMessage = 'Failed to calculate shipping cost. ';
 
-      if (error.response) {
-        // Server responded with error status
-        const status = error.response.status;
-        const data = error.response.data;
-
-        if (status === 404) {
-          errorMessage += 'Shipping zone not found for this address. Please check if the address is within our delivery area.';
-        } else if (status === 400) {
-          const serverMessage = data.message || '';
-          if (serverMessage.includes('coordinates')) {
-            // Don't show generic error, instead try fallback and provide helpful guidance
-            console.log('Coordinates missing error detected, trying fallback calculation...');
-            try {
-              const fallbackResult = await calculateFallbackShipping(branchId, orderAmount);
-              if (fallbackResult) {
-                message.warning({
-                  content: (
-                    <div>
-                      <div><strong>⚠️ Using Default Zone Pricing</strong></div>
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                        GPS coordinates missing. Using estimated delivery fee: {formatPrice(fallbackResult.total_shipping_cost)}
-                        <br />
-                        <strong>To get accurate pricing:</strong> Update customer address with precise GPS location
-                      </div>
-                    </div>
-                  ),
-                  duration: 8
-                });
-                setShippingCalculation(fallbackResult);
-                return fallbackResult;
-              } else {
-                message.error({
-                  content: (
-                    <div>
-                      <div><strong>📍 Missing GPS Coordinates</strong></div>
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                        Customer address needs GPS coordinates for shipping calculation.
-                        <br />
-                        <strong>Next steps:</strong> Please enter delivery fee manually or ask customer to update their address.
-                      </div>
-                    </div>
-                  ),
-                  duration: 10
-                });
-                return null;
-              }
-            } catch (fallbackError) {
-              console.error('Fallback calculation also failed:', fallbackError);
-              message.error({
-                content: (
-                  <div>
-                    <div><strong>❌ Cannot Calculate Shipping</strong></div>
-                    <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                      Address coordinates missing and fallback calculation failed. Please enter delivery fee manually.
-                    </div>
-                  </div>
-                ),
-                duration: 8
-              });
-              return null;
-            }
-          } else if (data && data.code === 'OUT_OF_RANGE') {
-            const dist = data?.data?.distance_km;
-            const max = data?.data?.max_distance_km;
-            const nearest = data?.data?.nearest_branch;
-            message.error({
-              content: (
-                <div>
-                  <div><strong>🚫 Address Outside Delivery Range</strong></div>
-                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                    {dist ? `Distance to branch: ${dist} km. ` : ''}Maximum allowed: {max} km.
-                    <br />
-                    {nearest ? (
-                      <span>
-                        Nearest available branch: <strong>{nearest.title_en || nearest.title_ar}</strong> ({nearest.distance_km} km).
-                        Please switch branch for this order or enter delivery fee manually.
-                      </span>
-                    ) : (
-                      <span>Please select a different branch or enter delivery fee manually.</span>
-                    )}
-                  </div>
-                </div>
-              ),
-              duration: 10
-            });
-            return null;
-          } else if (serverMessage.includes('branch')) {
-            errorMessage += 'Invalid branch selected. Please choose a different branch.';
-          } else {
-            errorMessage += serverMessage || 'Invalid shipping calculation parameters. Please check the address and branch selection.';
-          }
-        } else if (status === 500) {
-          errorMessage += 'Server error during shipping calculation. Please contact support or try again later.';
-        } else {
-          errorMessage += data.message || 'Unexpected error occurred. Please try again.';
-        }
-      } else if (error.request) {
-        // Network error
-        errorMessage += 'Network error. Please check your internet connection and try again.';
-      } else {
-        // Other errors
-        const errorMsg = error.message || '';
-        if (errorMsg.includes('coordinates')) {
-          errorMessage += 'Customer address coordinates are required for shipping calculation.';
-        } else {
-          errorMessage += errorMsg || 'Unexpected error. Please try again.';
-        }
+      // 5. Fallback zone-based quick calc
+      const fallback = await calculateFallbackShipping(branchId, orderAmount);
+      if (fallback) {
+        setShippingCalculation(fallback);
+        return fallback;
       }
-      
-      message.error(errorMessage);
-      setShippingCalculation(null);
+
+      return null;
+    } catch (err) {
+      console.error('Shipping calc error:', err);
+      const fallback = await calculateFallbackShipping(branchId, orderAmount);
+      if (fallback) return fallback;
       return null;
     }
   };
@@ -1106,7 +1176,7 @@ const Orders = () => {
     
     // Check if we have both required values
     if (!currentBranch) {
-      message.warning('Please select a branch first to calculate shipping cost.');
+      message.warning(t('orders.branch_required_for_shipping'));
       return;
     }
     
@@ -1134,7 +1204,7 @@ const Orders = () => {
         } else {
           // If calculation failed, reset delivery fee and let user enter manually
           orderForm.setFieldsValue({ delivery_fee: 0 });
-          message.info('Please enter delivery fee manually for this address.');
+          message.info(t('orders.manual_delivery_fee'));
         }
       } catch (error) {
         loadingMessage(); // Hide loading message
@@ -1224,7 +1294,7 @@ const Orders = () => {
       fetchOrderCounts();
       updatePendingCount();
     } catch (error) {
-      message.error(error.message || 'Failed to update status');
+      message.error(error.message || t('orders.status_update_failed'));
     }
   };
 
@@ -1256,6 +1326,8 @@ const Orders = () => {
       
       const orderData = {
         ...values,
+        // Include customer_id if a customer was selected (enables proper admin order notifications)
+        customer_id: selectedCustomerForOrder?.id || null,
         // Ensure required fields are present
         branch_id: values.branch_id || branches[0]?.id || 635, // Default to first branch or fallback
         customer_name: values.customer_name || 'Admin Created Order',
@@ -1279,6 +1351,19 @@ const Orders = () => {
         ]
       };
 
+      console.log('🚀 [ADMIN DEBUG] Creating order with data:', {
+        selectedCustomer: selectedCustomerForOrder,
+        customer_id: orderData.customer_id,
+        customer_name: orderData.customer_name,
+        customer_phone: orderData.customer_phone,
+        customer_email: orderData.customer_email,
+        total_amount: orderData.total_amount,
+        orderType: 'admin_created',
+        hasCustomerSelected: !!selectedCustomerForOrder
+      });
+
+      console.log('🚀 [ADMIN DEBUG] Full order data being sent:', JSON.stringify(orderData, null, 2));
+
       console.log('Creating order with calculated shipping:', {
         subtotal,
         delivery_fee: deliveryFee,
@@ -1286,19 +1371,25 @@ const Orders = () => {
         shipping_calculation: shippingCalculation
       });
 
-      await ordersService.createOrder(orderData);
+      const response = await ordersService.createOrder(orderData);
+      console.log('🚀 [ADMIN DEBUG] Order creation response:', response);
+      
       message.success(t('orders.created_successfully'));
       setCreateOrderVisible(false);
       orderForm.resetFields();
       setSelectedItems([]);
+      setSelectedCustomerForOrder(null);
+      setCustomerAddresses([]);
       setShippingCalculation(null); // Reset shipping calculation
       fetchOrders();
       fetchOrderCounts();
       // Update notification badge counter
       updatePendingCount();
+      
+      console.log('🚀 [ADMIN DEBUG] Order creation completed successfully');
     } catch (error) {
-      console.error('Create order error:', error);
-      message.error(error.message || 'Failed to create order');
+      console.error('🚀 [ADMIN DEBUG] Create order error:', error);
+      message.error(error.message || t('orders.create_order_failed'));
     }
   };
 
@@ -1396,7 +1487,41 @@ const Orders = () => {
         orderData.delivery_fee = 0; // No delivery fee for pickup orders
       }
 
+      // Verify that the selected address belongs to the customer
+      if (values.order_type === 'delivery' && values.delivery_address_id) {
+        const selectedAddress = customerAddresses.find(addr => 
+          String(addr.id || addr.address_id) === String(values.delivery_address_id)
+        );
+        
+        if (!selectedAddress) {
+          message.error({
+            content: (
+              <div>
+                <div><strong>{t('orders.address_selection_error')}</strong></div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {t('orders.address_not_in_list')}
+                </div>
+              </div>
+            ),
+            duration: 6
+          });
+          return;
+        }
+        
+        console.log('Address validation passed:', {
+          selected_address_id: values.delivery_address_id,
+          address_details: selectedAddress,
+          customer_addresses_count: customerAddresses.length
+        });
+      }
+
       console.log('Sending updated order data:', orderData);
+      console.log('Debug - Address validation details:', {
+        delivery_address_id: orderData.delivery_address_id,
+        order_type: orderData.order_type,
+        customer_phone: orderData.customer_phone,
+        existing_user_id: editingOrder.user_id
+      });
 
       await ordersService.updateOrder(editingOrder.id, orderData);
       message.success(t('orders.updated_successfully') || 'Order updated successfully');
@@ -1410,7 +1535,68 @@ const Orders = () => {
       updatePendingCount();
     } catch (error) {
       console.error('Edit order error:', error);
-      message.error(error.message || t('orders.update_error') || 'Failed to update order');
+      
+      // Enhanced error handling for delivery address issues
+      if (error.response?.data?.message) {
+        const errorMessage = error.response.data.message;
+        const errorMessageAr = error.response.data.message_ar;
+        const details = error.response.data.details;
+        
+        if (errorMessage.includes('delivery address') || errorMessage.includes('address')) {
+          // Provide more helpful feedback for address validation errors
+          message.error({
+            content: (
+              <div>
+                <div><strong>{t('orders.delivery_address_error')}</strong></div>
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  {errorMessage}
+                  {details && (
+                    <div style={{ marginTop: '4px', fontStyle: 'italic', color: '#666' }}>
+                      {t('orders.technical_details')}: {details}
+                    </div>
+                  )}
+                  <div style={{ marginTop: '8px' }}>
+                    <strong>{t('orders.solutions')}:</strong>
+                    <ul style={{ marginTop: '4px', marginBottom: 0, paddingLeft: '20px' }}>
+                      <li>{t('orders.click_refresh_addresses')}</li>
+                      <li>{t('orders.select_different_address')}</li>
+                      <li>{t('orders.add_new_address_solution')}</li>
+                      <li>{t('orders.customer_link_issue')}</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            ),
+            duration: 12
+          });
+          
+          // If it's a user mismatch, offer to refresh addresses
+          if (details && details.includes('user')) {
+            setTimeout(() => {
+              Modal.confirm({
+                title: t('orders.address_user_mismatch'),
+                content: (
+                  <div>
+                    <p>{t('orders.address_user_mismatch_content')}</p>
+                    <p>{t('orders.refresh_addresses_question')}</p>
+                  </div>
+                ),
+                onOk: async () => {
+                  const customerPhone = orderForm.getFieldValue('customer_phone');
+                  if (customerPhone) {
+                    await fetchCustomerAddresses(customerPhone);
+                    message.success(t('orders.address_refresh_success'));
+                  }
+                }
+              });
+            }, 2000);
+          }
+        } else {
+          message.error(errorMessage);
+        }
+      } else {
+        message.error(error.message || t('orders.update_error') || 'Failed to update order');
+      }
     }
   };
 
@@ -1590,7 +1776,11 @@ const Orders = () => {
   const showCreateModal = () => {
     orderForm.resetFields();
     setSelectedItems([]);
+    setSelectedCustomerForOrder(null);
+    setCustomerAddresses([]);
     setCreateOrderVisible(true);
+    // Load initial customer list
+    fetchCustomers();
   };
 
   const showEditModal = async (order) => {
@@ -1772,6 +1962,12 @@ const Orders = () => {
         total_amount: completeOrder.total_amount
       });
       
+      // Fetch latest customer addresses for accurate validation
+      if (completeOrder.customer_phone) {
+        console.log('Fetching customer addresses for edit modal...');
+        await fetchCustomerAddresses(completeOrder.customer_phone, completeOrder.user_id);
+      }
+      
       console.log('Form values set:', {
         customer_name: completeOrder.customer_name,
         customer_phone: completeOrder.customer_phone,
@@ -1784,6 +1980,166 @@ const Orders = () => {
     } catch (error) {
       console.error('Error opening edit modal:', error);
       message.error(t('orders.failed_to_load_order') || 'Failed to load order details');
+    }
+  };
+
+  // Address editing functions
+  const handleEditAddress = () => {
+    setShowAddressEditor(true);
+    // If there's a selected address, populate the form for editing
+    const currentAddressId = orderForm.getFieldValue('delivery_address_id');
+    if (currentAddressId && customerAddresses.length > 0) {
+      const address = customerAddresses.find(addr => 
+        String(addr.id || addr.address_id) === String(currentAddressId)
+      );
+      if (address) {
+        setEditingAddress(address);
+        addressForm.setFieldsValue({
+          name: address.name || address.address_name,
+          address_line_1: address.address_line_1,
+          building_no: address.building_no,
+          latitude: address.latitude,
+          longitude: address.longitude,
+          city_id: address.city_id,
+          area_id: address.area_id,
+          street_id: address.street_id
+        });
+      }
+    }
+  };
+
+  const handleAddressFormFinish = async (values) => {
+    try {
+      const customerPhone = orderForm.getFieldValue('customer_phone');
+      if (!customerPhone) {
+        message.error(t('orders.customer_phone_required'));
+        return;
+      }
+
+      // Find or create user
+      let userId;
+      try {
+        const userResponse = await api.get(`/users?phone=${customerPhone}&limit=1`);
+        if (userResponse.data.success && userResponse.data.data.length > 0) {
+          userId = userResponse.data.data[0].id;
+        } else {
+          // Create new user
+          const createUserResponse = await api.post('/users', {
+            name: orderForm.getFieldValue('customer_name'),
+            phone: customerPhone,
+            email: orderForm.getFieldValue('customer_email')
+          });
+          userId = createUserResponse.data.data.id;
+        }
+      } catch (error) {
+        console.error('Error handling user:', error);
+        message.error(t('orders.failed_to_handle_customer'));
+        return;
+      }
+
+      const addressData = {
+        ...values,
+        user_id: userId,
+        is_default: customerAddresses.length === 0 // Make first address default
+      };
+
+      let response;
+      if (editingAddress) {
+        // Update existing address
+        response = await api.put(`/addresses/${editingAddress.id || editingAddress.address_id}`, addressData);
+      } else {
+        // Create new address
+        response = await api.post('/addresses', addressData);
+      }
+
+      if (response.data.success) {
+        message.success(editingAddress ? t('orders.address_updated_successfully') : t('orders.address_created_successfully'));
+        setShowAddressEditor(false);
+        setEditingAddress(null);
+        addressForm.resetFields();
+        
+        // Refresh customer addresses
+        await fetchCustomerAddresses(customerPhone, userId);
+        
+        // Set the new/updated address as selected
+        const addressId = String(response.data.data.id || response.data.data.address_id);
+        orderForm.setFieldsValue({ delivery_address_id: addressId });
+        
+        // Recalculate shipping if needed
+        const branchId = orderForm.getFieldValue('branch_id');
+        const subtotal = calculateOrderTotal();
+        if (orderForm.getFieldValue('order_type') === 'delivery' && branchId) {
+          try {
+            const calculation = await calculateShippingCost(addressId, branchId, subtotal);
+            if (calculation) {
+              setShippingCalculation(calculation);
+              orderForm.setFieldsValue({ delivery_fee: calculation.total_shipping_cost || 0 });
+            }
+          } catch (err) {
+            console.error('Error recalculating shipping:', err);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error saving address:', error);
+      message.error(t('orders.failed_to_save_address'));
+    }
+  };
+
+  const handleCancelAddressEdit = () => {
+    setShowAddressEditor(false);
+    setEditingAddress(null);
+    addressForm.resetFields();
+  };
+
+  // Fetch location data for address form
+  const fetchCities = async () => {
+    try {
+      const response = await api.get('/locations/cities');
+      if (response.data.success) {
+        setCities(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching cities:', error);
+    }
+  };
+
+  const fetchAreas = async (cityId) => {
+    try {
+      const response = await api.get(`/locations/areas?city_id=${cityId}`);
+      if (response.data.success) {
+        setAreas(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching areas:', error);
+    }
+  };
+
+  const fetchStreets = async (areaId) => {
+    try {
+      const response = await api.get(`/locations/streets?area_id=${areaId}`);
+      if (response.data.success) {
+        setStreets(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching streets:', error);
+    }
+  };
+
+  const handleCityChange = (cityId) => {
+    addressForm.setFieldsValue({ area_id: null, street_id: null });
+    setAreas([]);
+    setStreets([]);
+    if (cityId) {
+      fetchAreas(cityId);
+    }
+  };
+
+  const handleAreaChange = (areaId) => {
+    addressForm.setFieldsValue({ street_id: null });
+    setStreets([]);
+    if (areaId) {
+      fetchStreets(areaId);
     }
   };
 
@@ -2094,21 +2450,34 @@ const Orders = () => {
       onOk: async () => {
         try {
           setBulkActionLoading(true);
-          await Promise.all(selectedRowKeys.map(id => 
-            ordersService.updateOrderStatus(id, { 
-              order_status: status, 
-              notes: 'Bulk status update by admin' 
-            })
-          ));
+          
+          // Process updates in batches to avoid overwhelming the server
+          const batchSize = 10;
+          const batches = [];
+          
+          for (let i = 0; i < selectedRowKeys.length; i += batchSize) {
+            batches.push(selectedRowKeys.slice(i, i + batchSize));
+          }
+          
+          for (const batch of batches) {
+            await Promise.all(batch.map(id => 
+              ordersService.updateOrderStatus(id, { 
+                order_status: status, 
+                notes: 'Bulk status update by admin' 
+              })
+            ));
+          }
+          
           message.success(t('orders.bulk_status_updated_successfully', { 
             count: selectedRowKeys.length 
           }));
           setSelectedRowKeys([]);
-          fetchOrders();
-          fetchOrderCounts();
+          await fetchOrders();
+          await fetchOrderCounts();
           updatePendingCount();
         } catch (error) {
-          message.error(t('orders.bulk_status_update_error'));
+          console.error('Bulk status update error:', error);
+          message.error(error?.response?.data?.message || t('orders.bulk_status_update_error'));
         } finally {
           setBulkActionLoading(false);
         }
@@ -2123,139 +2492,161 @@ const Orders = () => {
     
     // Create comprehensive CSV data with organized structure
     const csvData = selectedOrders.map(order => {
-      // Format order date
+      // Format order date and time separately
       const orderDate = new Date(order.created_at);
-      const formattedDate = orderDate.toLocaleDateString();
+      const formattedDate = orderDate.toLocaleDateString('en-GB'); // DD/MM/YYYY format
       const formattedTime = orderDate.toLocaleTimeString([], { 
         hour: '2-digit', 
         minute: '2-digit',
-        hour12: true 
+        hour12: false // 24-hour format for better sorting
       });
       
-      // Calculate age
+      // Calculate age in hours for operational use
       const now = new Date();
       const diffMs = now - orderDate;
       const diffHours = Math.floor(diffMs / 3600000);
       const diffDays = Math.floor(diffHours / 24);
-      const orderAge = diffDays > 0 ? `${diffDays}d` : `${diffHours}h`;
+      const orderAge = diffDays > 0 ? `${diffDays}d ${diffHours % 24}h` : `${diffHours}h`;
       
-      // Format delivery address
-      let deliveryAddress = '-';
+      // Format delivery address with detailed breakdown
+      let addressLine1 = '-';
+      let addressLine2 = '-';
+      let city = '-';
+      let governorate = '-';
+      let fullAddress = '-';
+      
       if (order.order_type === 'delivery' && order.delivery_address) {
-        deliveryAddress = `${order.delivery_address.address_line}, ${order.delivery_address.city}, ${order.delivery_address.governorate}`;
+        const addr = order.delivery_address;
+        addressLine1 = addr.address_line || '-';
+        addressLine2 = addr.address_line_2 || '-';
+        city = addr.city || '-';
+        governorate = addr.governorate || '-';
+        fullAddress = `${addr.address_line || ''}, ${addr.city || ''}, ${addr.governorate || ''}`.replace(/^,\s*|,\s*$/g, '');
       }
       
-      // Get payment status display
+      // Format payment status and method
       const paymentStatusText = order.payment_status ? 
         (t(`orders.payment_status_${order.payment_status}`) || order.payment_status) : 
         'Pending';
       
+      const paymentMethodText = order.payment_method ? 
+        (t(`orders.payment_${order.payment_method}`) || order.payment_method) : 
+        'Unknown';
+      
+      // Calculate totals with proper formatting
+      const subtotal = Number(order.subtotal || 0);
+      const deliveryFee = Number(order.delivery_fee || 0);
+      const taxAmount = Number(order.tax_amount || 0);
+      const discountAmount = Number(order.discount_amount || 0);
+      const totalAmount = Number(order.total_amount || 0);
+      
       return {
-        // Order Information
-        'Order ID': `#${order.id}`,
+        // Basic Order Information
+        'Order ID': order.id,
         'Order Number': order.order_number || `ORD-${order.id}`,
         'Order Status': t(`orders.status_${order.order_status}`) || order.order_status,
         'Order Type': t(`orders.${order.order_type}`) || order.order_type,
+        
+        // Date and Time (Separate columns for better filtering)
         'Order Date': formattedDate,
         'Order Time': formattedTime,
         'Order Age': orderAge,
+        'Created Timestamp': order.created_at,
         
-        // Customer Information
+        // Customer Information (Separate columns)
         'Customer Name': order.customer_name || 'Unknown',
         'Customer Phone': order.customer_phone || '-',
         'Customer Email': order.customer_email || '-',
         
-        // Financial Information
-        'Subtotal': `$${Number(order.subtotal || 0).toFixed(2)}`,
-        'Delivery Fee': `$${Number(order.delivery_fee || 0).toFixed(2)}`,
-        'Tax Amount': `$${Number(order.tax_amount || 0).toFixed(2)}`,
-        'Discount': `$${Number(order.discount_amount || 0).toFixed(2)}`,
-        'Total Amount': `$${Number(order.total_amount || 0).toFixed(2)}`,
+        // Financial Breakdown (Separate columns for analysis)
+        'Subtotal (USD)': subtotal.toFixed(2),
+        'Delivery Fee (USD)': deliveryFee.toFixed(2),
+        'Tax Amount (USD)': taxAmount.toFixed(2),
+        'Discount Amount (USD)': discountAmount.toFixed(2),
+        'Total Amount (USD)': totalAmount.toFixed(2),
         
         // Payment Information
-        'Payment Method': t(`orders.payment_${order.payment_method}`) || order.payment_method || 'Unknown',
+        'Payment Method': paymentMethodText,
         'Payment Status': paymentStatusText,
         'Points Used': order.points_used || 0,
         'Points Earned': order.points_earned || 0,
         
-        // Order Details
+        // Order Content Details
         'Items Count': order.items_count || 0,
-        'Delivery Address': deliveryAddress,
         'Special Instructions': order.special_instructions || '-',
         'Promo Code': order.promo_code || '-',
         
-        // Timing Information
+        // Address Information (Detailed breakdown)
+        'Address Line 1': addressLine1,
+        'Address Line 2': addressLine2,
+        'City': city,
+        'Governorate': governorate,
+        'Full Address': fullAddress,
+        
+        // Delivery Information
         'Estimated Delivery': order.estimated_delivery_time ? 
           new Date(order.estimated_delivery_time).toLocaleString() : '-',
         'Delivered At': order.delivered_at ? 
           new Date(order.delivered_at).toLocaleString() : '-',
+        
+        // Cancellation Information
         'Cancelled At': order.cancelled_at ? 
           new Date(order.cancelled_at).toLocaleString() : '-',
         'Cancellation Reason': order.cancellation_reason || '-',
         
         // Branch Information
-        'Branch': order.branch_title_en || order.branch_title_ar || 'Unknown Branch',
+        'Branch Name': order.branch_title_en || order.branch_title_ar || 'Unknown Branch',
+        'Branch ID': order.branch_id || '-',
         
-        // Additional Information
+        // Timestamps
         'Last Updated': order.updated_at ? 
           new Date(order.updated_at).toLocaleString() : '-'
       };
     });
     
+    if (csvData.length === 0) {
+      message.warning('No data to export');
+      return;
+    }
+    
     // Create organized CSV content with proper headers
     const headers = Object.keys(csvData[0]);
     const csvContent = [
-      // Add title and export info
-      `FECS Restaurant - Orders Export`,
+      // Add comprehensive header information
+      'FECS Restaurant - Detailed Orders Export',
       `Export Date: ${new Date().toLocaleString()}`,
       `Total Orders: ${selectedRowKeys.length}`,
-      '', // Empty line
-      // Headers
+      `Filters Applied: ${JSON.stringify(filters)}`,
+      '', // Empty line for separation
+      // Column headers
       headers.join(','),
-      // Data rows
+      // Data rows with proper CSV escaping
       ...csvData.map(row => 
         headers.map(header => {
           const value = row[header];
-          // Escape commas and quotes in values
-          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-            return `"${value.replace(/"/g, '""')}"`;
+          // Properly escape CSV values
+          if (value === null || value === undefined) return '';
+          const stringValue = String(value);
+          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+            return `"${stringValue.replace(/"/g, '""')}"`;
           }
-          return value;
+          return stringValue;
         }).join(',')
       )
     ].join('\n');
     
-    // Create and download file
+    // Create and download the file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    
-    // Generate descriptive filename
-    const dateStr = new Date().toISOString().split('T')[0];
-    const timeStr = new Date().toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    }).replace(':', '');
-    const filename = `FECS_Orders_Export_${dateStr}_${timeStr}_${selectedRowKeys.length}orders.csv`;
-    
-    link.setAttribute('download', filename);
+    link.setAttribute('download', `FECS_Orders_Export_${new Date().toISOString().split('T')[0]}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     
-    message.success({
-      content: (
-        <div>
-          <strong>{t('orders.exported_successfully') || 'Export completed successfully!'}</strong>
-          <br />
-          <small>{selectedRowKeys.length} {t('orders.orders_exported') || 'orders exported'} • {filename}</small>
-        </div>
-      ),
-      duration: 5
-    });
+    message.success(t('orders.exported_successfully', { count: selectedRowKeys.length }));
   };
 
   const clearSelection = () => {
@@ -2320,9 +2711,12 @@ const Orders = () => {
       return '$0.00';
     }
     
+    // Always format as USD currency with $ symbol
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
     }).format(numPrice);
   };
 
@@ -2450,7 +2844,10 @@ const Orders = () => {
             trigger={['click']}
             placement="bottomLeft"
           >
-            <div style={{ cursor: 'pointer' }}>
+            <div 
+              style={{ cursor: 'pointer' }}
+              onClick={(e) => e.stopPropagation()}
+            >
               <Tag 
                 color={getStatusColor(orderStatus)} 
                 icon={getStatusIcon(orderStatus)}
@@ -2539,65 +2936,90 @@ const Orders = () => {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 80,
+      width: 140,
       fixed: 'right',
       render: (_, record) => (
-        <Dropdown
-          overlay={
-            <Menu>
-              <Menu.Item 
-                key="view_details" 
-                icon={<EyeOutlined />}
-                onClick={() => handleViewDetails(record)}
-              >
-                {t('common.view_details')}
-              </Menu.Item>
-              <Menu.Item 
-                key="print_invoice" 
-                icon={<PrinterOutlined />}
-                onClick={() => handlePrintInvoice(record)}
-                style={{ color: '#52c41a' }}
-              >
-                {t('orders.print_invoice')}
-              </Menu.Item>
-              <Menu.Divider />
-              <Menu.Item 
-                key="edit" 
-                icon={<EditOutlined />}
-                onClick={() => showEditModal(record)}
-              >
-                {t('common.edit')}
-              </Menu.Item>
-              <Menu.Item 
-                key="cancel" 
-                icon={<CloseCircleOutlined />}
-                danger
-                onClick={() => handleCancelOrder(record)}
-              >
-                {t('orders.cancel_order')}
-              </Menu.Item>
-            </Menu>
-          }
-          trigger={['click']}
-          placement="bottomRight"
-        >
-          <Button
-            type="text"
-            size="small"
-            icon={<MoreOutlined />}
-            style={{ 
-              border: '1px solid #d9d9d9',
-              borderRadius: '4px',
-              padding: '4px 6px'
-            }}
-          />
-        </Dropdown>
+        <Space size="small">
+          <Tooltip title={t('common.view_details')}>
+            <Button
+              type="primary"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleViewDetails(record);
+              }}
+            />
+          </Tooltip>
+          {record.payment_status !== 'paid' && (
+            <Tooltip title={t('orders.pay_with_card') || 'Pay with Card'}>
+              <Button
+                type="default"
+                size="small"
+                icon={<CreditCardOutlined />}
+                loading={paymentLoadingId === record.id}
+                onClick={(e) => { e.stopPropagation(); initiateCardPayment(record); }}
+                style={{ color: '#722ed1', borderColor: '#722ed1' }}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title={t('orders.print_invoice')}>
+            <Button
+              type="default"
+              size="small"
+              icon={<PrinterOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                handlePrintInvoice(record);
+              }}
+              style={{ color: '#52c41a', borderColor: '#52c41a' }}
+            />
+          </Tooltip>
+          <Tooltip title={t('common.edit')}>
+            <Button
+              type="default"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={(e) => {
+                e.stopPropagation();
+                showEditModal(record);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title={t('orders.cancel_order')}>
+            <Button
+              type="default"
+              size="small"
+              icon={<CloseCircleOutlined />}
+              danger
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCancelOrder(record);
+              }}
+            />
+          </Tooltip>
+        </Space>
       )
     }
   ];
 
   return (
-    <div style={{ padding: '24px' }}>
+    <>
+      <style>
+        {`
+          .ant-table-tbody > tr.ant-table-row:hover > td {
+            background-color: #f0f9ff !important;
+            transition: background-color 0.2s ease;
+          }
+          .ant-table-tbody > tr.ant-table-row {
+            transition: background-color 0.2s ease;
+          }
+          .ant-table-tbody > tr.ant-table-row:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+          }
+        `}
+      </style>
+      <div style={{ padding: '24px' }}>
       {/* Socket.io Connection Status */}
       <Alert
         message={
@@ -2685,21 +3107,21 @@ const Orders = () => {
               title={
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>{t('orders.pending_orders')}</span>
-                  {pendingOrdersCount > 10 && (
+                  {(orderCounts.pending || 0) > 10 && (
                     <Tag color="warning" size="small">HIGH</Tag>
                   )}
                 </div>
               }
-              value={pendingOrdersCount}
+              value={orderCounts.pending || 0}
               prefix={<ClockCircleOutlined />}
               valueStyle={{ 
-                color: pendingOrdersCount > 10 ? '#ff4d4f' : pendingOrdersCount > 5 ? '#fa8c16' : '#52c41a' 
+                color: (orderCounts.pending || 0) > 10 ? '#ff4d4f' : (orderCounts.pending || 0) > 5 ? '#fa8c16' : '#52c41a' 
               }}
               suffix={
                 <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '4px' }}>
-                  {pendingOrdersCount > 10 
+                  {(orderCounts.pending || 0) > 10 
                     ? '🚨 Action needed!' 
-                    : pendingOrdersCount > 5 
+                    : (orderCounts.pending || 0) > 5 
                     ? '⚠️ Monitor closely' 
                     : '✅ Under control'
                   }
@@ -2778,7 +3200,7 @@ const Orders = () => {
       </Row>
 
       {/* Quick Action Alerts */}
-      {(pendingOrdersCount > 10 || (orderStats.avg_preparation_time || 25) > 30) && (
+      {((orderCounts.pending || 0) > 10 || (orderStats.avg_preparation_time || 25) > 30) && (
         <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           <Col span={24}>
             <Card style={{ border: '1px solid #ff7875', backgroundColor: '#fff2f0' }}>
@@ -2787,9 +3209,9 @@ const Orders = () => {
                 <div style={{ flex: 1 }}>
                   <Text strong style={{ color: '#cf1322' }}>Action Required:</Text>
                   <div style={{ marginTop: '4px' }}>
-                    {pendingOrdersCount > 10 && (
+                    {(orderCounts.pending || 0) > 10 && (
                       <Text style={{ color: '#595959', display: 'block' }}>
-                        • {pendingOrdersCount} pending orders need immediate attention
+                        • {orderCounts.pending || 0} pending orders need immediate attention
                       </Text>
                     )}
                     {(orderStats.avg_preparation_time || 25) > 30 && (
@@ -2946,6 +3368,23 @@ const Orders = () => {
           </div>
         )}
 
+        {/* User guidance */}
+        <Alert
+          message={
+            <span>
+              <EyeOutlined style={{ marginRight: 8 }} />
+              {language === 'ar' 
+                ? 'انقر على أي طلب لعرض التفاصيل، أو استخدم أزرار الإجراءات للمهام السريعة'
+                : 'Click on any order to view details, or use action buttons for quick tasks'
+              }
+            </span>
+          }
+          type="info"
+          showIcon={false}
+          style={{ marginBottom: 16 }}
+          closable
+        />
+
         <Table
           rowSelection={rowSelection}
           columns={columns}
@@ -2955,6 +3394,18 @@ const Orders = () => {
           size='small'
           scroll={{ x: 1050 }}
           onChange={() => {}} // Disable default sorting
+          onRow={(record) => ({
+            onClick: () => {
+              handleViewDetails(record);
+            },
+            style: { cursor: 'pointer' },
+            onMouseEnter: (e) => {
+              e.currentTarget.style.backgroundColor = '#f5f5f5';
+            },
+            onMouseLeave: (e) => {
+              e.currentTarget.style.backgroundColor = '';
+            }
+          })}
           pagination={{
             current: currentPage,
             pageSize: pageSize,
@@ -2991,6 +3442,30 @@ const Orders = () => {
         footer={[
           <Button key="print" type="primary" icon={<PrinterOutlined />} onClick={() => handlePrintInvoice(selectedOrder)} disabled={detailsLoading}>
             {t('orders.print_invoice')}
+          </Button>,
+          <Button 
+            key="edit-status" 
+            icon={<EditOutlined />} 
+            onClick={() => {
+              setStatusModalVisible(true);
+              setSelectedOrder(selectedOrder);
+              setSelectedStatus(selectedOrder?.order_status || '');
+              setStatusNotes('');
+            }}
+            disabled={detailsLoading}
+          >
+            {t('orders.change_status')}
+          </Button>,
+          <Button 
+            key="edit" 
+            icon={<EditOutlined />} 
+            onClick={() => {
+              setDetailsVisible(false);
+              showEditModal(selectedOrder);
+            }}
+            disabled={detailsLoading}
+          >
+            {t('orders.edit_order')}
           </Button>,
           <Button key="close" onClick={() => {
             setDetailsVisible(false);
@@ -3306,6 +3781,57 @@ const Orders = () => {
           layout="vertical"
           onFinish={handleCreateOrder}
         >
+          {/* Customer Selection - NEW */}
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item
+                name="selected_customer"
+                label={
+                  <Space>
+                    <UserOutlined />
+                    {t('orders.select_customer')} 
+                    <Text type="secondary">({t('orders.optional_for_notifications')})</Text>
+                  </Space>
+                }
+              >
+                <Select
+                  showSearch
+                  placeholder={t('orders.search_select_customer')}
+                  optionFilterProp="children"
+                  onSearch={fetchCustomers}
+                  onChange={handleCustomerSelect}
+                  onClear={() => {
+                    setSelectedCustomerForOrder(null);
+                    setCustomerAddresses([]);
+                  }}
+                  loading={customerSearchLoading}
+                  allowClear
+                  notFoundContent={customerSearchLoading ? <Spin size="small" /> : t('orders.no_customers_found')}
+                >
+                  {customers.map(customer => (
+                    <Option key={customer.id} value={customer.id}>
+                      <Space>
+                        <UserOutlined />
+                        {customer.first_name} {customer.last_name}
+                        <Text type="secondary">({customer.phone})</Text>
+                      </Space>
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              
+              {selectedCustomerForOrder && (
+                <div style={{ marginTop: '-12px', marginBottom: '16px' }}>
+                  <Text type="success" style={{ fontSize: '12px' }}>
+                    ✓ {t('orders.customer_selected_notification_enabled')}
+                  </Text>
+                </div>
+              )}
+            </Col>
+          </Row>
+
+          <Divider>{t('orders.customer_details')}</Divider>
+
           <Row gutter={16}>
             <Col xs={24} md={12}>
               <Form.Item
@@ -3772,13 +4298,64 @@ const Orders = () => {
                 >
                   <Select 
                     placeholder={t('orders.select_order_type')}
-                    onChange={() => orderForm.validateFields(['delivery_address_id'])}
+                    onChange={(value) => {
+                      // Reset delivery fee when switching to pickup
+                      if (value === 'pickup') {
+                        orderForm.setFieldsValue({ 
+                          delivery_fee: 0,
+                          delivery_address_id: null 
+                        });
+                        setShippingCalculation(null);
+                      }
+                      
+                      // Validate delivery address field
+                      orderForm.validateFields(['delivery_address_id']);
+                      
+                      // Force re-render to show/hide branch selection for pickup
+                      setEditingOrder(prev => ({ ...prev, order_type: value }));
+                    }}
                   >
                     <Select.Option value="pickup">{t('orders.pickup')}</Select.Option>
                     <Select.Option value="delivery">{t('orders.delivery')}</Select.Option>
                   </Select>
                 </Form.Item>
               </Col>
+              
+              {/* Branch Selection - Show for pickup orders */}
+              {(orderForm.getFieldValue('order_type') === 'pickup' || editingOrder?.order_type === 'pickup') && (
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="branch_id"
+                    label={t('orders.branch')}
+                    rules={[
+                      ({ getFieldValue }) => ({
+                        validator(_, value) {
+                          const orderType = getFieldValue('order_type');
+                          if (orderType === 'pickup' && !value) {
+                            return Promise.reject(new Error(t('orders.branch_required_for_pickup') || 'Branch is required for pickup orders'));
+                          }
+                          return Promise.resolve();
+                        },
+                      }),
+                    ]}
+                  >
+                    <Select 
+                      placeholder={t('orders.select_branch')}
+                      showSearch
+                      optionFilterProp="children"
+                    >
+                      {branches.map(branch => (
+                        <Select.Option key={branch.id} value={branch.id}>
+                          {branch.title_en || branch.title_ar || `Branch ${branch.id}`}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+              )}
+              
+              {/* Delivery Address - Show only for delivery orders */}
+              {(orderForm.getFieldValue('order_type') === 'delivery' || editingOrder?.order_type === 'delivery') && (
               <Col xs={24} md={12}>
                 <Form.Item
                   name="delivery_address_id"
@@ -3831,19 +4408,40 @@ const Orders = () => {
                       notFoundContent="No addresses found"
                     >
                       {customerAddresses.map(address => {
+                        // Enhanced address display logic for GPS addresses
+                        const isGPSAddress = address.latitude && address.longitude && 
+                                            typeof address.latitude === 'number' && 
+                                            typeof address.longitude === 'number';
+                        const cityArea = isGPSAddress ? 
+                          `📍 GPS: ${address.latitude.toFixed(4)}, ${address.longitude.toFixed(4)}` :
+                          [(address.city_title_en || address.city), (address.area_title_en || address.area)].filter(Boolean).join(', ');
+                        
                         const label = [
                           (address.name || address.address_name || `Address #${address.id || address.address_id}`),
-                          [(address.city_title_en || address.city), (address.area_title_en || address.area)].filter(Boolean).join(', '),
+                          cityArea,
                           address.building_no && `Building ${address.building_no}`
                         ].filter(Boolean).join(' | ');
+                        
                         return (
                         <Option key={String(address.id || address.address_id)} value={String(address.id || address.address_id)} label={label}>
                           <div>
                             <Text strong>{address.name || address.address_name || `Address #${address.id || address.address_id}`}</Text>
                             <br />
                             <Text type="secondary" style={{ fontSize: '12px' }}>
-                              {(address.city_title_en || address.city) || 'City'}, {(address.area_title_en || address.area) || 'Area'}
-                              {address.building_no && ` - Building ${address.building_no}`}
+                              {isGPSAddress ? (
+                                <span>
+                                  <Tag color="green" size="small" style={{ marginRight: 4 }}>
+                                    📍 GPS Address
+                                  </Tag>
+                                  {address.latitude.toFixed(4)}, {address.longitude.toFixed(4)}
+                                  {address.building_no && ` - Building ${address.building_no}`}
+                                </span>
+                              ) : (
+                                <span>
+                                  {(address.city_title_en || address.city) || 'City'}, {(address.area_title_en || address.area) || 'Area'}
+                                  {address.building_no && ` - Building ${address.building_no}`}
+                                </span>
+                              )}
                               {address.is_default && <Tag color="gold" size="small" style={{ marginLeft: 4 }}>Default</Tag>}
                               {(!address.latitude || !address.longitude) && (
                                 <div style={{ marginTop: '4px' }}>
@@ -3869,7 +4467,43 @@ const Orders = () => {
                     />
                   )}
                 </Form.Item>
+                {/* Address editing button */}
+                <div style={{ marginTop: '-10px', marginBottom: '16px' }}>
+                  <Space size="small">
+                    <Button 
+                      type="dashed" 
+                      size="small"
+                      icon={<EnvironmentOutlined />}
+                      onClick={handleEditAddress}
+                      style={{ fontSize: '12px' }}
+                    >
+                      {editingAddress ? t('orders.edit_address_with_map') : t('orders.add_new_address_with_map')}
+                    </Button>
+                    {customerAddresses.length > 0 && (
+                      <Button 
+                        size="small"
+                        icon={<ReloadOutlined />}
+                        onClick={async () => {
+                          const customerPhone = orderForm.getFieldValue('customer_phone');
+                          if (customerPhone) {
+                            await fetchCustomerAddresses(customerPhone);
+                            message.success(t('orders.addresses_refreshed'));
+                          }
+                        }}
+                        style={{ fontSize: '12px' }}
+                      >
+                        {t('orders.refresh_addresses') || 'Refresh'}
+                      </Button>
+                    )}
+                  </Space>
+                  {customerAddresses.length === 0 && (
+                    <Text type="secondary" style={{ marginLeft: '8px', fontSize: '11px' }}>
+                      {t('orders.no_saved_addresses')}
+                    </Text>
+                  )}
+                </div>
               </Col>
+              )}
             </Row>
 
             {/* Delivery Fee (Edit) */}
@@ -4322,6 +4956,52 @@ const Orders = () => {
         </Form>
       </Modal>
 
+      {/* Address Editing Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <EnvironmentOutlined style={{ color: '#1890ff' }} />
+            {editingAddress ? t('orders.edit_address') : t('orders.add_new_address')}
+          </div>
+        }
+        open={showAddressEditor}
+        onCancel={handleCancelAddressEdit}
+        footer={null}
+        width={800}
+        styles={{ body: { maxHeight: '80vh', overflowY: 'auto' } }}
+      >
+        <EnhancedAddressForm
+          form={addressForm}
+          onFinish={handleAddressFormFinish}
+          cities={cities}
+          areas={areas}
+          streets={streets}
+          onCityChange={handleCityChange}
+          onAreaChange={handleAreaChange}
+          isEditing={!!editingAddress}
+          t={t}
+          initialCoordinates={editingAddress ? {
+            lat: editingAddress.latitude,
+            lng: editingAddress.longitude
+          } : null}
+          showMapFirst={true}
+        />
+        <div style={{ marginTop: 16, textAlign: 'right' }}>
+          <Space>
+            <Button onClick={handleCancelAddressEdit}>
+              {t('common.cancel')}
+            </Button>
+            <Button 
+              type="primary" 
+              onClick={() => addressForm.submit()}
+              icon={<SaveOutlined />}
+            >
+              {editingAddress ? t('orders.update_address') : t('orders.save_address')}
+            </Button>
+          </Space>
+        </div>
+      </Modal>
+
       {/* Create Order Modal */}
       <CreateOrderModal
         visible={createOrderVisible}
@@ -4333,6 +5013,7 @@ const Orders = () => {
         t={t}
       />
     </div>
+    </>
   );
 };
 

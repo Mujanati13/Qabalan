@@ -4,8 +4,8 @@ require('dotenv').config();
 const jwtConfig = {
   secret: process.env.JWT_SECRET || 'fallback-secret-key',
   refreshSecret: process.env.JWT_REFRESH_SECRET || 'fallback-refresh-secret',
-  expiresIn: process.env.JWT_EXPIRE || '24h',
-  refreshExpiresIn: process.env.JWT_REFRESH_EXPIRE || '7d',
+  expiresIn: process.env.JWT_EXPIRE || '360d', // Changed to 360 days for mobile app
+  refreshExpiresIn: process.env.JWT_REFRESH_EXPIRE || '365d', // Extended refresh token as well
   issuer: 'qabalan-ecommerce',
   audience: 'qabalan-users'
 };

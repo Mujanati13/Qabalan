@@ -231,6 +231,7 @@ export const en = {
     removeAttribute: 'Remove Attribute',
     sku: 'SKU',
     skuPlaceholder: 'Enter product SKU',
+    skuExists: 'This SKU already exists. Please use a unique SKU.',
     slug: 'Slug',
     slugPlaceholder: 'Auto-generated from title',
     weight: 'Weight',
@@ -419,7 +420,17 @@ export const en = {
     bulk_status_update_confirm_message: 'Are you sure you want to change {count} category(s) to {status}?',
     bulk_status_updated_successfully: '{count} category(s) status updated successfully',
     bulk_status_update_error: 'Failed to update status for selected categories',
-    exported_successfully: '{count} category(s) exported successfully'
+    exported_successfully: '{count} category(s) exported successfully',
+    export_failed: 'Failed to export categories',
+    export_excel: 'Export to Excel',
+    
+    // Export column headers
+    category_id: 'Category ID',
+    name_en: 'Name (English)',
+    name_ar: 'Name (Arabic)',
+    categories: 'Categories',
+    status: 'Status',
+    created_date: 'Created Date'
   },
 
   // Locations
@@ -525,6 +536,15 @@ export const en = {
     customer_name_placeholder: 'Enter customer name',
     customer_phone_placeholder: 'Enter phone number',
     customer_email_placeholder: 'Enter email address',
+    
+    // Customer Selection for Admin Orders
+    select_customer: 'Select Customer',
+    search_select_customer: 'Search and select customer',
+    optional_for_notifications: 'optional - enables push notifications',
+    customer_selected_notification_enabled: 'Customer selected - push notifications will be sent',
+    no_customers_found: 'No customers found',
+    customer_details: 'Customer Details',
+    
     search_placeholder: 'Search orders...',
     branch: 'Branch',
     select_branch: 'Select Branch',
@@ -575,6 +595,10 @@ export const en = {
     payment_status_paid: 'Paid',
     payment_status_failed: 'Failed',
     payment_status_refunded: 'Refunded',
+    
+    // Payment Checkout
+    payNow: 'Pay Now',
+    payWithCard: 'Pay with Card',
     
     // Order Status
     status_pending: 'Pending',
@@ -632,6 +656,19 @@ export const en = {
     // Order Types
     delivery: 'Delivery',
     pickup: 'Pickup',
+    
+    // Payment Actions
+    pay_with_card: 'Pay with Card',
+    payment_redirecting: 'Redirecting to payment gateway...',
+    payment_session_failed: 'Failed to create payment session',
+    payment_session_error: 'Payment session error',
+    already_paid: 'Order is already paid',
+    payment_success: 'Payment completed successfully',
+    payment_cancelled: 'Payment was cancelled',
+    payment_error: 'Payment failed. Please try again.',
+    payment_processing: 'Processing payment...',
+    return_to_orders: 'Return to Orders',
+    card_payment_info: 'After creating the order, you will be redirected to secure payment gateway (MPGS) to complete the payment.',
     
     // Search
     search_orders: 'Search orders...',
@@ -815,7 +852,61 @@ export const en = {
     // Quick Status Updates
     quick_status_change: 'Quick Status Change',
     update_status_with_notes: 'Update Status with Notes',
-    change_to: 'Change to'
+    change_to: 'Change to',
+    
+    // Address Editing
+    edit_address_with_map: 'Edit Address with Map',
+    add_new_address_with_map: 'Add New Address with Map',
+    refresh_addresses: 'Refresh',
+    no_saved_addresses: 'No saved addresses found',
+    edit_address: 'Edit Address',
+    add_new_address: 'Add New Address',
+    save_address: 'Save Address',
+    update_address: 'Update Address',
+    address_updated_successfully: 'Address updated successfully',
+    address_created_successfully: 'Address created successfully',
+    failed_to_save_address: 'Failed to save address',
+    addresses_refreshed: 'Addresses refreshed',
+    
+    // Error Messages - Address
+    delivery_address_error: 'Delivery Address Error',
+    address_selection_error: 'Address Selection Error',
+    address_not_in_list: 'The selected delivery address is not in the customer\'s address list. Please refresh the addresses or select a different one.',
+    address_user_mismatch: 'Address User Mismatch Detected',
+    address_user_mismatch_content: 'The selected address belongs to a different customer account than this order.',
+    refresh_addresses_question: 'Would you like to refresh the customer addresses to get the correct list?',
+    address_refresh_success: 'Customer addresses refreshed. Please try selecting an address again.',
+    
+    // Error Solutions
+    solutions: 'Solutions',
+    technical_details: 'Technical details',
+    click_refresh_addresses: 'Click "Refresh" to update the address list',
+    select_different_address: 'Select a different address from the dropdown',
+    add_new_address_solution: 'Use "Add New Address with Map" to create a new address',
+    customer_link_issue: 'If this persists, the customer might need to be linked to the correct account',
+    
+    // Branch and Order Type
+    selectBranch: 'Select Branch',
+    mainBranch: 'Main Branch',
+    secondaryBranch: 'Secondary Branch',
+    enterDeliveryFee: 'Enter delivery fee',
+    
+    // Export related
+    orders_exported: 'orders exported',
+    
+    // Status Change in Details
+    change_status: 'Change Status',
+    status_change_notes: 'Status Change Notes',
+    status_change_notes_placeholder: 'Optional notes about this status change...',
+    
+    // Additional Error Messages
+    customer_phone_required: 'Customer phone number is required to save address',
+    failed_to_handle_customer: 'Failed to handle customer information',
+    branch_required_for_shipping: 'Please select a branch first to calculate shipping cost',
+    manual_delivery_fee: 'Please enter delivery fee manually for this address',
+    status_update_failed: 'Failed to update status',
+    create_order_failed: 'Failed to create order',
+    branch_required_for_pickup: 'Branch is required for pickup orders'
   },
 
   // Notifications
@@ -964,6 +1055,7 @@ export const en = {
     userType: 'User Type',
     type: 'Type',
     birthDate: 'Birth Date',
+    selectBirthDate: 'Select birth date',
     avatar: 'Avatar',
     joinDate: 'Join Date',
     registrationDate: 'Registration Date',
@@ -1407,9 +1499,17 @@ export const en = {
     bulk_pdf_error: 'Failed to generate bulk PDFs',
     excel_success: 'Excel export completed successfully',
     excel_error: 'Failed to export to Excel',
+    excel_export_success: 'Excel report generated successfully',
+    excel_export_error: 'Failed to generate Excel report',
     preview_error: 'Failed to preview invoice',
     fetch_orders_error: 'Failed to fetch orders',
     fetch_statistics_error: 'Error fetching statistics',
+    
+    // Export specific
+    orders_invoices_report: 'Orders & Invoices Report',
+    summary_statistics: 'Summary Statistics',
+    totals: 'TOTALS',
+    generating: 'Generating...',
     
     // Preview Modal
     invoice_preview: 'Invoice Preview',
@@ -1659,5 +1759,31 @@ export const en = {
     continue: 'Continue',
     finish: 'Finish',
     step: 'Step'
+  },
+
+  // Payment
+  payment: {
+    title: 'Payment',
+    checkout: {
+      title: 'Secure Payment',
+      loading: 'Loading payment system...',
+      orderSummary: 'Order Summary',
+      payNow: 'Pay Now',
+      failed: 'Payment failed. Please try again.'
+    },
+    error: {
+      title: 'Payment Error',
+      failed: 'Payment could not be processed',
+      sessionExpired: 'Payment session has expired',
+      invalidData: 'Invalid payment data'
+    },
+    success: {
+      title: 'Payment Successful',
+      message: 'Your payment has been processed successfully'
+    },
+    processing: {
+      title: 'Processing Payment',
+      message: 'Please wait while we process your payment...'
+    }
   }
 };

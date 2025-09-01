@@ -19,10 +19,18 @@ const fcmService = require('../services/fcmService');
  */
 router.get('/', authenticate, validatePagination, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
+    const { page = 1, limit = 20, admin = false, type } = req.query;
     const userId = req.user.id;
 
-    const result = await notificationService.getUserNotifications(userId, page, limit);
+    let result;
+    
+    if (admin === 'true' && req.user.user_type === 'admin') {
+      // Get admin notifications (user_id IS NULL)
+      result = await notificationService.getAdminNotifications(page, limit, type);
+    } else {
+      // Get user-specific notifications
+      result = await notificationService.getUserNotifications(userId, page, limit);
+    }
 
     res.json({
       success: true,
@@ -44,11 +52,16 @@ router.get('/unread-count', authenticate, async (req, res, next) => {
   try {
     const userId = req.user.id;
 
+    // Only count user-specific notifications, not global ones
+    // Global notifications (user_id IS NULL) are system announcements
+    // and should be handled separately if needed
     const [result] = await executeQuery(`
       SELECT COUNT(*) as count 
       FROM notifications 
-      WHERE (user_id = ? OR user_id IS NULL) AND is_read = 0
+      WHERE user_id = ? AND is_read = 0
     `, [userId]);
+
+    console.log(`[NOTIF] Unread count for user ${userId}: ${result.count}`);
 
     res.json({
       success: true,
@@ -133,26 +146,22 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
   const masked = `${token.slice(0, 8)}...${token.slice(-6)}`;
   console.log('[NOTIF][REGISTER]', { userId, device_type, device_id, app_version, tokenMasked: masked });
 
-    // Check if token already exists
-    const [existingToken] = await executeQuery(`
-      SELECT id FROM user_fcm_tokens WHERE token = ?
-    `, [token]);
+    // Use INSERT ... ON DUPLICATE KEY UPDATE to handle token registration atomically
+    // This prevents race conditions and duplicate key errors
+    await executeQuery(`
+      INSERT INTO user_fcm_tokens (user_id, token, device_type, device_id, app_version, is_active, last_used_at)
+      VALUES (?, ?, ?, ?, ?, 1, NOW())
+      ON DUPLICATE KEY UPDATE
+        user_id = VALUES(user_id),
+        device_type = VALUES(device_type),
+        device_id = VALUES(device_id),
+        app_version = VALUES(app_version),
+        is_active = 1,
+        last_used_at = NOW(),
+        updated_at = NOW()
+    `, [userId, token, device_type, device_id || null, app_version || null]);
 
-  if (existingToken) {
-      // Update existing token
-      await executeQuery(`
-        UPDATE user_fcm_tokens 
-        SET user_id = ?, device_type = ?, device_id = ?, app_version = ?, 
-            is_active = 1, last_used_at = NOW(), updated_at = NOW()
-        WHERE token = ?
-      `, [userId, device_type, device_id || null, app_version || null, token]);
-    } else {
-      // Insert new token
-      await executeQuery(`
-        INSERT INTO user_fcm_tokens (user_id, token, device_type, device_id, app_version)
-        VALUES (?, ?, ?, ?, ?)
-      `, [userId, token, device_type, device_id || null, app_version || null]);
-    }
+    console.log('[NOTIF][REGISTER] ✅ Token registered/updated successfully', { tokenMasked: masked });
 
     // Subscribe to general topic for broadcasts
     try {
@@ -169,8 +178,19 @@ router.post('/register-token', authenticate, validateFCMToken, async (req, res, 
     });
 
   } catch (error) {
-  console.error('[NOTIF][REGISTER] Error:', error);
-  next(error);
+    console.error('[NOTIF][REGISTER] Error:', error);
+    
+    // Handle specific database errors with user-friendly messages
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'Token already registered for another user',
+        message_ar: 'الرمز المميز مسجل بالفعل لمستخدم آخر'
+      });
+    }
+    
+    // For other errors, pass to error handler
+    next(error);
   }
 });
 

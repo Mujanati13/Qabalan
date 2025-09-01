@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   Form,
@@ -29,17 +29,20 @@ import {
   SearchOutlined,
   ShopOutlined
 } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import EnhancedAddressForm from './EnhancedAddressForm';
 import customersService from '../../services/customersService';
 import productsService from '../../services/productsService';
 import ordersService from '../../services/ordersService';
 import branchesService from '../../services/branchesService';
+import paymentsService from '../../services/paymentsService';
 
 const { Option } = Select;
 const { Text } = Typography;
 const { Step } = Steps;
 
 const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
+  const navigate = useNavigate();
   const [form] = Form.useForm();
   const [addressForm] = Form.useForm();
   const [customerForm] = Form.useForm();
@@ -57,6 +60,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   // Branch data
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [branch, setBranch] = useState(''); // For order creation branch selection
   
   // Product data
   const [products, setProducts] = useState([]);
@@ -65,8 +69,12 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   
   // Order preferences
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [orderType, setOrderType] = useState('delivery');
   const [customDeliveryFee, setCustomDeliveryFee] = useState(null);
   const [isDeliveryFeeEditing, setIsDeliveryFeeEditing] = useState(false);
+  
+  // Track previous orderType to detect actual changes
+  const prevOrderTypeRef = useRef('delivery');
   
   // Location data for new address
   const [cities, setCities] = useState([]);
@@ -82,6 +90,17 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     total_amount: 0
   });
 
+  // Helper function to format price
+  const formatPrice = (price) => {
+    const numPrice = parseFloat(price) || 0;
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(numPrice);
+  };
+
   useEffect(() => {
     if (visible) {
       loadCustomers();
@@ -90,6 +109,36 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       loadBranches();
     }
   }, [visible]);
+
+  // Prevent step out-of-bounds when orderType changes
+  useEffect(() => {
+    // Only run if orderType actually changed
+    if (prevOrderTypeRef.current !== orderType) {
+      const prevOrderType = prevOrderTypeRef.current;
+      
+      // Only adjust step when switching FROM delivery TO pickup (which has fewer steps)
+      if (prevOrderType === 'delivery' && orderType === 'pickup') {
+        // For pickup orders: only 2 steps (0: Customer, 1: Products)
+        // If currently on step 2 (Products in delivery mode), move to step 1 (Products in pickup mode)
+        if (currentStep === 2) {
+          setCurrentStep(1);
+        }
+        // If on step 1 (Address in delivery mode), it stays step 1 but becomes Products
+        // No adjustment needed for step 0 (Customer)
+      }
+      // No adjustment when switching FROM pickup TO delivery - it supports all steps
+      
+      // Update the ref for next time
+      prevOrderTypeRef.current = orderType;
+    }
+  }, [orderType]);
+
+  // Cache products when successfully loaded
+  useEffect(() => {
+    if (products.length > 0) {
+      localStorage.setItem('cached_products', JSON.stringify(products));
+    }
+  }, [products]);
 
   useEffect(() => {
     if (selectedCustomer) {
@@ -141,10 +190,28 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         limit: 100,
         include_inactive: false
       });
-      setProducts(response.data || []);
+      const productsData = response.data || [];
+      console.log('Loaded products in CreateOrderModal:', productsData.length);
+      setProducts(productsData);
+      
+      // If no products loaded, try again with a simpler request
+      if (productsData.length === 0) {
+        console.warn('No products found, trying fallback request...');
+        const fallbackResponse = await productsService.getProducts();
+        const fallbackData = fallbackResponse.data || [];
+        console.log('Fallback products loaded:', fallbackData.length);
+        setProducts(fallbackData);
+      }
     } catch (error) {
       console.error('Error loading products:', error);
       message.error(t ? t('orders.loadProductsError') : 'Failed to load products');
+      
+      // Try to maintain products from a parent component or local storage as fallback
+      const existingProducts = JSON.parse(localStorage.getItem('cached_products') || '[]');
+      if (existingProducts.length > 0) {
+        console.log('Using cached products as fallback:', existingProducts.length);
+        setProducts(existingProducts);
+      }
     } finally {
       setSearchingProducts(false);
     }
@@ -502,6 +569,23 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     }
   };
 
+  // Calculate totals whenever products change
+  useEffect(() => {
+    const subtotal = selectedProducts.reduce((sum, product) => sum + (product.total || 0), 0);
+    const deliveryFee = orderType === 'delivery' ? (customDeliveryFee || 0) : 0;
+    const taxAmount = subtotal * 0.1; // 10% tax
+    const discountAmount = 0; // Can be implemented later
+    const totalAmount = subtotal + deliveryFee + taxAmount - discountAmount;
+
+    setOrderTotals({
+      subtotal,
+      delivery_fee: deliveryFee,
+      tax_amount: taxAmount,
+      discount_amount: discountAmount,
+      total_amount: totalAmount
+    });
+  }, [selectedProducts, customDeliveryFee, orderType]);
+
   const updateProductQuantity = (productId, quantity) => {
     if (quantity <= 0) {
       removeProduct(productId);
@@ -624,18 +708,24 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   };
 
   const validateStep = (step) => {
-    switch (step) {
-      case 0: // Customer and Branch selection
-        if (!selectedBranch) {
-          message.error(t ? t('orders.selectBranchRequired') : 'Please select a branch');
-          return false;
-        }
-        if (!selectedCustomer) {
-          message.error(t ? t('orders.selectCustomerRequired') : 'Please select a customer');
-          return false;
-        }
-        return true;
-      case 1: // Address selection
+    const currentSteps = getSteps();
+    const stepContent = currentSteps[step];
+    
+    // Check which step we're actually on based on the content
+    if (stepContent.icon.type === UserOutlined) {
+      // Customer and Branch selection step
+      if (!selectedBranch) {
+        message.error(t ? t('orders.selectBranchRequired') : 'Please select a branch');
+        return false;
+      }
+      if (!selectedCustomer) {
+        message.error(t ? t('orders.selectCustomerRequired') : 'Please select a customer');
+        return false;
+      }
+      return true;
+    } else if (stepContent.icon.type === EnvironmentOutlined) {
+      // Address selection step (only for delivery orders)
+      if (orderType === 'delivery') {
         if (!selectedAddress && !useNewAddress) {
           message.error(t ? t('orders.selectAddressRequired') : 'Please select an address or create a new one');
           return false;
@@ -650,16 +740,23 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               return false;
             });
         }
-        return true;
-      case 2: // Products selection
-        if (selectedProducts.length === 0) {
-          message.error(t ? t('orders.selectProductsRequired') : 'Please add at least one product');
-          return false;
-        }
-        return true;
-      default:
-        return true;
+      }
+      return true;
+    } else if (stepContent.icon.type === ShoppingCartOutlined) {
+      // Products selection step
+      if (selectedProducts.length === 0) {
+        message.error(t ? t('orders.selectProductsRequired') : 'Please add at least one product');
+        return false;
+      }
+      // For pickup orders, ensure branch is selected
+      if (orderType === 'pickup' && !branch) {
+        message.error(t ? t('orders.selectBranchRequired') : 'Please select a pickup branch');
+        return false;
+      }
+      return true;
     }
+    
+    return true;
   };
 
   const nextStep = async () => {
@@ -677,25 +774,46 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     try {
       setLoading(true);
 
-      let addressData = selectedAddress;
+      let addressData = null;
       
-      // If using new address and it hasn't been created yet, create it first
-      if (useNewAddress && !selectedAddress) {
-        const addressValues = await addressForm.validateFields();
-        const addressResponse = await customersService.createAddress({
-          ...addressValues,
-          user_id: selectedCustomer.id
-        });
-        addressData = addressResponse.data;
+      // Only handle address for delivery orders
+      if (orderType === 'delivery') {
+        addressData = selectedAddress;
+        
+        // If using new address and it hasn't been created yet, create it first
+        if (useNewAddress && !selectedAddress) {
+          const addressValues = await addressForm.validateFields();
+          const addressResponse = await customersService.createAddress({
+            ...addressValues,
+            user_id: selectedCustomer.id
+          });
+          addressData = addressResponse.data;
+        }
+      }
+
+      // Validate required fields
+      if (!selectedCustomer) {
+        throw new Error('Customer is required');
+      }
+      if (selectedProducts.length === 0) {
+        throw new Error('At least one product is required');
+      }
+      if (orderType === 'pickup' && !branch) {
+        throw new Error('Branch selection is required for pickup orders');
+      }
+      if (orderType === 'delivery' && !addressData) {
+        throw new Error('Delivery address is required');
       }
 
       // Create the order
       const orderData = {
-        customer_id: selectedCustomer.id,
-        delivery_address_id: addressData.id,
-        branch_id: selectedBranch?.id || 1, // Use selected branch or default to 1
+        customer_id: selectedCustomer.id, // This identifies it as an admin-created order
+        delivery_address_id: orderType === 'delivery' ? addressData?.id : null,
+        pickup_branch: orderType === 'pickup' ? branch : null,
+        branch_id: selectedBranch?.id || branches[0]?.id || 1, // Use selected branch or first available
         customer_name: `${selectedCustomer.first_name} ${selectedCustomer.last_name}`,
         customer_phone: selectedCustomer.phone || '',
+        customer_email: selectedCustomer.email || '',
         items: selectedProducts.map(p => ({
           product_id: p.id,
           quantity: p.quantity,
@@ -703,23 +821,81 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         })),
         total_amount: orderTotals.total_amount,
         subtotal: orderTotals.subtotal,
-        delivery_fee: orderTotals.delivery_fee,
+        delivery_fee: orderType === 'delivery' ? (orderTotals.delivery_fee || customDeliveryFee || 0) : 0,
         tax_amount: orderTotals.tax_amount,
         discount_amount: orderTotals.discount_amount,
         order_status: 'pending',
         payment_status: 'pending',
         payment_method: paymentMethod,
-        order_type: 'delivery'
+        order_type: orderType
       };
 
-      await ordersService.create(orderData);
+      console.log('Creating order with data:', orderData);
+      const response = await ordersService.create(orderData);
+      console.log('Order creation response:', response);
       
-      message.success(t ? t('orders.createSuccess') : 'Order created successfully');
+      // If payment method is card, initiate MPGS payment
+      if (paymentMethod === 'card') {
+        try {
+          message.success(t ? t('orders.createSuccess') : 'Order created successfully');
+          message.loading(t ? t('orders.payment_redirecting') : 'Redirecting to payment gateway...', 2);
+          
+          // Create MPGS payment session
+          const paymentResponse = await paymentsService.createMPGSCheckoutSession(
+            response.data.order.id,
+            response.data.order.total_amount,
+            'JOD'
+          );
+          
+          if (paymentResponse?.success) {
+            const { sessionId, redirectUrl, checkoutUrl, testFormUrl, orderId, amount, currency } = paymentResponse;
+            if (sessionId) {
+              // Close modal first
+              onSuccess?.();
+              handleCancel();
+              
+              // Use the checkout URL from the new response format
+              const urlToOpen = testFormUrl || checkoutUrl || redirectUrl;
+              if (urlToOpen) {
+                window.open(urlToOpen, '_blank', 'noopener,noreferrer,width=600,height=750');
+              } else {
+                navigate(`/payment-checkout?sessionId=${sessionId}&orderId=${orderId}&amount=${amount}&currency=${currency}`);
+              }
+              return;
+            }
+          }
+          
+          // If payment session creation fails, still show success for order creation
+          message.warning(t ? t('orders.payment_session_failed') : 'Order created but payment session failed. You can pay from the orders list.');
+          
+        } catch (paymentError) {
+          console.error('Payment session error:', paymentError);
+          message.warning(t ? t('orders.payment_session_error') : 'Order created but payment setup failed. You can pay from the orders list.');
+        }
+      } else {
+        message.success(t ? t('orders.createSuccess') : 'Order created successfully');
+      }
+      
       onSuccess?.();
       handleCancel();
     } catch (error) {
       console.error('Error creating order:', error);
-      message.error(t ? t('orders.createError') : 'Failed to create order');
+      
+      // Enhanced error handling
+      let errorMessage = t ? t('orders.createError') : 'Failed to create order';
+      
+      if (error.response?.data) {
+        const { message: serverMessage, errors } = error.response.data;
+        if (errors && Array.isArray(errors)) {
+          errorMessage = errors.join(', ');
+        } else if (serverMessage) {
+          errorMessage = serverMessage;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      message.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -735,6 +911,8 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     setUseNewAddress(false);
     setSelectedProducts([]);
     setPaymentMethod('cash');
+    setOrderType('delivery');
+    setBranch('');
     setCustomDeliveryFee(null);
     setIsDeliveryFeeEditing(false);
     onCancel();
@@ -892,22 +1070,41 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         <Space.Compact style={{ width: '100%' }}>
           <Select
             showSearch
-            placeholder={t ? t('orders.searchCustomer') : 'Search for customer...'}
-            optionFilterProp="children"
+            placeholder={t ? t('orders.searchCustomer') : 'Search by name, phone, or email...'}
+            optionFilterProp="label"
             value={selectedCustomer?.id}
             onChange={handleCustomerSelect}
             style={{ flex: 1 }}
             filterOption={(input, option) => {
-              const children = option.children;
-              if (typeof children === 'string') {
-                return children.toLowerCase().includes(input.toLowerCase());
-              }
-              return false;
+              if (!input) return true;
+              const searchText = input.toLowerCase();
+              const customer = customers.find(c => c.id === option.value);
+              if (!customer) return false;
+              
+              // Search in name, phone, and email
+              const fullName = `${customer.first_name || ''} ${customer.last_name || ''}`.toLowerCase();
+              const phone = (customer.phone || '').toLowerCase();
+              const email = (customer.email || '').toLowerCase();
+              
+              return fullName.includes(searchText) || 
+                     phone.includes(searchText) || 
+                     email.includes(searchText);
             }}
           >
             {customers.map(customer => (
-              <Option key={customer.id} value={customer.id}>
-                {`${customer.first_name} ${customer.last_name}`} - {customer.email}
+              <Option 
+                key={customer.id} 
+                value={customer.id}
+                label={`${customer.first_name} ${customer.last_name} ${customer.phone} ${customer.email}`}
+              >
+                <div>
+                  <div style={{ fontWeight: 'bold' }}>
+                    {`${customer.first_name} ${customer.last_name}`}
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>
+                    📞 {customer.phone} • ✉️ {customer.email}
+                  </div>
+                </div>
               </Option>
             ))}
           </Select>
@@ -1127,21 +1324,45 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               showSearch
               placeholder={t ? t('orders.searchProducts') : 'Search for products...'}
               style={{ width: '100%', marginBottom: 16 }}
-              optionFilterProp="children"
+              optionFilterProp="label"
               loading={searchingProducts}
               onChange={addProduct}
               value={undefined}
               filterOption={(input, option) => {
-                const children = option.children;
-                if (typeof children === 'string') {
-                  return children.toLowerCase().includes(input.toLowerCase());
-                }
-                return false;
+                if (!input) return true;
+                const searchText = input.toLowerCase();
+                const product = products.find(p => p.id === option.value);
+                if (!product) return false;
+                
+                // Search in product name, title, and SKU
+                const titleEn = (product.title_en || '').toLowerCase();
+                const titleAr = (product.title_ar || '').toLowerCase();
+                const name = (product.name || '').toLowerCase();
+                const sku = (product.sku || '').toLowerCase();
+                
+                return titleEn.includes(searchText) || 
+                       titleAr.includes(searchText) ||
+                       name.includes(searchText) ||
+                       sku.includes(searchText);
               }}
             >
               {products.map(product => (
-                <Option key={product.id} value={product.id}>
-                  {product.title_en || product.name} - ${parseFloat(product.base_price || product.sale_price || product.price || 0).toFixed(2)}
+                <Option 
+                  key={product.id} 
+                  value={product.id}
+                  label={`${product.title_en || product.name} ${product.sku || ''}`}
+                >
+                  <div>
+                    <div style={{ fontWeight: 'bold' }}>
+                      {product.title_en || product.name}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#666', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{product.sku ? `SKU: ${product.sku}` : ''}</span>
+                      <span style={{ fontWeight: 'bold', color: '#52c41a' }}>
+                        {formatPrice(parseFloat(product.base_price || product.sale_price || product.price || 0))}
+                      </span>
+                    </div>
+                  </div>
                 </Option>
               ))}
             </Select>
@@ -1153,18 +1374,94 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
             <Divider />
             
             <Form.Item 
+              label={t ? t('orders.type') : 'Order Type'}
+              style={{ marginBottom: 16 }}
+            >
+              <Select
+                value={orderType}
+                onChange={(value) => {
+                  setOrderType(value);
+                  if (value === 'pickup') {
+                    setCustomDeliveryFee(0);
+                  }
+                }}
+                style={{ width: '100%' }}
+              >
+                <Option value="delivery">{t ? t('orders.delivery') : 'Delivery'}</Option>
+                <Option value="pickup">{t ? t('orders.pickup') : 'Pickup'}</Option>
+              </Select>
+            </Form.Item>
+
+            {orderType === 'pickup' && (
+              <Form.Item 
+                label={t ? t('orders.branch') : 'Branch'}
+                style={{ marginBottom: 16 }}
+              >
+                <Select
+                  value={branch}
+                  onChange={setBranch}
+                  placeholder={t ? t('orders.selectBranch') : 'Select a branch'}
+                  style={{ width: '100%' }}
+                >
+                  {branches.map(branchItem => (
+                    <Option key={branchItem.id} value={branchItem.id}>
+                      {branchItem.title_en || branchItem.title_ar || `Branch ${branchItem.id}`}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            )}
+
+            {orderType === 'delivery' && (
+              <Form.Item 
+                label={t ? t('orders.deliveryFee') : 'Delivery Fee'}
+                style={{ marginBottom: 16 }}
+              >
+                <InputNumber
+                  value={customDeliveryFee}
+                  onChange={setCustomDeliveryFee}
+                  min={0}
+                  step={0.5}
+                  formatter={value => `$${value}`}
+                  parser={value => value.replace('$', '')}
+                  style={{ width: '100%' }}
+                  placeholder={t ? t('orders.enterDeliveryFee') : 'Enter delivery fee'}
+                />
+              </Form.Item>
+            )}
+            
+            <Form.Item 
               label={t ? t('orders.paymentMethod') : 'Payment Method'}
-              style={{ marginBottom: 0 }}
+              style={{ marginBottom: 8 }}
             >
               <Select
                 value={paymentMethod}
                 onChange={setPaymentMethod}
                 style={{ width: '100%' }}
               >
-                <Option value="cash">{t ? t('orders.cash') : 'Cash'}</Option>
-                <Option value="card">{t ? t('orders.card') : 'Card'}</Option>
-                <Option value="online">{t ? t('orders.online') : 'Online'}</Option>
+                <Option value="cash">
+                  💵 {t ? t('orders.cash') : 'Cash'}
+                </Option>
+                <Option value="card">
+                  💳 {t ? t('orders.card') : 'Card (Online Payment)'}
+                </Option>
+                <Option value="online">
+                  🌐 {t ? t('orders.online') : 'Online'}
+                </Option>
               </Select>
+              {paymentMethod === 'card' && (
+                <div style={{ 
+                  marginTop: 8, 
+                  padding: 8, 
+                  backgroundColor: '#f6ffed', 
+                  border: '1px solid #b7eb8f',
+                  borderRadius: 4,
+                  fontSize: '12px',
+                  color: '#52c41a'
+                }}>
+                  💡 {t ? t('orders.card_payment_info') : 'After creating the order, you will be redirected to secure payment gateway (MPGS) to complete the payment.'}
+                </div>
+              )}
             </Form.Item>
           </Card>
         </Col>
@@ -1242,23 +1539,35 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     </div>
   );
 
-  const steps = [
-    {
-      title: t ? t('orders.branchAndCustomer') : 'Branch & Customer',
-      icon: <UserOutlined />,
-      content: renderCustomerStep()
-    },
-    {
-      title: t ? t('orders.address') : 'Address',
-      icon: <EnvironmentOutlined />,
-      content: renderAddressStep()
-    },
-    {
-      title: t ? t('orders.products') : 'Products',
-      icon: <ShoppingCartOutlined />,
-      content: renderProductsStep()
+  // Dynamic steps based on order type
+  const getSteps = () => {
+    const allSteps = [
+      {
+        title: t ? t('orders.branchAndCustomer') : 'Branch & Customer',
+        icon: <UserOutlined />,
+        content: renderCustomerStep()
+      },
+      {
+        title: t ? t('orders.address') : 'Address',
+        icon: <EnvironmentOutlined />,
+        content: renderAddressStep()
+      },
+      {
+        title: t ? t('orders.products') : 'Products',
+        icon: <ShoppingCartOutlined />,
+        content: renderProductsStep()
+      }
+    ];
+
+    // For pickup orders, skip the address step
+    if (orderType === 'pickup') {
+      return [allSteps[0], allSteps[2]]; // Customer and Products only
     }
-  ];
+    
+    return allSteps;
+  };
+
+  const steps = getSteps();
 
   return (
     <Modal
@@ -1306,7 +1615,10 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       </Steps>
 
       <div style={{ minHeight: '400px' }}>
-        {steps[currentStep].content}
+        {steps && steps[currentStep] && steps[currentStep].content ? 
+          steps[currentStep].content : 
+          <div>Loading...</div>
+        }
       </div>
     </Modal>
   );

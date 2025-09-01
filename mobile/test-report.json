@@ -1,0 +1,51 @@
+{
+  "timestamp": "2025-07-24T13:40:47.539Z",
+  "config": {
+    "API_BASE_URL": "http://localhost:3000/api",
+    "TEST_USER": {
+      "email": "test@example.com",
+      "password": "test123",
+      "phone": "+962771234567"
+    },
+    "TEST_GUEST": {
+      "fullName": "Test Guest User",
+      "phone": "+962771234568",
+      "email": "guest@example.com",
+      "address": "Test Address, Amman, Jordan"
+    },
+    "TEST_ORDER": {
+      "items": [
+        {
+          "product_id": 1,
+          "variant_id": null,
+          "quantity": 2
+        },
+        {
+          "product_id": 2,
+          "variant_id": 1,
+          "quantity": 1
+        }
+      ],
+      "order_type": "delivery",
+      "payment_method": "cash",
+      "promo_code": null,
+      "special_instructions": "Test order from mobile app"
+    }
+  },
+  "results": {
+    "total": 54,
+    "passed": 52,
+    "failed": 2,
+    "errors": [
+      {
+        "test": "API Call: getUserAddresses",
+        "error": "Address loading call not found"
+      },
+      {
+        "test": "Error Handling: Promise error handling",
+        "error": "Missing from CheckoutScreen"
+      }
+    ]
+  },
+  "successRate": "96.3"
+}

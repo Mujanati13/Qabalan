@@ -69,6 +69,8 @@ router.post('/tickets', authenticate, upload.array('attachments', 5), ...validat
     const user_id = req.user.id;
     const attachments = req.files || [];
 
+    console.log(`🎫 Creating new support ticket from mobile app - User: ${user_id}, Subject: ${subject}`);
+
     const ticket = await supportService.createTicket({
       user_id,
       order_id: order_id || null,
@@ -78,6 +80,8 @@ router.post('/tickets', authenticate, upload.array('attachments', 5), ...validat
       priority,
       attachments
     });
+
+    console.log(`✅ Support ticket created successfully - ID: ${ticket.id}, Number: ${ticket.ticket_number}`);
 
     res.status(201).json({
       success: true,
@@ -152,11 +156,15 @@ router.post('/tickets/:id/replies', authenticate, upload.array('attachments', 3)
     const { message } = req.body;
     const attachments = req.files || [];
 
+    console.log(`💬 Adding reply from mobile app - Ticket: ${ticketId}, User: ${user_id}, Message: ${message.substring(0, 50)}...`);
+
     const reply = await supportService.addReply(ticketId, {
       user_id,
       message,
       attachments
     });
+
+    console.log(`✅ Reply added successfully from mobile app - Reply ID: ${reply.id}`);
 
     res.status(201).json({
       success: true,

@@ -422,19 +422,22 @@ class NotificationService {
       const sanitizedLimit = Math.max(1, Math.min(1000, parseInt(limit) || 20));
       const offset = (sanitizedPage - 1) * sanitizedLimit;
 
+      // Only get user-specific notifications, not global ones
       const [total] = await executeQuery(`
         SELECT COUNT(*) as count 
         FROM notifications 
-        WHERE user_id = ? OR user_id IS NULL
+        WHERE user_id = ?
       `, [userId]);
 
       // Using string interpolation for LIMIT/OFFSET to avoid MySQL parameter issues
       const notifications = await executeQuery(`
         SELECT * FROM notifications 
-        WHERE user_id = ? OR user_id IS NULL
+        WHERE user_id = ?
         ORDER BY created_at DESC 
         LIMIT ${sanitizedLimit} OFFSET ${offset}
       `, [userId]);
+
+      console.log(`[NOTIF_SERVICE] Retrieved ${notifications.length} notifications for user ${userId}`);
 
       return {
         notifications,
@@ -447,6 +450,56 @@ class NotificationService {
       };
     } catch (error) {
       console.error('Error getting user notifications:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get admin notifications with pagination
+   */
+  async getAdminNotifications(page = 1, limit = 20, type = null) {
+    try {
+      const sanitizedPage = Math.max(1, parseInt(page) || 1);
+      const sanitizedLimit = Math.max(1, Math.min(1000, parseInt(limit) || 20));
+      const offset = (sanitizedPage - 1) * sanitizedLimit;
+
+      // Build WHERE clause
+      let whereClause = 'WHERE user_id IS NULL';
+      let queryParams = [];
+      
+      if (type) {
+        whereClause += ' AND type = ?';
+        queryParams.push(type);
+      }
+
+      // Get total count
+      const [total] = await executeQuery(`
+        SELECT COUNT(*) as count 
+        FROM notifications 
+        ${whereClause}
+      `, queryParams);
+
+      // Get notifications
+      const notifications = await executeQuery(`
+        SELECT * FROM notifications 
+        ${whereClause}
+        ORDER BY created_at DESC 
+        LIMIT ${sanitizedLimit} OFFSET ${offset}
+      `, queryParams);
+
+      console.log(`[NOTIF_SERVICE] Retrieved ${notifications.length} admin notifications`);
+
+      return {
+        notifications,
+        pagination: {
+          page: sanitizedPage,
+          limit: sanitizedLimit,
+          total: total.count,
+          pages: Math.ceil(total.count / sanitizedLimit)
+        }
+      };
+    } catch (error) {
+      console.error('Error getting admin notifications:', error);
       throw error;
     }
   }

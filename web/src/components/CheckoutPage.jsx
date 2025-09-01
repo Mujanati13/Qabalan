@@ -47,11 +47,15 @@ const CheckoutPage = () => {
   const fetchBranches = async () => {
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3015/api';
-      const response = await fetch(`${apiUrl}/branches?active_only=true`);
+      const response = await fetch(`${apiUrl}/branches?include_inactive=false`);
       const data = await response.json();
       
+      console.log('🏪 Branches API Response:', data);
+      
       if (data.success) {
-        setBranches(data.data || []);
+        const branchesData = data.data?.data || data.data || [];
+        console.log('🏪 Branches Data:', branchesData);
+        setBranches(branchesData);
       }
     } catch (error) {
       console.error('Error fetching branches:', error);
@@ -256,8 +260,8 @@ const CheckoutPage = () => {
       if (data.success) {
         // Save order to localStorage
         const orderToSave = {
-          id: data.data?.id || `order_${Date.now()}`,
-          order_number: data.data?.order_number || `ORD${Date.now()}`,
+          id: data.data?.order?.id || data.data?.id || `order_${Date.now()}`,
+          order_number: data.data?.order?.order_number || data.data?.order_number || `ORD${Date.now()}`,
           customer_name: values.customer_name,
           customer_phone: values.customer_phone,
           customer_email: values.customer_email,
@@ -283,9 +287,21 @@ const CheckoutPage = () => {
         // Add to order history
         addOrder(orderToSave);
         
-        message.success(`Order placed successfully! Order #${data.data?.order_number || data.data?.id}`);
-        clearCart();
-        setCurrentStep(3); // Success step
+        // Handle payment method
+        if (paymentMethod === 'card') {
+          // Redirect to MPGS payment for credit card
+          message.success(`Order created! Redirecting to secure payment...`);
+          clearCart();
+          
+          // Redirect to MPGS payment page
+          const paymentUrl = `${apiUrl}/payments/mpgs/payment/view?orders_id=${data.data?.order?.id || data.data?.id}`;
+          window.location.href = paymentUrl;
+        } else {
+          // Cash on delivery flow
+          message.success(`Order placed successfully! Order #${data.data?.order?.order_number || data.data?.order_number || data.data?.id}`);
+          clearCart();
+          setCurrentStep(3); // Success step
+        }
       } else {
         throw new Error(data.message || 'Failed to place order');
       }
@@ -489,7 +505,9 @@ const CheckoutPage = () => {
                         <option value="">Choose a branch</option>
                         {branches.map(branch => (
                           <option key={branch.id} value={branch.id}>
-                            {branch.name_en || branch.name} - {branch.address}
+                            {branch.title_en || branch.title_ar || branch.name_en || branch.name || `Branch ${branch.id}`}
+                            {(branch.address_en || branch.address_ar || branch.address) && 
+                              ` - ${branch.address_en || branch.address_ar || branch.address}`}
                           </option>
                         ))}
                       </select>
@@ -556,7 +574,7 @@ const CheckoutPage = () => {
                     >
                       <Space direction="vertical">
                         <Radio value="cash">💵 Cash on Delivery</Radio>
-                        <Radio value="card" disabled>💳 Credit Card (Coming Soon)</Radio>
+                        <Radio value="card">💳 Credit Card (Secure Payment)</Radio>
                       </Space>
                     </Radio.Group>
                   </div>

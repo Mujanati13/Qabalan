@@ -23,6 +23,9 @@ router.post('/register', validateUserRegistration, async (req, res, next) => {
   try {
     const { email, password, first_name, last_name, phone, user_type = 'customer' } = req.body;
 
+    // Normalize phone number - convert empty string to null
+    const normalizedPhone = phone && phone.trim() ? phone.trim() : null;
+
     // Check if user already exists
     const existingUser = await executeQuery(
       'SELECT id FROM users WHERE email = ?',
@@ -37,6 +40,22 @@ router.post('/register', validateUserRegistration, async (req, res, next) => {
       });
     }
 
+    // Check if phone is provided and already exists
+    if (normalizedPhone) {
+      const existingPhone = await executeQuery(
+        'SELECT id FROM users WHERE phone = ?',
+        [normalizedPhone]
+      );
+
+      if (existingPhone.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'User already exists with this phone number',
+          message_ar: 'المستخدم موجود مسبقاً بهذا رقم الهاتف'
+        });
+      }
+    }
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
@@ -49,7 +68,7 @@ router.post('/register', validateUserRegistration, async (req, res, next) => {
         query: `INSERT INTO users 
                 (email, password_hash, first_name, last_name, phone, user_type) 
                 VALUES (?, ?, ?, ?, ?, ?)`,
-        params: [email, hashedPassword, first_name, last_name, phone, user_type]
+        params: [email, hashedPassword, first_name, last_name, normalizedPhone, user_type]
       }
     ];
 
@@ -533,6 +552,355 @@ router.get('/me', authenticate, async (req, res, next) => {
     });
 
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/send-sms-verification
+ * @desc    Send SMS verification code
+ * @access  Public
+ */
+router.post('/send-sms-verification', async (req, res, next) => {
+  try {
+    const { phone, language = 'en' } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required',
+        message_ar: 'رقم الهاتف مطلوب'
+      });
+    }
+
+    // Format phone number for Jordan
+    let formattedPhone = phone;
+    if (phone.startsWith('+962')) {
+      formattedPhone = phone.replace('+962', '962');
+    } else if (phone.startsWith('00962')) {
+      formattedPhone = phone.replace('00962', '962');
+    } else if (phone.startsWith('0') && phone.length === 10) {
+      formattedPhone = '962' + phone.substring(1);
+    } else if (!phone.startsWith('962')) {
+      formattedPhone = '962' + phone;
+    }
+
+    // Validate Jordan phone number format
+    if (!/^962[0-9]{9}$/.test(formattedPhone)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid Jordan phone number format',
+        message_ar: 'تنسيق رقم الهاتف الأردني غير صحيح'
+      });
+    }
+
+    // Generate verification code
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Store verification code in database
+    await executeQuery(
+      `INSERT INTO verification_codes (phone, code, type, expires_at) 
+       VALUES (?, ?, 'sms_verification', DATE_ADD(NOW(), INTERVAL 10 MINUTE))
+       ON DUPLICATE KEY UPDATE 
+       code = VALUES(code), 
+       expires_at = VALUES(expires_at), 
+       used_at = NULL`,
+      [formattedPhone, verificationCode]
+    );
+
+    // Send SMS
+    const { sendVerificationSMS } = require('../utils/sms');
+    const smsResult = await sendVerificationSMS(formattedPhone, verificationCode, language);
+
+    if (!smsResult.success) {
+      console.error('SMS sending failed:', smsResult.error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to send SMS verification code',
+        message_ar: 'فشل في إرسال رمز التحقق عبر الرسائل النصية',
+        error: smsResult.error
+      });
+    }
+
+    console.log(`[SMS] Verification code sent to ${formattedPhone}`);
+
+    res.json({
+      success: true,
+      message: 'SMS verification code sent successfully',
+      message_ar: 'تم إرسال رمز التحقق عبر الرسائل النصية بنجاح',
+      data: {
+        phone: formattedPhone,
+        expires_in_minutes: 10
+      }
+    });
+
+  } catch (error) {
+    console.error('SMS verification error:', error);
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/verify-sms
+ * @desc    Verify SMS code
+ * @access  Public
+ */
+router.post('/verify-sms', async (req, res, next) => {
+  try {
+    const { phone, code } = req.body;
+
+    if (!phone || !code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number and verification code are required',
+        message_ar: 'رقم الهاتف ورمز التحقق مطلوبان'
+      });
+    }
+
+    // Format phone number
+    let formattedPhone = phone;
+    if (phone.startsWith('+962')) {
+      formattedPhone = phone.replace('+962', '962');
+    } else if (phone.startsWith('00962')) {
+      formattedPhone = phone.replace('00962', '962');
+    } else if (phone.startsWith('0') && phone.length === 10) {
+      formattedPhone = '962' + phone.substring(1);
+    } else if (!phone.startsWith('962')) {
+      formattedPhone = '962' + phone;
+    }
+
+    // Check verification code
+    const [verification] = await executeQuery(
+      `SELECT * FROM verification_codes 
+       WHERE phone = ? AND code = ? AND type = 'sms_verification' 
+       AND expires_at > NOW() AND used_at IS NULL`,
+      [formattedPhone, code]
+    );
+
+    if (!verification) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification code',
+        message_ar: 'رمز التحقق غير صالح أو منتهي الصلاحية'
+      });
+    }
+
+    // Mark verification as used
+    await executeQuery(
+      'UPDATE verification_codes SET used_at = NOW() WHERE id = ?',
+      [verification.id]
+    );
+
+    console.log(`[SMS] Phone ${formattedPhone} verified successfully`);
+
+    res.json({
+      success: true,
+      message: 'Phone number verified successfully',
+      message_ar: 'تم تأكيد رقم الهاتف بنجاح',
+      data: {
+        phone: formattedPhone,
+        verified_at: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error('SMS verification error:', error);
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/register-with-sms
+ * @desc    Register user with SMS verification
+ * @access  Public
+ */
+router.post('/register-with-sms', validateUserRegistration, async (req, res, next) => {
+  try {
+    const { first_name, last_name, email, phone, password, sms_code, language = 'en' } = req.body;
+
+    // Format phone number
+    let formattedPhone = phone;
+    if (phone.startsWith('+962')) {
+      formattedPhone = phone.replace('+962', '962');
+    } else if (phone.startsWith('00962')) {
+      formattedPhone = phone.replace('00962', '962');
+    } else if (phone.startsWith('0') && phone.length === 10) {
+      formattedPhone = '962' + phone.substring(1);
+    } else if (!phone.startsWith('962')) {
+      formattedPhone = '962' + phone;
+    }
+
+    // Verify SMS code first
+    const [verification] = await executeQuery(
+      `SELECT * FROM verification_codes 
+       WHERE phone = ? AND code = ? AND type = 'sms_verification' 
+       AND expires_at > NOW() AND used_at IS NULL`,
+      [formattedPhone, sms_code]
+    );
+
+    if (!verification) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired SMS verification code',
+        message_ar: 'رمز التحقق عبر الرسائل النصية غير صالح أو منتهي الصلاحية'
+      });
+    }
+
+    // Check if phone number already exists
+    const [existingUser] = await executeQuery(
+      'SELECT id FROM users WHERE phone = ?',
+      [formattedPhone]
+    );
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: 'Phone number already registered',
+        message_ar: 'رقم الهاتف مسجل مسبقاً'
+      });
+    }
+
+    // Hash password
+    const saltRounds = 12;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    // Create user with phone verification
+    const result = await executeQuery(
+      `INSERT INTO users (first_name, last_name, email, phone, password_hash, is_verified, phone_verified_at, language) 
+       VALUES (?, ?, ?, ?, ?, 1, NOW(), ?)`,
+      [first_name, last_name, email, formattedPhone, hashedPassword, language]
+    );
+
+    const userId = result.insertId;
+
+    // Mark verification code as used
+    await executeQuery(
+      'UPDATE verification_codes SET used_at = NOW() WHERE id = ?',
+      [verification.id]
+    );
+
+    // Get created user
+    const [newUser] = await executeQuery(
+      'SELECT id, first_name, last_name, phone, is_verified, phone_verified_at, created_at FROM users WHERE id = ?',
+      [userId]
+    );
+
+    console.log(`[SMS] User registered with phone verification: ${formattedPhone}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully with phone verification',
+      message_ar: 'تم تسجيل المستخدم بنجاح مع التحقق من رقم الهاتف',
+      data: {
+        user: newUser
+      }
+    });
+
+  } catch (error) {
+    console.error('SMS registration error:', error);
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/auth/login-with-sms
+ * @desc    Login with phone number and SMS verification
+ * @access  Public
+ */
+router.post('/login-with-sms', async (req, res, next) => {
+  try {
+    const { phone, sms_code } = req.body;
+
+    if (!phone || !sms_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number and SMS code are required',
+        message_ar: 'رقم الهاتف ورمز الرسائل النصية مطلوبان'
+      });
+    }
+
+    // Format phone number
+    let formattedPhone = phone;
+    if (phone.startsWith('+962')) {
+      formattedPhone = phone.replace('+962', '962');
+    } else if (phone.startsWith('00962')) {
+      formattedPhone = phone.replace('00962', '962');
+    } else if (phone.startsWith('0') && phone.length === 10) {
+      formattedPhone = '962' + phone.substring(1);
+    } else if (!phone.startsWith('962')) {
+      formattedPhone = '962' + phone;
+    }
+
+    // Verify SMS code
+    const [verification] = await executeQuery(
+      `SELECT * FROM verification_codes 
+       WHERE phone = ? AND code = ? AND type = 'sms_verification' 
+       AND expires_at > NOW() AND used_at IS NULL`,
+      [formattedPhone, sms_code]
+    );
+
+    if (!verification) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired SMS verification code',
+        message_ar: 'رمز التحقق عبر الرسائل النصية غير صالح أو منتهي الصلاحية'
+      });
+    }
+
+    // Get user by phone
+    const [user] = await executeQuery(
+      'SELECT * FROM users WHERE phone = ? AND is_active = 1',
+      [formattedPhone]
+    );
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found with this phone number',
+        message_ar: 'لم يتم العثور على مستخدم بهذا الرقم'
+      });
+    }
+
+    // Mark verification code as used
+    await executeQuery(
+      'UPDATE verification_codes SET used_at = NOW() WHERE id = ?',
+      [verification.id]
+    );
+
+    // Generate tokens
+    const tokens = generateTokenPair(user);
+
+    // Store refresh token
+    const hashedRefreshToken = crypto.createHash('sha256').update(tokens.refreshToken).digest('hex');
+    await executeQuery(
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) 
+       VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))`,
+      [user.id, hashedRefreshToken]
+    );
+
+    // Update last login
+    await executeQuery(
+      'UPDATE users SET last_login_at = NOW() WHERE id = ?',
+      [user.id]
+    );
+
+    // Remove sensitive data
+    delete user.password_hash;
+
+    console.log(`[SMS] User logged in via SMS: ${formattedPhone}`);
+
+    res.json({
+      success: true,
+      message: 'Login successful via SMS verification',
+      message_ar: 'تم تسجيل الدخول بنجاح عبر التحقق من الرسائل النصية',
+      data: {
+        user,
+        tokens
+      }
+    });
+
+  } catch (error) {
+    console.error('SMS login error:', error);
     next(error);
   }
 });

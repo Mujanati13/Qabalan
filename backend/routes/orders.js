@@ -472,6 +472,82 @@ const sendOrderStatusNotification = async (order, newStatus, oldStatus) => {
   }
 };
 
+/**
+ * Send order creation notification to customer
+ */
+const sendOrderCreationNotification = async (order, isAdminCreated = false) => {
+  try {
+    console.log('\n🔔 [NOTIFICATION DEBUG] Starting sendOrderCreationNotification...');
+    console.log('🔔 [NOTIFICATION DEBUG] Order data:', {
+      id: order.id,
+      order_number: order.order_number,
+      user_id: order.user_id,
+      customer_name: order.customer_name,
+      customer_phone: order.customer_phone,
+      total_amount: order.total_amount,
+      isAdminCreated
+    });
+
+    // Skip if no user (guest order) or no order data
+    if (!order.user_id || !order.order_number) {
+      console.log('🔔 [NOTIFICATION DEBUG] ❌ Skipping notification: missing data', { 
+        user_id: order.user_id, 
+        order_number: order.order_number 
+      });
+      return;
+    }
+
+    // Check if customer has FCM tokens
+    const tokens = await executeQuery(`
+      SELECT token, device_type, is_active 
+      FROM user_fcm_tokens 
+      WHERE user_id = ? AND is_active = 1
+    `, [order.user_id]);
+    
+    console.log(`🔔 [NOTIFICATION DEBUG] Customer FCM tokens: ${tokens.length} active tokens found`);
+    if (tokens.length > 0) {
+      tokens.forEach((token, index) => {
+        console.log(`🔔 [NOTIFICATION DEBUG] Token ${index + 1}: ${token.token.substring(0, 30)}... (${token.device_type})`);
+      });
+    }
+
+    // Define notification message for order creation
+    const notification = {
+      title_en: isAdminCreated ? 'New Order Created by Our Team' : 'Order Confirmation',
+      title_ar: isAdminCreated ? 'تم إنشاء طلب جديد من قبل فريقنا' : 'تأكيد الطلب',
+      message_en: isAdminCreated 
+        ? `Your order #${order.order_number} has been created by our team. Total: ${order.total_amount} JOD`
+        : `Thank you! Your order #${order.order_number} has been received. Total: ${order.total_amount} JOD`,
+      message_ar: isAdminCreated
+        ? `تم إنشاء طلبك رقم #${order.order_number} من قبل فريقنا. المجموع: ${order.total_amount} دينار`
+        : `شكراً لك! تم استلام طلبك رقم #${order.order_number}. المجموع: ${order.total_amount} دينار`,
+      type: 'order'
+    };
+
+    const data = {
+      order_id: order.id.toString(),
+      order_number: order.order_number,
+      total_amount: order.total_amount,
+      order_type: order.order_type,
+      created_by: isAdminCreated ? 'admin' : 'customer',
+      payment_method: order.payment_method
+    };
+
+    console.log('🔔 [NOTIFICATION DEBUG] Notification payload:', notification);
+    console.log('🔔 [NOTIFICATION DEBUG] Notification data:', data);
+    console.log('🔔 [NOTIFICATION DEBUG] Calling notificationService.sendToUser...');
+
+    const result = await notificationService.sendToUser(order.user_id, notification, data);
+    
+    console.log('🔔 [NOTIFICATION DEBUG] ✅ Notification service result:', result);
+    console.log(`🔔 [NOTIFICATION DEBUG] ✅ Order creation notification sent to user ${order.user_id} for order ${order.order_number} (admin created: ${isAdminCreated})`);
+  } catch (error) {
+    console.error('🔔 [NOTIFICATION DEBUG] ❌ Error sending order creation notification:', error);
+    console.error('🔔 [NOTIFICATION DEBUG] ❌ Error stack:', error.stack);
+    // Don't throw error to avoid breaking order creation
+  }
+};
+
 // =============================================================================
 // ORDER ROUTES
 // =============================================================================
@@ -1008,6 +1084,11 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     const isGuestOrder = is_guest || !req.user;
     const isAdminOrder = req.user && customer_id; // Admin creating order for customer
 
+    console.log('\n🏪 [ORDER DEBUG] Order creation started...');
+    console.log('🏪 [ORDER DEBUG] Request user:', req.user ? { id: req.user.id, user_type: req.user.user_type } : 'None');
+    console.log('🏪 [ORDER DEBUG] Order flags:', { isGuestOrder, isAdminOrder });
+    console.log('🏪 [ORDER DEBUG] Customer info:', { customer_id, customer_name, customer_phone, customer_email });
+
     // Basic validation
     if (!items || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({
@@ -1184,6 +1265,34 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     console.log('  req.user:', req.user ? `{id: ${req.user.id}}` : 'null');
     console.log('  orderUserId:', orderUserId);
     
+    // Helper function to convert undefined to null for SQL
+    const nullifyUndefined = (value) => value === undefined ? null : value;
+    
+    // Debug all parameter values before insertion
+    console.log('🔍 Order parameters debug:', {
+      orderNumber,
+      orderUserId,
+      branch_id,
+      delivery_address_id: nullifyUndefined((isGuestOrder && !isAdminOrder) ? null : delivery_address_id),
+      customer_name,
+      customer_phone,
+      customer_email: nullifyUndefined(customer_email),
+      order_type,
+      payment_method,
+      subtotal,
+      deliveryFee,
+      taxAmount,
+      discountAmount,
+      totalAmount,
+      points_to_use: isGuestOrder ? 0 : nullifyUndefined(points_to_use),
+      pointsEarned: isGuestOrder ? 0 : nullifyUndefined(pointsEarned),
+      promoCodeId: nullifyUndefined(promoCodeId),
+      special_instructions: nullifyUndefined(special_instructions),
+      guest_delivery_address: isGuestOrder && guest_delivery_address ? 
+        (typeof guest_delivery_address === 'string' ? guest_delivery_address : JSON.stringify(guest_delivery_address)) : null,
+      isGuestOrder: isGuestOrder ? 1 : 0
+    });
+    
     const queries = [
       {
         query: `
@@ -1199,10 +1308,10 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           orderNumber, 
           orderUserId, 
           branch_id, 
-          (isGuestOrder && !isAdminOrder) ? null : delivery_address_id,
+          nullifyUndefined((isGuestOrder && !isAdminOrder) ? null : delivery_address_id),
           customer_name, 
           customer_phone, 
-          customer_email || null, 
+          nullifyUndefined(customer_email), 
           order_type, 
           payment_method,
           subtotal, 
@@ -1210,10 +1319,10 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           taxAmount, 
           discountAmount, 
           totalAmount,
-          isGuestOrder ? 0 : points_to_use, 
-          isGuestOrder ? 0 : pointsEarned, 
-          promoCodeId, 
-          special_instructions || null,
+          isGuestOrder ? 0 : nullifyUndefined(points_to_use), 
+          isGuestOrder ? 0 : nullifyUndefined(pointsEarned), 
+          nullifyUndefined(promoCodeId), 
+          nullifyUndefined(special_instructions),
           isGuestOrder && guest_delivery_address ? 
             (typeof guest_delivery_address === 'string' ? guest_delivery_address : JSON.stringify(guest_delivery_address)) : null,
           isGuestOrder ? 1 : 0
@@ -1223,11 +1332,15 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
 
     // Add promo code usage update to the first transaction if applied
     if (promoCodeId) {
+      console.log('🔍 Promo code update debug:', {
+        promoCodeId: nullifyUndefined(promoCodeId)
+      });
+      
       queries.push({
         query: `
           UPDATE promo_codes SET usage_count = usage_count + 1 WHERE id = ?
         `,
-        params: [promoCodeId]
+        params: [nullifyUndefined(promoCodeId)]
       });
     }
 
@@ -1238,6 +1351,17 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     // Now insert order items with the actual order ID
     const orderItemsQueries = [];
     validatedItems.forEach(item => {
+      console.log('🔍 Order item debug:', {
+        orderId,
+        product_id: item.product_id,
+        variant_id: nullifyUndefined(item.variant_id),
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total_price: item.total_price,
+        points_earned: nullifyUndefined(item.points_earned),
+        special_instructions: nullifyUndefined(item.special_instructions)
+      });
+      
       orderItemsQueries.push({
         query: `
           INSERT INTO order_items (
@@ -1247,8 +1371,13 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         `,
         params: [
           orderId, // Use the actual order ID instead of LAST_INSERT_ID()
-          item.product_id, item.variant_id, item.quantity, item.unit_price,
-          item.total_price, item.points_earned, item.special_instructions
+          item.product_id, 
+          nullifyUndefined(item.variant_id), 
+          item.quantity, 
+          item.unit_price,
+          item.total_price, 
+          nullifyUndefined(item.points_earned), 
+          nullifyUndefined(item.special_instructions)
         ]
       });
     });
@@ -1259,17 +1388,24 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         INSERT INTO order_status_history (order_id, status, note, changed_by)
         VALUES (?, 'pending', 'Order created', ?)
       `,
-      params: [orderId, isGuestOrder ? null : req.user.id]
+      params: [orderId, isGuestOrder ? null : nullifyUndefined(req.user.id)]
     });
 
     // Add promo code usage with actual order ID if needed
     if (promoCodeId && !isGuestOrder) {
+      console.log('🔍 Promo code usage debug:', {
+        promoCodeId: nullifyUndefined(promoCodeId),
+        user_id: req.user.id,
+        orderId,
+        discountAmount
+      });
+      
       orderItemsQueries.push({
         query: `
           INSERT INTO promo_code_usages (promo_code_id, user_id, order_id, discount_amount)
           VALUES (?, ?, ?, ?)
         `,
-        params: [promoCodeId, req.user.id, orderId, discountAmount]
+        params: [nullifyUndefined(promoCodeId), req.user.id, orderId, discountAmount]
       });
     }
 
@@ -1326,6 +1462,76 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         pendingOrders: pendingCount[0].count,
         lastUpdated: new Date().toISOString()
       });
+      
+      // Send customer notification using the unified notification function
+      console.log('\n🔔 [ORDER DEBUG] Checking notification conditions...');
+      console.log('🔔 [ORDER DEBUG] orderUserId:', orderUserId);
+      console.log('🔔 [ORDER DEBUG] isAdminOrder:', isAdminOrder);
+      console.log('🔔 [ORDER DEBUG] req.user?.user_type:', req.user?.user_type);
+      
+      if (orderUserId) {
+        console.log('🔔 [ORDER DEBUG] ✅ orderUserId exists, proceeding with notification...');
+        
+        // For admin-created orders with customer_id
+        if (isAdminOrder) {
+          console.log('🔔 [ORDER DEBUG] 📋 Sending admin-created order notification...');
+          await sendOrderCreationNotification(newOrder, true);
+        } else {
+          console.log('🔔 [ORDER DEBUG] 👤 Sending regular customer order notification...');
+          // For regular customer orders
+          await sendOrderCreationNotification(newOrder, false);
+        }
+      } else {
+        console.log('🔔 [ORDER DEBUG] ❌ No orderUserId, skipping primary notification');
+      }
+      
+      // Additional check: if admin creates order with customer phone/email, try to find and notify customer
+      if (req.user && req.user.user_type === 'admin' && !isAdminOrder && (customer_phone || customer_email)) {
+        console.log('🔔 [ORDER DEBUG] 🔍 Admin order without customer_id, searching by phone/email...');
+        console.log('🔔 [ORDER DEBUG] Search criteria:', { customer_phone, customer_email });
+        
+        try {
+          // Try to find existing customer by phone or email
+          let existingCustomer = null;
+          if (customer_phone) {
+            console.log('🔔 [ORDER DEBUG] 📞 Searching by phone:', customer_phone);
+            const [customerByPhone] = await executeQuery(
+              'SELECT id, first_name, last_name FROM users WHERE phone = ? AND user_type = "customer"',
+              [customer_phone]
+            );
+            existingCustomer = customerByPhone;
+            console.log('🔔 [ORDER DEBUG] Phone search result:', existingCustomer || 'Not found');
+          }
+          
+          if (!existingCustomer && customer_email) {
+            console.log('🔔 [ORDER DEBUG] 📧 Searching by email:', customer_email);
+            const [customerByEmail] = await executeQuery(
+              'SELECT id, first_name, last_name FROM users WHERE email = ? AND user_type = "customer"',
+              [customer_email]
+            );
+            existingCustomer = customerByEmail;
+            console.log('🔔 [ORDER DEBUG] Email search result:', existingCustomer || 'Not found');
+          }
+          
+          if (existingCustomer) {
+            console.log('🔔 [ORDER DEBUG] ✅ Customer found, creating notification order object...');
+            // Create temporary order object for notification
+            const orderForNotification = {
+              ...newOrder,
+              user_id: existingCustomer.id
+            };
+            console.log('🔔 [ORDER DEBUG] 📤 Sending matched customer notification...');
+            await sendOrderCreationNotification(orderForNotification, true);
+            console.log(`🔔 [ORDER DEBUG] ✅ Customer notification sent for admin order ${orderNumber} to matched customer ${existingCustomer.id} (${existingCustomer.first_name} ${existingCustomer.last_name})`);
+          } else {
+            console.log(`🔔 [ORDER DEBUG] ❌ No existing customer found for phone ${customer_phone} or email ${customer_email} - notification not sent`);
+          }
+        } catch (notifError) {
+          console.error('🔔 [ORDER DEBUG] ❌ Error sending customer notification for admin order by phone/email lookup:', notifError);
+        }
+      } else {
+        console.log('🔔 [ORDER DEBUG] ⏭️ Skipping phone/email lookup (not admin order or already has customer_id)');
+      }
     }
 
     res.status(201).json({
@@ -1408,15 +1614,34 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
 
       // Validate address exists and belongs to user
       const [address] = await executeQuery(
-        'SELECT area_id FROM user_addresses WHERE id = ? AND user_id = ? AND is_active = 1',
-        [finalDeliveryAddressId, currentOrder.user_id]
+        'SELECT area_id, user_id, is_active FROM user_addresses WHERE id = ?',
+        [finalDeliveryAddressId]
       );
 
       if (!address) {
         return res.status(400).json({
           success: false,
-          message: 'Invalid delivery address',
-          message_ar: 'عنوان التوصيل غير صحيح'
+          message: 'Delivery address not found',
+          message_ar: 'عنوان التوصيل غير موجود',
+          details: `Address ID ${finalDeliveryAddressId} does not exist`
+        });
+      }
+
+      if (address.user_id !== currentOrder.user_id) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery address does not belong to this customer',
+          message_ar: 'عنوان التوصيل لا يخص هذا العميل',
+          details: `Address belongs to user ${address.user_id} but order belongs to user ${currentOrder.user_id}`
+        });
+      }
+
+      if (!address.is_active) {
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery address is inactive',
+          message_ar: 'عنوان التوصيل غير نشط',
+          details: 'The selected address has been deactivated'
         });
       }
     }
@@ -1517,6 +1742,13 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
 
     // Allow any status change for admin flexibility - removed strict transitions
     // This gives admins full control over order status management
+
+    console.log('Updating order status:', {
+      orderId: req.params.id,
+      newStatus: status,
+      statusLength: status ? status.length : 'null',
+      statusType: typeof status
+    });
 
     const queries = [
       {
@@ -2647,13 +2879,23 @@ function convertToCSV(orders) {
  */
 router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, next) => {
   try {
+    console.log('🔍 Order receipt confirmation request:', {
+      orderId: req.params.id,
+      userId: req.user?.id,
+      userType: req.user?.user_type,
+      timestamp: new Date().toISOString()
+    });
+    
     // Get order details
     const [order] = await executeQuery(
       'SELECT id, user_id, order_status FROM orders WHERE id = ?',
       [req.params.id]
     );
 
+    console.log('🔍 Found order for confirmation:', order);
+
     if (!order) {
+      console.log('❌ Order not found for ID:', req.params.id);
       return res.status(404).json({
         success: false,
         message: 'Order not found',
@@ -2663,6 +2905,10 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
 
     // Check permissions - only the customer who placed the order can confirm receipt
     if (req.user.user_type === 'customer' && order.user_id !== req.user.id) {
+      console.log('❌ Access denied - user mismatch:', {
+        orderUserId: order.user_id,
+        requestUserId: req.user.id
+      });
       return res.status(403).json({
         success: false,
         message: 'Access denied',
@@ -2672,6 +2918,10 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
 
     // Check if order is eligible for confirmation (should be delivered)
     if (order.order_status !== 'delivered') {
+      console.log('❌ Order not eligible for confirmation:', {
+        currentStatus: order.order_status,
+        requiredStatus: 'delivered'
+      });
       return res.status(400).json({
         success: false,
         message: 'Order cannot be confirmed. It must be delivered first.',
@@ -2679,24 +2929,28 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
       });
     }
 
-    // Update order status to indicate customer confirmed receipt
-    await executeTransaction(async (connection) => {
-      // Update the order delivered_at timestamp if not already set
-      await connection.execute(
-        `UPDATE orders 
-         SET delivered_at = COALESCE(delivered_at, NOW()),
-             updated_at = NOW()
-         WHERE id = ?`,
-        [req.params.id]
-      );
+    console.log('✅ Order eligible for confirmation, updating status...');
 
-      // Add status history entry
-      await connection.execute(
-        `INSERT INTO order_status_history (order_id, status, note, changed_by, created_at)
-         VALUES (?, 'receipt_confirmed', 'Customer confirmed order receipt', ?, NOW())`,
-        [req.params.id, req.user.id]
-      );
-    });
+    // Update order status to indicate customer confirmed receipt
+    const queries = [
+      {
+        query: `UPDATE orders 
+                SET delivered_at = COALESCE(delivered_at, NOW()),
+                    updated_at = NOW()
+                WHERE id = ?`,
+        params: [req.params.id]
+      },
+      {
+        query: `INSERT INTO order_status_history (order_id, status, note, changed_by, created_at)
+                VALUES (?, 'receipt_confirmed', 'Customer confirmed order receipt', ?, NOW())`,
+        params: [req.params.id, req.user.id]
+      }
+    ];
+
+    console.log('🔍 Executing confirmation queries:', queries);
+    await executeTransaction(queries);
+
+    console.log('✅ Order confirmation queries executed successfully');
 
     // Get updated order
     const [updatedOrder] = await executeQuery(`
@@ -2710,6 +2964,11 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
       WHERE o.id = ?
     `, [req.params.id]);
 
+    console.log('✅ Order receipt confirmed successfully:', {
+      orderId: updatedOrder.id,
+      orderNumber: updatedOrder.order_number
+    });
+
     res.json({
       success: true,
       message: 'Order receipt confirmed successfully',
@@ -2718,6 +2977,7 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
     });
 
   } catch (error) {
+    console.error('❌ Error confirming order receipt:', error);
     next(error);
   }
 });

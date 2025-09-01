@@ -60,7 +60,7 @@ import {
 import { useLanguage } from '../contexts/LanguageContext';
 import customersService from '../services/customersService';
 import api from '../services/api';
-import moment from 'moment';
+import dayjs from 'dayjs';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
 import EnhancedAddressForm from '../components/common/EnhancedAddressForm';
@@ -306,9 +306,26 @@ const Customers = () => {
     loadCities();
   }, [loadCustomers, loadCustomerStats, loadCities]);
 
+  // Update form when editing customer changes
+  useEffect(() => {
+    if (editingCustomer && editVisible) {
+      customerForm.setFieldsValue({
+        ...editingCustomer,
+        birth_date: editingCustomer.birth_date ? dayjs(editingCustomer.birth_date) : null
+      });
+    }
+  }, [editingCustomer, editVisible, customerForm]);
+
   // Handle customer actions
   const handleViewProfile = async (customer) => {
-    setSelectedCustomer(customer);
+    try {
+      // Refresh customer data to get the latest information
+      const refreshedCustomer = await customersService.getCustomer(customer.id);
+      setSelectedCustomer(refreshedCustomer.data || customer);
+    } catch (error) {
+      console.error('Error fetching updated customer data:', error);
+      setSelectedCustomer(customer);
+    }
     setProfileVisible(true);
     await loadCustomerAddresses(customer.id);
     await loadCustomerOrders(customer.id);
@@ -319,7 +336,7 @@ const Customers = () => {
     setEditingCustomer(customer);
     customerForm.setFieldsValue({
       ...customer,
-      birth_date: customer.birth_date ? moment(customer.birth_date) : null
+      birth_date: customer.birth_date ? dayjs(customer.birth_date) : null
     });
     setEditVisible(true);
   };
@@ -440,34 +457,111 @@ const Customers = () => {
       setBulkActionLoading(true);
       const selectedCustomers = customers.filter(customer => selectedRowKeys.includes(customer.id));
       
-      const csvData = selectedCustomers.map(customer => ({
-        [t('customers.name')]: customer.name,
-        [t('customers.email')]: customer.email,
-        [t('customers.phone')]: customer.phone,
-        [t('customers.type')]: customer.user_type,
-        [t('customers.status')]: customer.is_active ? t('common.active') : t('common.inactive'),
-        [t('customers.verified')]: customer.is_verified ? t('common.yes') : t('common.no'),
-        [t('customers.registrationDate')]: moment(customer.created_at).format('YYYY-MM-DD HH:mm:ss')
-      }));
-
-      const csvContent = [
-        Object.keys(csvData[0]).join(','),
-        ...csvData.map(row => Object.values(row).map(val => `"${val}"`).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      // Import ExcelJS dynamically
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet(t('customers.title') || 'Customers');
+      
+      // Add title
+      worksheet.mergeCells('A1:H1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = t('customers.export_report') || 'Customers Export Report';
+      titleCell.font = { bold: true, size: 16 };
+      titleCell.alignment = { horizontal: 'center' };
+      
+      // Add export info
+      worksheet.mergeCells('A2:H2');
+      const infoCell = worksheet.getCell('A2');
+      infoCell.value = `${t('customers.exported_date') || 'Exported on'}: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}`;
+      infoCell.font = { bold: true };
+      
+      // Define columns starting from row 4
+      const headers = [
+        t('customers.name') || 'Name',
+        t('customers.email') || 'Email',
+        t('customers.phone') || 'Phone',
+        t('customers.type') || 'Type',
+        t('customers.status') || 'Status',
+        t('customers.verified') || 'Verified',
+        t('customers.birthDate') || 'Birth Date',
+        t('customers.registrationDate') || 'Registration Date'
+      ];
+      
+      // Set up columns with proper widths
+      worksheet.columns = [
+        { header: headers[0], key: 'name', width: 25 },
+        { header: headers[1], key: 'email', width: 30 },
+        { header: headers[2], key: 'phone', width: 15 },
+        { header: headers[3], key: 'type', width: 12 },
+        { header: headers[4], key: 'status', width: 12 },
+        { header: headers[5], key: 'verified', width: 12 },
+        { header: headers[6], key: 'birth_date', width: 15 },
+        { header: headers[7], key: 'registration_date', width: 20 }
+      ];
+      
+      // Add headers at row 4
+      headers.forEach((header, index) => {
+        const cell = worksheet.getCell(4, index + 1);
+        cell.value = header;
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE6F3FF' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+      
+      // Add data rows starting from row 5
+      selectedCustomers.forEach((customer, index) => {
+        const row = worksheet.getRow(5 + index);
+        row.values = [
+          `${customer.first_name} ${customer.last_name}`,
+          customer.email,
+          customer.phone || '',
+          customer.user_type,
+          customer.is_active ? (t('common.active') || 'Active') : (t('common.inactive') || 'Inactive'),
+          customer.is_verified ? (t('common.yes') || 'Yes') : (t('common.no') || 'No'),
+          customer.birth_date ? dayjs(customer.birth_date).format('YYYY-MM-DD') : '',
+          dayjs(customer.created_at).format('YYYY-MM-DD HH:mm:ss')
+        ];
+        
+        // Add borders to data rows
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        });
+      });
+      
+      // Generate and download the file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
       link.setAttribute('href', url);
-      link.setAttribute('download', `customers_${moment().format('YYYY-MM-DD')}.csv`);
+      link.setAttribute('download', `customers_export_${dayjs().format('YYYY-MM-DD')}.xlsx`);
       link.style.visibility = 'hidden';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      URL.revokeObjectURL(url);
 
       message.success(t('customers.bulk_actions.export_success'));
       setSelectedRowKeys([]);
     } catch (error) {
+      console.error('Error exporting customers:', error);
       message.error(t('customers.bulk_actions.operation_failed'));
     } finally {
       setBulkActionLoading(false);
@@ -580,6 +674,10 @@ const Customers = () => {
         ...values,
         birth_date: values.birth_date ? values.birth_date.format('YYYY-MM-DD') : null
       };
+      
+      console.log('Updating customer with data:', customerData);
+      console.log('Original birth_date value:', values.birth_date);
+      console.log('Formatted birth_date:', customerData.birth_date);
       
       await customersService.updateCustomer(editingCustomer.id, customerData);
       message.success(t('customers.updateSuccess'));
@@ -894,6 +992,22 @@ const Customers = () => {
       )
     },
     {
+      title: t('customers.birthDate'),
+      dataIndex: 'birth_date',
+      key: 'birth_date',
+      width: 120,
+      responsive: ['lg'],
+      ...getColumnSortProps('birth_date', 'date'),
+      render: (birth_date) => birth_date ? (
+        <Space direction="vertical" size={0}>
+          <Text>{dayjs(birth_date).format('YYYY-MM-DD')}</Text>
+          <Text type="secondary" style={{ fontSize: '11px' }}>
+            {dayjs().diff(dayjs(birth_date), 'years')} years
+          </Text>
+        </Space>
+      ) : '-'
+    },
+    {
       title: t('customers.orderCount'),
       dataIndex: 'orders_count',
       key: 'orders_count',
@@ -911,7 +1025,7 @@ const Customers = () => {
       width: 120,
       responsive: ['lg'],
       ...getColumnSortProps('created_at', 'date'),
-      render: (date) => moment(date).format('YYYY-MM-DD')
+      render: (date) => dayjs(date).format('YYYY-MM-DD')
     },
     {
       title: t('common.actions'),
@@ -1199,7 +1313,7 @@ const Customers = () => {
           <Space.Compact>
             <ExportButton
               {...getCustomersExportConfig(customers, columns)}
-              showFormats={['csv', 'excel', 'pdf']}
+              showFormats={['excel']}
             />
             <Dropdown
               overlay={
@@ -1316,6 +1430,7 @@ const Customers = () => {
         }}
         footer={null}
         width={600}
+        key={editingCustomer ? `edit-${editingCustomer.id}` : 'create'}
       >
         <CustomerForm
           form={customerForm}
@@ -1415,8 +1530,8 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
         <Descriptions.Item label={t('customers.birthDate')}>
           {customer.birth_date ? (
             <Space>
-              <Text strong>{moment(customer.birth_date).format('YYYY-MM-DD')}</Text>
-              <Text type="secondary">({moment().diff(moment(customer.birth_date), 'years')} years old)</Text>
+              <Text strong>{dayjs(customer.birth_date).format('YYYY-MM-DD')}</Text>
+              <Text type="secondary">({dayjs().diff(dayjs(customer.birth_date), 'years')} years old)</Text>
             </Space>
           ) : '-'}
         </Descriptions.Item>
@@ -1431,10 +1546,10 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
           </Space>
         </Descriptions.Item>
         <Descriptions.Item label={t('customers.joinDate')}>
-          {moment(customer.created_at).format('YYYY-MM-DD HH:mm')}
+          {dayjs(customer.created_at).format('YYYY-MM-DD HH:mm')}
         </Descriptions.Item>
         <Descriptions.Item label={t('customers.lastLogin')}>
-          {customer.last_login_at ? moment(customer.last_login_at).format('YYYY-MM-DD HH:mm') : '-'}
+          {customer.last_login_at ? dayjs(customer.last_login_at).format('YYYY-MM-DD HH:mm') : '-'}
         </Descriptions.Item>
       </Descriptions>
       
@@ -1493,7 +1608,17 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
           <div style={{ marginBottom: 8 }}>
             <Text>
               {address.building_no && `${address.building_no}, `}
-              {address.city_title_en}, {address.area_title_en}
+              {address.latitude && address.longitude && 
+               typeof address.latitude === 'number' && typeof address.longitude === 'number' ? (
+                <span>
+                  <Tag color="green" size="small" style={{ marginRight: 4 }}>
+                    📍 GPS Address
+                  </Tag>
+                  {address.latitude.toFixed(4)}, {address.longitude.toFixed(4)}
+                </span>
+              ) : (
+                `${address.city_title_en}, ${address.area_title_en}`
+              )}
               {address.details && ` - ${address.details}`}
             </Text>
           </div>
@@ -1526,7 +1651,7 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
           {address.delivery_fee && (
             <div style={{ marginTop: 8 }}>
               <Tag color="blue" style={{ fontSize: '11px' }}>
-                🚚 Delivery Fee: {address.delivery_fee.toFixed(2)} JOD
+                🚚 Delivery Fee: {Number(address.delivery_fee || 0).toFixed(2)} JOD
               </Tag>
             </div>
           )}
@@ -1542,7 +1667,7 @@ const CustomerProfile = ({ customer, addresses, orders, customerShippingInfo, lo
               <div>
                 <Text strong>{order.order_number}</Text>
                 <br />
-                <Text type="secondary">{moment(order.created_at).format('YYYY-MM-DD')}</Text>
+                <Text type="secondary">{dayjs(order.created_at).format('YYYY-MM-DD')}</Text>
               </div>
               <div>
                 <Tag color={order.order_status === 'delivered' ? 'green' : 'blue'}>
@@ -1756,7 +1881,12 @@ const CustomerForm = ({ form, onFinish, onCancel, isEditing, t }) => (
           label={t('customers.birthDate')}
           name="birth_date"
         >
-          <DatePicker style={{ width: '100%' }} />
+          <DatePicker 
+            style={{ width: '100%' }} 
+            format="YYYY-MM-DD"
+            placeholder={t('customers.selectBirthDate') || 'Select birth date'}
+            allowClear
+          />
         </Form.Item>
       </Col>
     </Row>

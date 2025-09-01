@@ -135,13 +135,8 @@ const ordersService = {
   // Get order counts by status
   getOrderCounts: async () => {
     try {
-      // Get counts from the dashboard stats to avoid routing conflicts
-      const response = await api.get('/orders/stats/dashboard', { 
-        params: {
-          start_date: new Date().toISOString().split('T')[0],
-          end_date: new Date().toISOString().split('T')[0]
-        }
-      });
+      // Get all order counts, not just today's
+      const response = await api.get('/orders/stats/dashboard');
       
       // Extract counts from status_stats
       const counts = {};
@@ -153,7 +148,43 @@ const ordersService = {
       
       return { data: counts };
     } catch (error) {
-      throw new Error(error.response?.data?.message || 'Failed to fetch order counts');
+      console.error('Error fetching order counts:', error);
+      // If the dashboard stats endpoint fails, try a direct count approach
+      try {
+        const pendingResponse = await api.get('/orders', { 
+          params: { 
+            status: 'pending',
+            limit: 1,
+            page: 1
+          }
+        });
+        
+        const processingResponse = await api.get('/orders', { 
+          params: { 
+            status: 'processing',
+            limit: 1,
+            page: 1
+          }
+        });
+        
+        const completedResponse = await api.get('/orders', { 
+          params: { 
+            status: 'completed',
+            limit: 1,
+            page: 1
+          }
+        });
+        
+        return { 
+          data: {
+            pending: pendingResponse.data?.pagination?.total || 0,
+            processing: processingResponse.data?.pagination?.total || 0,
+            completed: completedResponse.data?.pagination?.total || 0
+          }
+        };
+      } catch (fallbackError) {
+        throw new Error(fallbackError.response?.data?.message || 'Failed to fetch order counts');
+      }
     }
   },
 

@@ -38,8 +38,6 @@ import dayjs from 'dayjs';
 import { useLanguage } from '../contexts/LanguageContext';
 import invoiceService from '../services/invoiceService';
 import orderService from '../services/orderService';
-import ExportButton from '../components/common/ExportButton';
-import { useExportConfig } from '../hooks/useExportConfig';
 
 const { Option } = Select;
 const { Title, Text } = Typography;
@@ -47,7 +45,6 @@ const { RangePicker } = DatePicker;
 
 const InvoiceManagement = () => {
   const { t } = useLanguage();
-  const { getInvoicesExportConfig } = useExportConfig();
   const [orders, setOrders] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -240,6 +237,213 @@ const InvoiceManagement = () => {
 
   const formatDate = (date) => {
     return dayjs(date).format('MMM DD, YYYY');
+  };
+
+  const handleCustomExcelExport = async () => {
+    try {
+      setExportLoading(true);
+      
+      // Import ExcelJS dynamically
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      
+      // Create main worksheet
+      const worksheet = workbook.addWorksheet(t('invoices.orders_invoices') || 'Orders & Invoices');
+      
+      // Add title and filter information
+      worksheet.mergeCells('A1:H1');
+      const titleCell = worksheet.getCell('A1');
+      titleCell.value = t('invoices.orders_invoices_report') || 'Orders & Invoices Report';
+      titleCell.font = { bold: true, size: 16 };
+      titleCell.alignment = { horizontal: 'center' };
+      
+      // Add filter information
+      let currentRow = 3;
+      if (filters.startDate && filters.endDate) {
+        worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
+        const filterCell = worksheet.getCell(`A${currentRow}`);
+        filterCell.value = `${t('invoices.date_range') || 'Date Range'}: ${filters.startDate} - ${filters.endDate}`;
+        filterCell.font = { bold: true };
+        currentRow++;
+      }
+      
+      if (filters.status) {
+        worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
+        const statusCell = worksheet.getCell(`A${currentRow}`);
+        statusCell.value = `${t('invoices.status_filter') || 'Status Filter'}: ${t(`invoices.status_${filters.status}`) || filters.status}`;
+        statusCell.font = { bold: true };
+        currentRow++;
+      }
+      
+      if (filters.paymentStatus) {
+        worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
+        const paymentCell = worksheet.getCell(`A${currentRow}`);
+        paymentCell.value = `${t('invoices.payment_status_filter') || 'Payment Status Filter'}: ${t(`invoices.payment_${filters.paymentStatus}`) || filters.paymentStatus}`;
+        paymentCell.font = { bold: true };
+        currentRow++;
+      }
+      
+      // Add statistics summary if available
+      if (statistics) {
+        currentRow += 1;
+        worksheet.mergeCells(`A${currentRow}:H${currentRow}`);
+        const statsTitle = worksheet.getCell(`A${currentRow}`);
+        statsTitle.value = t('invoices.summary_statistics') || 'Summary Statistics';
+        statsTitle.font = { bold: true, size: 14 };
+        currentRow++;
+        
+        const statsData = [
+          [t('invoices.total_orders') || 'Total Orders', statistics.total_orders || 0],
+          [t('invoices.total_revenue') || 'Total Revenue', formatCurrency(statistics.total_revenue || 0)],
+          [t('invoices.average_order_value') || 'Average Order Value', formatCurrency(statistics.average_order_value || 0)],
+          [t('invoices.paid_orders') || 'Paid Orders', statistics.paid_orders || 0]
+        ];
+        
+        statsData.forEach(([label, value]) => {
+          worksheet.getCell(`A${currentRow}`).value = label;
+          worksheet.getCell(`A${currentRow}`).font = { bold: true };
+          worksheet.getCell(`B${currentRow}`).value = value;
+          currentRow++;
+        });
+        currentRow += 1;
+      }
+      
+      // Define column headers
+      const headers = [
+        t('invoices.order_number') || 'Order Number',
+        t('invoices.customer') || 'Customer',
+        t('invoices.customer_email') || 'Email',
+        t('invoices.date') || 'Date',
+        t('invoices.status') || 'Status',
+        t('invoices.payment') || 'Payment Status',
+        t('invoices.subtotal') || 'Subtotal',
+        t('invoices.delivery_fee') || 'Delivery Fee',
+        t('invoices.tax_amount') || 'Tax',
+        t('invoices.total') || 'Total Amount'
+      ];
+      
+      // Set up columns with proper widths
+      worksheet.columns = [
+        { header: headers[0], key: 'order_number', width: 15 },
+        { header: headers[1], key: 'customer_name', width: 20 },
+        { header: headers[2], key: 'customer_email', width: 25 },
+        { header: headers[3], key: 'created_at', width: 15 },
+        { header: headers[4], key: 'order_status', width: 15 },
+        { header: headers[5], key: 'payment_status', width: 15 },
+        { header: headers[6], key: 'subtotal', width: 12 },
+        { header: headers[7], key: 'delivery_fee', width: 12 },
+        { header: headers[8], key: 'tax_amount', width: 12 },
+        { header: headers[9], key: 'total_amount', width: 15 }
+      ];
+      
+      // Add headers at the current row
+      headers.forEach((header, index) => {
+        const cell = worksheet.getCell(currentRow, index + 1);
+        cell.value = header;
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE6F3FF' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+      
+      // Add data rows
+      currentRow++;
+      orders.forEach((order, index) => {
+        const row = worksheet.getRow(currentRow + index);
+        row.values = [
+          order.order_number,
+          order.customer_name || 'N/A',
+          order.customer_email || 'N/A',
+          formatDate(order.created_at),
+          t(`invoices.status_${order.order_status}`) || order.order_status,
+          t(`invoices.payment_${order.payment_status}`) || order.payment_status,
+          order.subtotal || 0,
+          order.delivery_fee || 0,
+          order.tax_amount || 0,
+          order.total_amount || 0
+        ];
+        
+        // Format currency cells
+        [7, 8, 9, 10].forEach(colIndex => {
+          const cell = row.getCell(colIndex);
+          cell.numFmt = '"$"#,##0.00';
+        });
+        
+        // Add borders to data rows
+        row.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        });
+      });
+      
+      // Add totals row if there are orders
+      if (orders.length > 0) {
+        const totalsRow = currentRow + orders.length;
+        worksheet.mergeCells(`A${totalsRow}:F${totalsRow}`);
+        const totalLabelCell = worksheet.getCell(`A${totalsRow}`);
+        totalLabelCell.value = t('invoices.totals') || 'TOTALS';
+        totalLabelCell.font = { bold: true };
+        totalLabelCell.alignment = { horizontal: 'right' };
+        
+        // Calculate totals
+        const subtotalSum = orders.reduce((sum, order) => sum + (order.subtotal || 0), 0);
+        const deliverySum = orders.reduce((sum, order) => sum + (order.delivery_fee || 0), 0);
+        const taxSum = orders.reduce((sum, order) => sum + (order.tax_amount || 0), 0);
+        const totalSum = orders.reduce((sum, order) => sum + (order.total_amount || 0), 0);
+        
+        worksheet.getCell(`G${totalsRow}`).value = subtotalSum;
+        worksheet.getCell(`H${totalsRow}`).value = deliverySum;
+        worksheet.getCell(`I${totalsRow}`).value = taxSum;
+        worksheet.getCell(`J${totalsRow}`).value = totalSum;
+        
+        // Format totals row
+        [7, 8, 9, 10].forEach(colIndex => {
+          const cell = worksheet.getCell(totalsRow, colIndex);
+          cell.numFmt = '"$"#,##0.00';
+          cell.font = { bold: true };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFEB3B' }
+          };
+        });
+      }
+      
+      // Generate and download the file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `invoices_report_${new Date().toISOString().split('T')[0]}.xlsx`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      message.success(t('invoices.excel_export_success') || 'Excel report generated successfully');
+    } catch (error) {
+      console.error('Error generating Excel report:', error);
+      message.error(t('invoices.excel_export_error') || 'Failed to generate Excel report');
+    } finally {
+      setExportLoading(false);
+    }
   };
 
   const orderColumns = [
@@ -474,10 +678,14 @@ const InvoiceManagement = () => {
                 </Button>
               </Dropdown>
               
-              <ExportButton
-                {...getInvoicesExportConfig(orders, orderColumns)}
-                showFormats={['csv', 'excel', 'pdf']}
-              />
+              <Button
+                type="primary"
+                icon={<FileExcelOutlined />}
+                loading={exportLoading}
+                onClick={handleCustomExcelExport}
+              >
+                {t('invoices.export_excel') || 'Export to Excel'}
+              </Button>
             </Space>
           </Col>
         </Row>

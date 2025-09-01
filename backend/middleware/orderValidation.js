@@ -166,16 +166,12 @@ const validatePaymentMethod = (req, res, next) => {
 const validateOrderStatus = (req, res, next) => {
   const { status } = req.body;
 
-  const validStatuses = [
-    'pending', 'confirmed', 'preparing', 'ready', 
-    'out_for_delivery', 'delivered', 'cancelled'
-  ];
-
-  if (!status || !validStatuses.includes(status)) {
+  // Allow any status - validation removed per user request
+  if (!status) {
     return res.status(400).json({
       success: false,
-      message: `Status must be one of: ${validStatuses.join(', ')}`,
-      message_ar: 'الحالة يجب أن تكون من القيم المسموحة'
+      message: 'Status is required',
+      message_ar: 'الحالة مطلوبة'
     });
   }
 

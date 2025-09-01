@@ -158,8 +158,26 @@ const validateAdminPasswordChange = (req, res, next) => {
  * Check if email or phone already exists
  */
 const checkDuplicateUser = async (email, phone, excludeUserId = null) => {
-  let query = 'SELECT id, email, phone FROM users WHERE (email = ? OR phone = ?)';
-  let params = [email, phone];
+  // Build query parts based on what we're checking
+  const conditions = [];
+  const params = [];
+  
+  if (email) {
+    conditions.push('email = ?');
+    params.push(email);
+  }
+  
+  if (phone) {
+    conditions.push('phone = ?');
+    params.push(phone);
+  }
+  
+  // If neither email nor phone is provided, return null
+  if (conditions.length === 0) {
+    return null;
+  }
+  
+  let query = `SELECT id, email, phone FROM users WHERE (${conditions.join(' OR ')})`;
 
   if (excludeUserId) {
     query += ' AND id != ?';
@@ -537,11 +555,14 @@ router.put('/:id', authenticate, validateId, validateUserData, async (req, res, 
       });
     }
 
+    // Normalize phone number - convert empty string to null
+    const normalizedPhone = phone && phone.trim() ? phone.trim() : null;
+
     // Check for duplicate email/phone (excluding current user)
-    if (email || phone) {
+    if (email || normalizedPhone) {
       const existingUser = await checkDuplicateUser(
         email || currentUser.email, 
-        phone || currentUser.phone, 
+        normalizedPhone || currentUser.phone, 
         userId
       );
       if (existingUser) {
@@ -572,7 +593,7 @@ router.put('/:id', authenticate, validateId, validateUserData, async (req, res, 
     }
     if (phone !== undefined) {
       updateFields.push('phone = ?');
-      updateValues.push(phone || null);
+      updateValues.push(normalizedPhone);
     }
     if (birth_date !== undefined) {
       updateFields.push('birth_date = ?');

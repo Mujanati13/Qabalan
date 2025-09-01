@@ -1,10 +1,23 @@
-import React from 'react';
-import { Form, Input, InputNumber, Row, Col, Card, Divider } from 'antd';
-import { ShopOutlined, EnvironmentOutlined, PhoneOutlined, MailOutlined } from '@ant-design/icons';
+import React, { useState } from 'react';
+import { Form, Input, InputNumber, Row, Col, Card, Divider, Button, Space, Alert } from 'antd';
+import { ShopOutlined, EnvironmentOutlined, PhoneOutlined, MailOutlined, AimOutlined, GlobalOutlined } from '@ant-design/icons';
+
+import MapAddressSelector from '../common/MapAddressSelector';
 
 const { TextArea } = Input;
 
 const BranchForm = ({ form, isEditing, initialValues, t }) => {
+  const [showMap, setShowMap] = useState(false);
+  const initialLat = initialValues?.latitude ? Number(initialValues.latitude) : null;
+  const initialLng = initialValues?.longitude ? Number(initialValues.longitude) : null;
+  const initialLocation = (initialLat && initialLng) ? { lat: initialLat, lng: initialLng } : null;
+
+  const handleLocationSelect = (loc) => {
+    if (loc?.lat && loc?.lng) {
+      form.setFieldsValue({ latitude: Number(loc.lat.toFixed(6)), longitude: Number(loc.lng.toFixed(6)) });
+    }
+  };
+
   return (
     <Form
       form={form}
@@ -115,6 +128,13 @@ const BranchForm = ({ form, isEditing, initialValues, t }) => {
         }
         size="small"
         style={{ marginBottom: 16 }}
+        extra={
+          <Space>
+            <Button type={showMap ? 'default' : 'primary'} size="small" icon={<AimOutlined />} onClick={() => setShowMap(s => !s)}>
+              {showMap ? (t ? t('branches.hideMap') : 'Hide Map') : (t ? t('branches.pickOnMap') : 'Pick on Map')}
+            </Button>
+          </Space>
+        }
       >
         <Row gutter={16}>
           <Col span={12}>
@@ -141,10 +161,9 @@ const BranchForm = ({ form, isEditing, initialValues, t }) => {
           </Col>
         </Row>
 
-        <Divider orientation="left" style={{ fontSize: '14px' }}>
+        <Divider orientation="left" style={{ fontSize: '14px', marginTop: 8 }}>
           {t ? t('branches.coordinates') : 'Coordinates (Optional)'}
         </Divider>
-        
         <Row gutter={16}>
           <Col span={12}>
             <Form.Item
@@ -201,6 +220,27 @@ const BranchForm = ({ form, isEditing, initialValues, t }) => {
             </Form.Item>
           </Col>
         </Row>
+        {showMap && (
+          <div style={{ marginTop: 16 }}>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={t ? t('branches.mapHintTitle') : 'Select Exact Location'}
+              description={t ? t('branches.mapHintDesc') : 'Click or drag the marker on the map to set precise branch coordinates for accurate delivery fee calculations.'}
+            />
+            <MapAddressSelector
+              onLocationSelect={handleLocationSelect}
+              initialLocation={initialLocation || { lat: 31.9454, lng: 35.9284 }}
+              disabled={false}
+              height={320}
+              t={t}
+            />
+            <div style={{ marginTop: 8, fontSize: 12, color: '#555' }}>
+              {t ? t('branches.mapFooter') : 'Coordinates will auto-fill above. Remember to Save the branch.'}
+            </div>
+          </div>
+        )}
       </Card>
     </Form>
   );

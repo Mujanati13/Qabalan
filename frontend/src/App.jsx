@@ -26,6 +26,9 @@ import URLGeneratorDemo from './pages/URLGeneratorDemo'
 import OffersManagement from './pages/OffersManagement'
 import WebClientConfiguration from './pages/WebClientConfiguration'
 import LocationManagement from './pages/LocationManagement'
+import PaymentReturn from './pages/PaymentReturn'
+import PaymentCheckout from './pages/PaymentCheckout'
+import MPGSCheckout from './pages/MPGSCheckout'
 
 // Placeholder pages
 const Inventory = () => <div>Inventory Page - Coming Soon</div>
@@ -249,6 +252,24 @@ function App() {
           <ProtectedRoute>
             <AdminLayout>
               <LocationManagement />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        {/* Payment Return Page */}
+        <Route path="/payment-return" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <PaymentReturn />
+            </AdminLayout>
+          </ProtectedRoute>
+        } />
+
+        {/* MPGS Checkout Page */}
+        <Route path="/payment-checkout" element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <PaymentCheckout />
             </AdminLayout>
           </ProtectedRoute>
         } />

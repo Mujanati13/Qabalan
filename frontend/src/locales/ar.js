@@ -427,7 +427,18 @@ export const ar = {
       delete_success: 'تم حذف الفئات المحددة بنجاح',
       status_update_success: 'تم تحديث حالة الفئات المحددة بنجاح',
       export_success: 'تم تصدير الفئات المحددة بنجاح',
-      operation_failed: 'فشلت العملية'
+      operation_failed: 'فشلت العملية',
+      exported_successfully: 'تم تصدير {count} فئة بنجاح',
+      export_failed: 'فشل في تصدير الفئات',
+      export_excel: 'تصدير إلى Excel',
+      
+      // Export column headers
+      category_id: 'رقم الفئة',
+      name_en: 'الاسم (إنجليزي)',
+      name_ar: 'الاسم (عربي)',
+      categories: 'الفئات',
+      status: 'الحالة',
+      created_date: 'تاريخ الإنشاء'
     }
   },
 
@@ -534,6 +545,15 @@ export const ar = {
     customer_name_placeholder: 'أدخل اسم العميل',
     customer_phone_placeholder: 'أدخل رقم الهاتف',
     customer_email_placeholder: 'أدخل البريد الإلكتروني',
+    
+    // Customer Selection for Admin Orders
+    select_customer: 'اختيار العميل',
+    search_select_customer: 'البحث واختيار العميل',
+    optional_for_notifications: 'اختياري - يفعل الإشعارات الفورية',
+    customer_selected_notification_enabled: 'تم اختيار العميل - سيتم إرسال الإشعارات الفورية',
+    no_customers_found: 'لم يتم العثور على عملاء',
+    customer_details: 'تفاصيل العميل',
+    
     search_placeholder: 'البحث في الطلبات...',
     branch: 'الفرع',
     select_branch: 'اختر الفرع',
@@ -643,6 +663,19 @@ export const ar = {
     // Order Types
     delivery: 'توصيل',
     pickup: 'استلام',
+    
+    // Payment Actions
+    pay_with_card: 'الدفع بالبطاقة',
+    payment_redirecting: 'جارٍ التوجيه إلى بوابة الدفع...',
+    payment_session_failed: 'فشل في إنشاء جلسة الدفع',
+    payment_session_error: 'خطأ في جلسة الدفع',
+    already_paid: 'تم دفع الطلب بالفعل',
+    payment_success: 'تم الدفع بنجاح',
+    payment_cancelled: 'تم إلغاء الدفع',
+    payment_error: 'فشل الدفع. يرجى المحاولة مرة أخرى.',
+    payment_processing: 'جارٍ معالجة الدفع...',
+    return_to_orders: 'العودة إلى الطلبات',
+    card_payment_info: 'بعد إنشاء الطلب، سيتم توجيهك إلى بوابة الدفع الآمنة (MPGS) لإتمام الدفع.',
     
     // Search
     search_orders: 'البحث في الطلبات...',
@@ -788,6 +821,66 @@ export const ar = {
     item_add_error: 'فشل في إضافة عنصر جديد',
     item_update_error: 'فشل في تحديث العنصر',
     item_remove_error: 'فشل في إزالة العنصر',
+    
+    // Address Editing
+    edit_address_with_map: 'تعديل العنوان بالخريطة',
+    add_new_address_with_map: 'إضافة عنوان جديد بالخريطة',
+    refresh_addresses: 'تحديث',
+    no_saved_addresses: 'لا توجد عناوين محفوظة',
+    edit_address: 'تعديل العنوان',
+    add_new_address: 'إضافة عنوان جديد',
+    save_address: 'حفظ العنوان',
+    update_address: 'تحديث العنوان',
+    address_updated_successfully: 'تم تحديث العنوان بنجاح',
+    address_created_successfully: 'تم إنشاء العنوان بنجاح',
+    failed_to_save_address: 'فشل في حفظ العنوان',
+    addresses_refreshed: 'تم تحديث العناوين',
+    
+    // Error Messages - Address
+    delivery_address_error: 'خطأ في عنوان التوصيل',
+    address_selection_error: 'خطأ في اختيار العنوان',
+    address_not_in_list: 'العنوان المحدد ليس في قائمة عناوين العميل. يرجى تحديث العناوين أو اختيار عنوان مختلف.',
+    address_user_mismatch: 'تم اكتشاف عدم تطابق مستخدم العنوان',
+    address_user_mismatch_content: 'العنوان المحدد ينتمي لحساب عميل مختلف عن هذا الطلب.',
+    refresh_addresses_question: 'هل تريد تحديث عناوين العميل للحصول على القائمة الصحيحة؟',
+    address_refresh_success: 'تم تحديث عناوين العميل. يرجى المحاولة مرة أخرى لاختيار عنوان.',
+    
+    // Error Solutions
+    solutions: 'الحلول',
+    technical_details: 'التفاصيل التقنية',
+    click_refresh_addresses: 'انقر على "تحديث" لتحديث قائمة العناوين',
+    select_different_address: 'اختر عنواناً مختلفاً من القائمة المنسدلة',
+    add_new_address_solution: 'استخدم "إضافة عنوان جديد بالخريطة" لإنشاء عنوان جديد',
+    customer_link_issue: 'إذا استمرت المشكلة، قد يحتاج العميل إلى ربطه بالحساب الصحيح',
+    
+    // Branch and Order Type
+    selectBranch: 'اختر الفرع',
+    mainBranch: 'الفرع الرئيسي',
+    secondaryBranch: 'الفرع الثانوي',
+    enterDeliveryFee: 'أدخل رسوم التوصيل',
+    
+    // Export related
+    orders_exported: 'طلبات مُصدرة',
+    
+    // Branch and Order Type
+    selectBranch: 'اختر الفرع',
+    mainBranch: 'الفرع الرئيسي',
+    secondaryBranch: 'الفرع الثانوي',
+    enterDeliveryFee: 'أدخل رسوم التوصيل',
+    
+    // Status Change in Details
+    change_status: 'تغيير الحالة',
+    status_change_notes: 'ملاحظات تغيير الحالة',
+    status_change_notes_placeholder: 'ملاحظات اختيارية حول تغيير الحالة...',
+    
+    // Additional Error Messages
+    customer_phone_required: 'رقم هاتف العميل مطلوب لحفظ العنوان',
+    failed_to_handle_customer: 'فشل في التعامل مع معلومات العميل',
+    branch_required_for_shipping: 'يرجى اختيار فرع أولاً لحساب تكلفة الشحن',
+    manual_delivery_fee: 'يرجى إدخال رسوم التوصيل يدوياً لهذا العنوان',
+    status_update_failed: 'فشل في تحديث الحالة',
+    create_order_failed: 'فشل في إنشاء الطلب',
+    branch_required_for_pickup: 'الفرع مطلوب لطلبات الاستلام'
   },
 
   // Notifications
@@ -936,6 +1029,7 @@ export const ar = {
     userType: 'نوع المستخدم',
     type: 'النوع',
     birthDate: 'تاريخ الميلاد',
+    selectBirthDate: 'اختر تاريخ الميلاد',
     avatar: 'الصورة الشخصية',
     joinDate: 'تاريخ الانضمام',
     registrationDate: 'تاريخ التسجيل',
@@ -1380,9 +1474,17 @@ export const ar = {
     bulk_pdf_error: 'فشل في إنشاء ملفات PDF متعددة',
     excel_success: 'تم إكمال تصدير إكسل بنجاح',
     excel_error: 'فشل في تصدير إكسل',
+    excel_export_success: 'تم إنشاء تقرير إكسل بنجاح',
+    excel_export_error: 'فشل في إنشاء تقرير إكسل',
     preview_error: 'فشل في معاينة الفاتورة',
     fetch_orders_error: 'فشل في جلب الطلبات',
     fetch_statistics_error: 'خطأ في جلب الإحصائيات',
+    
+    // Export specific
+    orders_invoices_report: 'تقرير الطلبات والفواتير',
+    summary_statistics: 'إحصائيات ملخصة',
+    totals: 'المجاميع',
+    generating: 'جاري الإنشاء...',
     
     // Preview Modal
     invoice_preview: 'معاينة الفاتورة',
@@ -1633,5 +1735,31 @@ export const ar = {
     continue: 'متابعة',
     finish: 'إنهاء',
     step: 'خطوة'
+  },
+
+  // Payment
+  payment: {
+    title: 'الدفع',
+    checkout: {
+      title: 'دفع آمن',
+      loading: 'جاري تحميل نظام الدفع...',
+      orderSummary: 'ملخص الطلب',
+      payNow: 'ادفع الآن',
+      failed: 'فشل في الدفع. يرجى المحاولة مرة أخرى.'
+    },
+    error: {
+      title: 'خطأ في الدفع',
+      failed: 'لا يمكن معالجة الدفع',
+      sessionExpired: 'انتهت صلاحية جلسة الدفع',
+      invalidData: 'بيانات دفع غير صحيحة'
+    },
+    success: {
+      title: 'تم الدفع بنجاح',
+      message: 'تم معالجة الدفع بنجاح'
+    },
+    processing: {
+      title: 'معالجة الدفع',
+      message: 'يرجى الانتظار بينما نقوم بمعالجة الدفع...'
+    }
   }
 };

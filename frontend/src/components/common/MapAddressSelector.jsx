@@ -56,9 +56,15 @@ const MapAddressSelector = ({
     const script = document.createElement('script');
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
     
-    if (!apiKey) {
-      console.warn('Google Maps API key not found. Map functionality will be limited.');
-      setMapError('Google Maps API key not configured. Please add VITE_GOOGLE_MAPS_API_KEY to your .env file.');
+    if (!apiKey || apiKey === 'your_google_maps_api_key_here') {
+      console.warn('Google Maps API key not found or not configured. Map functionality will be limited.');
+      setMapError(
+        <div>
+          <p>Google Maps API key not configured.</p>
+          <p>Please add <code>VITE_GOOGLE_MAPS_API_KEY</code> to your .env file.</p>
+          <p>You can still enter address details manually below.</p>
+        </div>
+      );
       setLoading(false);
       return;
     }

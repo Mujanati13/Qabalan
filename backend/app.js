@@ -35,6 +35,8 @@ const debugRoutes = require('./routes/debug');
 const reviewRoutes = require('./routes/reviews');
 const settingsRoutes = require('./routes/settings');
 const shippingRoutes = require('./routes/shipping');
+const paymentsRoutes = require('./routes/payments');
+const testRoutes = require('./routes/test');
 
 // Import middleware
 const errorHandler = require('./middleware/errorHandler');
@@ -45,6 +47,25 @@ const app = express();
 // Security middleware
 app.use(helmet({
   crossOriginResourcePolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'", 
+        "'unsafe-inline'", // Allow inline scripts for MPGS
+        "https://test-gateway.mastercard.com", // Allow MPGS checkout.js (generic)
+        "https://nitest2.gateway.mastercard.com", // Allow TESTNITEST2 specific domain
+        "https://gateway.mastercard.com" // Allow production MPGS
+      ],
+      scriptSrcAttr: ["'unsafe-inline'"], // Allow inline event handlers
+      styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "https://test-gateway.mastercard.com", "https://nitest2.gateway.mastercard.com", "https://gateway.mastercard.com"],
+      frameSrc: ["'self'", "https://test-gateway.mastercard.com", "https://nitest2.gateway.mastercard.com", "https://gateway.mastercard.com"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: []
+    }
+  }
 }));
 
 // Rate limiting
@@ -105,6 +126,17 @@ app.get('/health', (req, res) => {
   });
 });
 
+// API Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'API OK', 
+    timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    port: process.env.PORT || 3015
+  });
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -129,6 +161,8 @@ app.use('/api/debug', debugRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/shipping', shippingRoutes);
+app.use('/api/payments', paymentsRoutes);
+app.use('/api/test', testRoutes);
 
 // 404 handler
 app.use(notFound);

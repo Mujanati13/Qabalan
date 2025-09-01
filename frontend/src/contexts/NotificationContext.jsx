@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { message, notification } from 'antd';
-import { BellOutlined, ShoppingCartOutlined } from '@ant-design/icons';
+import { BellOutlined, ShoppingCartOutlined, CustomerServiceOutlined } from '@ant-design/icons';
 import { createNotificationSound } from '../utils/notificationSound';
 import ordersService from '../services/ordersService';
 import { useLanguage } from './LanguageContext';
@@ -20,6 +20,7 @@ export const NotificationProvider = ({ children }) => {
   
   // State management
   const [pendingOrdersCount, setPendingOrdersCount] = useState(0);
+  const [supportTicketsCount, setSupportTicketsCount] = useState(0);
   const [totalNotificationsCount, setTotalNotificationsCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -76,6 +77,11 @@ export const NotificationProvider = ({ children }) => {
       }
     };
   }, [isInitialized]); // Removed autoRefresh and lastOrderCheck dependencies
+
+  // Update total notifications count
+  useEffect(() => {
+    setTotalNotificationsCount(pendingOrdersCount + supportTicketsCount);
+  }, [pendingOrdersCount, supportTicketsCount]);
 
   // Fetch pending orders count
   const fetchPendingOrdersCount = useCallback(async () => {
@@ -164,6 +170,86 @@ export const NotificationProvider = ({ children }) => {
     }).format(price);
   };
 
+  // Support ticket notification functions
+  const triggerNewSupportTicketNotification = useCallback((ticketData) => {
+    console.log('🎟️ New support ticket notification triggered:', ticketData);
+    
+    // 1. Play notification sound
+    if (soundEnabled) {
+      playNotificationSound();
+    }
+    
+    // 2. Show visual notification popup
+    showNewSupportTicketNotification(ticketData);
+    
+    // 3. Update badge counter
+    setSupportTicketsCount(prev => prev + 1);
+    
+    // 4. Show success message
+    message.info({
+      content: `New support ticket: ${ticketData.ticketNumber}`,
+      duration: 4,
+      icon: <CustomerServiceOutlined style={{ color: '#1890ff' }} />
+    });
+  }, [soundEnabled, playNotificationSound]);
+
+  const triggerSupportReplyNotification = useCallback((replyData) => {
+    console.log('💬 Support reply notification triggered:', replyData);
+    
+    // 1. Play notification sound
+    if (soundEnabled) {
+      playNotificationSound();
+    }
+    
+    // 2. Show visual notification popup
+    showSupportReplyNotification(replyData);
+    
+    // 3. Show success message
+    message.info({
+      content: `New reply on ticket: ${replyData.ticketNumber}`,
+      duration: 4,
+      icon: <CustomerServiceOutlined style={{ color: '#52c41a' }} />
+    });
+  }, [soundEnabled, playNotificationSound]);
+
+  // Show support ticket notification popup
+  const showNewSupportTicketNotification = useCallback((ticketData) => {
+    notification.open({
+      message: 'New Support Ticket',
+      description: `${ticketData.subject} - Priority: ${ticketData.priority} - Customer: ${ticketData.customer}`,
+      icon: <CustomerServiceOutlined style={{ color: '#1890ff' }} />,
+      placement: 'topRight',
+      duration: 8,
+      style: {
+        background: '#e6f7ff',
+        border: '1px solid #1890ff'
+      },
+      onClick: () => {
+        // Navigate to support page
+        window.location.href = '/support';
+      }
+    });
+  }, []);
+
+  // Show support reply notification popup
+  const showSupportReplyNotification = useCallback((replyData) => {
+    notification.open({
+      message: 'New Support Reply',
+      description: `Customer replied to ticket: ${replyData.ticketNumber} - ${replyData.subject}`,
+      icon: <CustomerServiceOutlined style={{ color: '#52c41a' }} />,
+      placement: 'topRight',
+      duration: 8,
+      style: {
+        background: '#f6ffed',
+        border: '1px solid #52c41a'
+      },
+      onClick: () => {
+        // Navigate to support page
+        window.location.href = '/support';
+      }
+    });
+  }, []);
+
   // Manual refresh function
   // Refresh notifications (simplified - Socket.IO handles real-time updates)
   const refreshNotifications = useCallback(async () => {
@@ -200,6 +286,7 @@ export const NotificationProvider = ({ children }) => {
   const contextValue = {
     // State
     pendingOrdersCount,
+    supportTicketsCount,
     totalNotificationsCount,
     soundEnabled,
     autoRefresh,
@@ -213,7 +300,9 @@ export const NotificationProvider = ({ children }) => {
     playNotificationSound,
     
     // Manual triggers (now primarily used by Socket.IO events)
-    triggerNewOrderNotifications
+    triggerNewOrderNotifications,
+    triggerNewSupportTicketNotification,
+    triggerSupportReplyNotification
   };
 
   return (

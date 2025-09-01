@@ -889,4 +889,65 @@ html, body, #root {
   box-shadow: 0 0 8px rgba(24, 144, 255, 0.4);
 }
 
+/* Dashboard Order Row Styles */
+.dashboard-order-row {
+  transition: all 0.2s ease;
+}
+
+.dashboard-order-row:hover {
+  background-color: #f0f8ff !important;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.dashboard-order-row:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(24, 144, 255, 0.2);
+}
+
+/* Order table action buttons */
+.dashboard-order-row .ant-btn {
+  transition: all 0.2s ease;
+}
+
+.dashboard-order-row .ant-btn:hover {
+  transform: scale(1.1);
+}
+
+/* Hot orders card styling */
+.ant-card[style*="border: 2px solid #ff7875"] .dashboard-order-row:hover {
+  background-color: #fff2f0 !important;
+  box-shadow: 0 2px 8px rgba(255, 77, 79, 0.15);
+}
+
+/* Socket connection indicator */
+.socket-indicator {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  z-index: 1001;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  transition: all 0.3s ease;
+}
+
+.socket-indicator.connected {
+  background-color: #52c41a;
+  box-shadow: 0 2px 8px rgba(82, 196, 26, 0.3);
+}
+
+.socket-indicator.disconnected {
+  background-color: #ff4d4f;
+  box-shadow: 0 2px 8px rgba(255, 77, 79, 0.3);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 

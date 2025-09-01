@@ -55,7 +55,7 @@ class SupportService {
   // Get ticket details
   async getTicketDetails(ticketId) {
     try {
-      const response = await api.get(`/support/tickets/${ticketId}`);
+      const response = await api.get(`/support/admin/tickets/${ticketId}`);
       return response.data;
     } catch (error) {
       console.error('Error fetching ticket details:', error);

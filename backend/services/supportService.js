@@ -1,4 +1,5 @@
 const { executeQuery } = require('../config/database');
+const notificationService = require('./notificationService');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
@@ -40,6 +41,19 @@ class SupportService {
 
       // Send notification to admins
       await this.notifyAdmins(ticketId, 'new_ticket');
+
+      // Emit socket event for real-time updates
+      if (global.socketManager) {
+        global.socketManager.emitToAdmins('newSupportTicket', {
+          ticketId,
+          ticketNumber,
+          subject,
+          category,
+          priority,
+          customerName: `${ticketData.customer_name || 'Unknown Customer'}`,
+          timestamp: new Date().toISOString()
+        });
+      }
 
       return {
         id: ticketId,
@@ -145,8 +159,8 @@ class SupportService {
         throw new Error('Ticket not found');
       }
 
-      // Get replies
-      const replies = await executeQuery(`
+      // Get replies (filter internal notes for non-admin users)
+      const repliesQuery = `
         SELECT 
           sr.*,
           CONCAT(a.first_name, ' ', a.last_name) as admin_name,
@@ -155,8 +169,11 @@ class SupportService {
         LEFT JOIN users a ON sr.admin_id = a.id
         LEFT JOIN users u ON sr.user_id = u.id
         WHERE sr.ticket_id = ?
+        ${userId ? 'AND sr.is_internal_note = false' : ''}
         ORDER BY sr.created_at ASC
-      `, [ticketId]);
+      `;
+      
+      const replies = await executeQuery(repliesQuery, [ticketId]);
 
       // Get attachments
       const attachments = await executeQuery(`
@@ -489,9 +506,91 @@ class SupportService {
 
   // Notify admins about new tickets or replies
   async notifyAdmins(ticketId, type) {
-    // This would integrate with your notification system
-    // For now, just log the notification
-    console.log(`Admin notification: ${type} for ticket ${ticketId}`);
+    console.log(`🔔 Admin notification: ${type} for ticket ${ticketId}`);
+    
+    try {
+      // Get ticket details for notification
+      const [ticket] = await executeQuery(`
+        SELECT id, ticket_number, subject, category, priority, status, user_id, created_at,
+               u.first_name, u.last_name
+        FROM support_tickets st
+        LEFT JOIN users u ON st.user_id = u.id
+        WHERE st.id = ?
+      `, [ticketId]);
+
+      if (!ticket) {
+        console.log(`❌ Ticket ${ticketId} not found for admin notification`);
+        return;
+      }
+
+      // Create database notification for admins
+      let titleAr, titleEn, messageAr, messageEn;
+
+      if (type === 'new_ticket') {
+        if (ticket.priority === 'urgent') {
+          titleAr = 'تذكرة دعم عاجلة جديدة';
+          titleEn = 'New Urgent Support Ticket';
+        } else if (ticket.priority === 'high') {
+          titleAr = 'تذكرة دعم ذات أولوية عالية';
+          titleEn = 'New High Priority Support Ticket';
+        } else {
+          titleAr = 'تذكرة دعم جديدة';
+          titleEn = 'New Support Ticket';
+        }
+        
+        messageAr = `تذكرة رقم #${ticket.ticket_number}: ${ticket.subject} من ${ticket.first_name} ${ticket.last_name}`;
+        messageEn = `Ticket #${ticket.ticket_number}: ${ticket.subject} from ${ticket.first_name} ${ticket.last_name}`;
+      } else if (type === 'client_reply') {
+        titleAr = 'رد جديد على تذكرة الدعم';
+        titleEn = 'New Client Reply on Support Ticket';
+        messageAr = `رد جديد على التذكرة #${ticket.ticket_number} من ${ticket.first_name} ${ticket.last_name}`;
+        messageEn = `New reply on ticket #${ticket.ticket_number} from ${ticket.first_name} ${ticket.last_name}`;
+      }
+
+      // Create notification record in database (for all admins, user_id = null)
+      await notificationService.createNotification({
+        user_id: null, // null means for all admins
+        title_ar: titleAr,
+        title_en: titleEn,
+        message_ar: messageAr,
+        message_en: messageEn,
+        type: 'support',
+        data: {
+          ticket_id: ticket.id,
+          ticket_number: ticket.ticket_number,
+          category: ticket.category,
+          priority: ticket.priority,
+          customer_id: ticket.user_id,
+          customer_name: `${ticket.first_name} ${ticket.last_name}`,
+          notification_type: type
+        }
+      });
+
+      console.log(`✅ Database notification created for ${type} on ticket ${ticket.ticket_number}`);
+
+      // Emit socket event for real-time admin notifications
+      const socketManager = require('../config/socket');
+      
+      if (type === 'client_reply') {
+        socketManager.emitToAdmins('newSupportReply', {
+          ticketId: ticket.id,
+          ticketNumber: ticket.ticket_number,
+          subject: ticket.subject,
+          category: ticket.category,
+          priority: ticket.priority,
+          status: ticket.status,
+          customer: `${ticket.first_name} ${ticket.last_name}`,
+          timestamp: new Date().toISOString(),
+          type: 'client_reply'
+        });
+        console.log(`📡 Socket event 'newSupportReply' emitted for ticket ${ticket.ticket_number}`);
+      } else if (type === 'new_ticket') {
+        // Already handled in createTicket method
+        console.log(`📡 New ticket socket event already handled for ticket ${ticket.ticket_number}`);
+      }
+    } catch (error) {
+      console.error('Error sending admin notification:', error);
+    }
   }
 
   // Notify client about admin replies
@@ -512,6 +611,17 @@ class SupportService {
       }
 
       console.log(`📋 Found ticket for notification - user_id: ${ticket.user_id}, ticket_number: ${ticket.ticket_number}`);
+
+      // Emit socket event for real-time mobile app notifications
+      const socketManager = require('../config/socket');
+      socketManager.emitToUser(ticket.user_id, 'supportReply', {
+        ticketId: ticketId,
+        ticketNumber: ticket.ticket_number,
+        subject: ticket.subject,
+        timestamp: new Date().toISOString(),
+        type: 'admin_reply'
+      });
+      console.log(`📡 Socket event 'supportReply' emitted to user ${ticket.user_id} for ticket ${ticket.ticket_number}`);
 
       const notificationService = require('./notificationService');
       

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MPGS Payment Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+        .card { background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 30px; margin: 20px 0; }
+        .btn { background: #1677ff; color: white; padding: 12px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
+        .btn:hover { background: #0f5ec5; }
+        .test-section { margin: 30px 0; padding: 20px; border-left: 4px solid #1677ff; background: #f8f9fa; }
+        code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <h1>🔧 MPGS Payment Integration Test</h1>
+    
+    <div class="card">
+        <h2>Step 1: Create Test Order</h2>
+        <p>First, create a test order to get a valid order ID:</p>
+        <button class="btn" onclick="createTestOrder()">Create Test Order</button>
+        <div id="orderResult" style="margin-top: 20px;"></div>
+    </div>
+
+    <div class="card">
+        <h2>Step 2: Test Payment</h2>
+        <p>Once you have an order ID, use this URL format:</p>
+        <div class="test-section">
+            <strong>Payment URL Format:</strong><br>
+            <code>http://localhost:3015/api/payments/mpgs/payment/view?orders_id=ORDER_ID</code>
+        </div>
+        
+        <div id="paymentLink" style="margin-top: 20px;"></div>
+    </div>
+
+    <div class="card">
+        <h2>🧪 MPGS Test Cards</h2>
+        <div class="test-section">
+            <p><strong>Use these test cards for payment:</strong></p>
+            <ul>
+                <li><strong>Mastercard:</strong> 5123456789012346</li>
+                <li><strong>Visa:</strong> 4111111111111111</li>
+                <li><strong>Expiry:</strong> 01/39</li>
+                <li><strong>CVV:</strong> 100</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔍 Debug Information</h2>
+        <div class="test-section">
+            <p><strong>Server:</strong> http://localhost:3015</p>
+            <p><strong>MPGS Gateway:</strong> https://test-gateway.mastercard.com</p>
+            <p><strong>Merchant ID:</strong> TESTNITEST2</p>
+            <p><strong>API Version:</strong> 73</p>
+        </div>
+    </div>
+
+    <script>
+        async function createTestOrder() {
+            try {
+                const response = await fetch('/api/payments/mpgs/create-test-order', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        amount: '25.50',
+                        currency: 'JOD'
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('orderResult').innerHTML = `
+                        <div style="background: #d4edda; color: #155724; padding: 15px; border-radius: 6px;">
+                            <strong>✅ Order Created Successfully!</strong><br>
+                            Order ID: ${data.order.id}<br>
+                            Amount: ${data.order.total_amount} ${data.order.currency}
+                        </div>
+                    `;
+                    
+                    document.getElementById('paymentLink').innerHTML = `
+                        <div style="background: #e7f3ff; padding: 15px; border-radius: 6px;">
+                            <strong>🔗 Payment URL:</strong><br>
+                            <a href="${data.paymentUrl}" target="_blank" class="btn" style="display: inline-block; margin-top: 10px;">
+                                Open Payment Page
+                            </a>
+                        </div>
+                    `;
+                } else {
+                    throw new Error(data.error || 'Failed to create order');
+                }
+            } catch (error) {
+                document.getElementById('orderResult').innerHTML = `
+                    <div style="background: #f8d7da; color: #721c24; padding: 15px; border-radius: 6px;">
+                        <strong>❌ Error:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

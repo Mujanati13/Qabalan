@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Card,
   Table,
@@ -60,6 +60,9 @@ import {
 } from '@ant-design/icons';
 import supportService from '../services/supportService';
 import { useTranslation } from 'react-i18next';
+import { useNotifications } from '../contexts/NotificationContext';
+import { useLocation } from 'react-router-dom';
+import io from 'socket.io-client';
 import ExportButton from '../components/common/ExportButton';
 import EnhancedExportButton from '../components/common/EnhancedExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
@@ -72,7 +75,17 @@ const { RangePicker } = DatePicker;
 
 const Support = () => {
   const { t } = useTranslation();
+  const location = useLocation();
   const { getSupportTicketsExportConfig, getFeedbackExportConfig } = useExportConfig();
+  const { 
+    triggerNewSupportTicketNotification,
+    triggerSupportReplyNotification
+  } = useNotifications();
+  
+  // Socket connection
+  const socketRef = useRef(null);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
+  
   const [loading, setLoading] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [feedback, setFeedback] = useState([]);
@@ -101,7 +114,11 @@ const Support = () => {
     date_to: ''
   });
   const [activeTab, setActiveTab] = useState('tickets');
-  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(() => {
+    // Restore auto-refresh state from localStorage
+    const saved = localStorage.getItem('support_auto_refresh');
+    return saved ? JSON.parse(saved) : false;
+  });
   const [refreshInterval, setRefreshInterval] = useState(null);
   const [form] = Form.useForm();
   const [replyForm] = Form.useForm();
@@ -169,6 +186,9 @@ const Support = () => {
 
   // Auto-refresh effect
   useEffect(() => {
+    // Save auto-refresh state to localStorage whenever it changes
+    localStorage.setItem('support_auto_refresh', JSON.stringify(autoRefresh));
+    
     if (autoRefresh && ticketDetailsVisible && selectedTicket) {
       const interval = setInterval(() => {
         handleTicketDetails({ id: selectedTicket.ticket.id });
@@ -186,6 +206,136 @@ const Support = () => {
       setRefreshInterval(null);
     }
   }, [autoRefresh, ticketDetailsVisible, selectedTicket]);
+
+  // Socket connection for real-time updates
+  useEffect(() => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3015';
+    
+    socketRef.current = io(socketUrl, {
+      auth: { token },
+      transports: ['polling', 'websocket'],
+      timeout: 30000,
+      forceNew: true
+    });
+
+    socketRef.current.on('connect', () => {
+      console.log('🔌 Support page connected to socket');
+      setIsSocketConnected(true);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('🔌 Support page disconnected from socket');
+      setIsSocketConnected(false);
+    });
+
+    // Support ticket socket events
+    socketRef.current.on('newSupportTicket', (ticketData) => {
+      console.log('🎟️ New support ticket received in Support page:', ticketData);
+      
+      // Refresh ticket list
+      if (activeTab === 'tickets') {
+        fetchTickets();
+      }
+      
+      // Trigger notification
+      triggerNewSupportTicketNotification(ticketData);
+    });
+
+    socketRef.current.on('newSupportReply', (replyData) => {
+      console.log('💬 New support reply received in Support page:', replyData);
+      
+      // Refresh ticket list and details if viewing a ticket
+      if (activeTab === 'tickets') {
+        fetchTickets();
+        
+        // If viewing the ticket that got a reply, refresh details
+        if (selectedTicket && selectedTicket.ticket.id === replyData.ticketId) {
+          handleTicketDetails({ id: replyData.ticketId });
+        }
+      }
+      
+      // Trigger notification
+      triggerSupportReplyNotification(replyData);
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+    };
+  }, [activeTab, selectedTicket, triggerNewSupportTicketNotification, triggerSupportReplyNotification]);
+
+  // Handle navigation from notifications
+  useEffect(() => {
+    if (location.state?.openTicketId) {
+      const ticketId = location.state.openTicketId;
+      console.log('📧 Opening ticket from notification:', ticketId);
+      
+      // First, make sure we're on the tickets tab
+      setActiveTab('tickets');
+      
+      // Find and open the ticket
+      const openTicketFromNotification = async () => {
+        try {
+          console.log('🔍 Fetching ticket details for ID:', ticketId);
+          
+          // Fetch the specific ticket using the admin endpoint
+          const response = await supportService.getAdminTicketDetails(ticketId);
+          console.log('✅ Ticket response:', response);
+          
+          const ticketData = response.data;
+          
+          if (ticketData) {
+            // Set the selected ticket and show details
+            setSelectedTicket(ticketData);
+            setTicketDetailsVisible(true);
+            
+            console.log('🎯 Ticket opened successfully:', ticketData.ticket.ticket_number);
+            
+            // Show success message
+            message.success({
+              content: `Opened ticket #${ticketData.ticket.ticket_number}`,
+              duration: 3,
+              style: { marginTop: '60px' }
+            });
+            
+            // Clear the location state
+            window.history.replaceState({}, document.title);
+          }
+        } catch (error) {
+          console.error('❌ Error opening ticket from notification:', error);
+          
+          // More detailed error logging
+          if (error.response) {
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
+          }
+          
+          let errorMessage = 'Failed to open the ticket from notification. Please try again.';
+          if (error.response?.status === 404) {
+            errorMessage = 'Ticket not found or you do not have permission to view it';
+          } else if (error.response?.status === 401) {
+            errorMessage = 'Authentication required. Please log in again';
+          } else if (error.response?.data?.message) {
+            errorMessage = error.response.data.message;
+          }
+          
+          message.error({
+            content: errorMessage,
+            duration: 6,
+            style: { marginTop: '60px' }
+          });
+        }
+      };
+      
+      // Delay to ensure the component is fully mounted
+      setTimeout(openTicketFromNotification, 500);
+    }
+  }, [location.state]);
 
   const fetchTickets = async () => {
     setLoading(true);
@@ -417,11 +567,20 @@ const Support = () => {
   const handleStatusUpdate = async (ticketId, status) => {
     try {
       setStatusUpdateLoading(prev => ({ ...prev, [ticketId]: true }));
+      
+      console.log(`🔄 Updating ticket ${ticketId} status to: ${status}`);
+      
       await supportService.updateTicketStatus(ticketId, status);
+      
+      console.log(`✅ Successfully updated ticket ${ticketId} status to: ${status}`);
       message.success('Ticket status updated successfully');
-      fetchTickets();
-      if (selectedTicket) {
-        handleTicketDetails({ id: ticketId });
+      
+      // Refresh tickets list
+      await fetchTickets();
+      
+      // Refresh ticket details if viewing this ticket
+      if (selectedTicket && selectedTicket.ticket.id === ticketId) {
+        await handleTicketDetails({ id: ticketId });
       }
     } catch (error) {
       console.error('Error updating ticket status:', error);
@@ -453,8 +612,12 @@ const Support = () => {
         } else {
           message.error(errorMessage || error.message || 'Failed to update ticket status');
         }
-      } else if (error.code === 'NETWORK_ERROR') {
+      } else if (error.code === 'NETWORK_ERROR' || error.name === 'NetworkError') {
         message.error('Network error. Please check your connection and try again.');
+        console.log('🔍 Network error details:', error);
+      } else if (error.message?.includes('fetch')) {
+        message.error('Connection failed. Please check if the server is running.');
+        console.log('🔍 Connection error details:', error);
       } else {
         message.error(error.message || 'Failed to update ticket status');
       }
@@ -1035,7 +1198,11 @@ const Support = () => {
                 <Switch 
                   size="small"
                   checked={autoRefresh}
-                  onChange={setAutoRefresh}
+                  onChange={(checked) => {
+                    setAutoRefresh(checked);
+                    // Immediately save to localStorage
+                    localStorage.setItem('support_auto_refresh', JSON.stringify(checked));
+                  }}
                 />
               </Space>
             </Tooltip>

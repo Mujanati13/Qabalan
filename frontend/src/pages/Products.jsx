@@ -619,7 +619,7 @@ const Products = () => {
     ); // 500ms delay for search, immediate for category
 
     return () => clearTimeout(timeoutId);
-  }, [searchText, selectedCategory, statusFilter]);
+  }, [searchText, selectedCategory, statusFilter, selectedBranchFilter]);
 
   const loadProducts = async () => {
     setLoading(true);
@@ -628,6 +628,7 @@ const Products = () => {
         search: searchText,
         category_id: selectedCategory || undefined, // Don't send empty string
         include_inactive: statusFilter === "all" || statusFilter === "inactive",
+        branch_id: selectedBranchFilter || undefined, // Add branch filter
         page: 1,
         limit: 50,
       };
@@ -1236,33 +1237,9 @@ const Products = () => {
     }
   };
 
-  const filteredProducts = (Array.isArray(products) ? products : []).filter(
-    (product) => {
-      if (!product) return false;
-
-      // Filter by active/inactive status
-      const isProductActive = product.is_active === 1 || product.is_active === true || product.is_active === "1";
-      
-      if (statusFilter === "active" && !isProductActive) {
-        return false;
-      }
-      if (statusFilter === "inactive" && isProductActive) {
-        return false;
-      }
-      // "all" option shows both active and inactive products
-
-      // Client-side search filtering
-      const matchesSearch =
-        !searchText ||
-        (product.title_en || product.name || "")
-          .toLowerCase()
-          .includes(searchText.toLowerCase()) ||
-        (product.title_ar || product.name_ar || "")
-          .toLowerCase()
-          .includes(searchText.toLowerCase());
-      return matchesSearch;
-    }
-  );
+  // Since filtering is now done on the backend (search, category, branch, status),
+  // we can use products directly from the API response
+  const filteredProducts = Array.isArray(products) ? products : [];
 
   // Table sorting hook
   const {
@@ -1768,6 +1745,46 @@ const Products = () => {
           </Col>
         </Row>
 
+        {/* Filter Statistics */}
+        <Row style={{ marginBottom: 16 }}>
+          <Col span={24}>
+            <div style={{ padding: '8px 12px', backgroundColor: '#f6f8fa', borderRadius: 6, border: '1px solid #e1e4e8' }}>
+              <Space size="large">
+                <Statistic 
+                  title="Total Products" 
+                  value={filteredProducts.length} 
+                  prefix={<BoxPlotOutlined />}
+                  valueStyle={{ fontSize: '16px', color: '#1890ff' }}
+                />
+                {selectedBranchFilter && (
+                  <Statistic 
+                    title={`Products in ${branches.find(b => b.id.toString() === selectedBranchFilter)?.name || 'Selected Branch'}`}
+                    value={filteredProducts.length}
+                    prefix={<ShopOutlined />}
+                    valueStyle={{ fontSize: '16px', color: '#52c41a' }}
+                  />
+                )}
+                {selectedCategory && (
+                  <Statistic 
+                    title="Filtered by Category"
+                    value={filteredProducts.length}
+                    prefix={<TagsOutlined />}
+                    valueStyle={{ fontSize: '16px', color: '#722ed1' }}
+                  />
+                )}
+                {searchText && (
+                  <Statistic 
+                    title={`Search: "${searchText}"`}
+                    value={filteredProducts.length}
+                    prefix={<SearchOutlined />}
+                    valueStyle={{ fontSize: '16px', color: '#fa8c16' }}
+                  />
+                )}
+              </Space>
+            </div>
+          </Col>
+        </Row>
+
         {/* Bulk Actions */}
         {hasSelected && (
           <div style={{ marginBottom: 16, padding: 16, backgroundColor: '#f0f2f5', borderRadius: 6 }}>
@@ -1983,7 +2000,29 @@ const Products = () => {
 
           <Row gutter={[16, 16]}>
             <Col xs={24} sm={12} md={8}>
-              <Form.Item name="sku" label={t("products.sku")}>
+              <Form.Item 
+                name="sku" 
+                label={t("products.sku")}
+                rules={[
+                  {
+                    validator: async (_, value) => {
+                      if (!value) return Promise.resolve();
+                      
+                      // Check if SKU is unique
+                      try {
+                        const response = await api.get(`/products/check-sku?sku=${encodeURIComponent(value)}&exclude_id=${editingProduct?.id || ''}`);
+                        if (!response.data.isUnique) {
+                          return Promise.reject(new Error(t('products.skuExists')));
+                        }
+                      } catch (error) {
+                        console.error('SKU validation error:', error);
+                        // Don't block form submission if validation service is down
+                      }
+                      return Promise.resolve();
+                    }
+                  }
+                ]}
+              >
                 <Input placeholder={t("products.skuPlaceholder")} />
               </Form.Item>
             </Col>

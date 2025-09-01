@@ -145,6 +145,28 @@ const Categories = () => {
   const [categoryShippingInfo, setCategoryShippingInfo] = useState({});
   const [loadingShippingInfo, setLoadingShippingInfo] = useState(false);
 
+  // Helper function for better error handling
+  const handleApiError = (error, defaultMessage = 'An error occurred') => {
+    console.error('API Error:', error);
+    
+    // Check for server response message
+    if (error?.response?.data?.message) {
+      return error.response.data.message;
+    }
+    
+    // Check for server response message_ar (Arabic)
+    if (error?.response?.data?.message_ar) {
+      return error.response.data.message_ar;
+    }
+    
+    // Check for general error message
+    if (error?.message) {
+      return error.message;
+    }
+    
+    return defaultMessage;
+  };
+
   // Table sorting hook
   const {
     sortedData: sortedCategories,
@@ -292,7 +314,7 @@ const Categories = () => {
       setProductAssignModalVisible(false);
       fetchCategories(); // Refresh to update product counts
     } catch (error) {
-      message.error(error.response?.data?.message || t('categories.products_assignment_failed'));
+      message.error(handleApiError(error, t('categories.products_assignment_failed')));
     } finally {
       setLoading(false);
     }
@@ -428,7 +450,7 @@ const Categories = () => {
       fetchCategories();
       fetchCategoriesTree();
     } catch (error) {
-      message.error(error.response?.data?.message || t('errors.operation_failed'));
+      message.error(handleApiError(error, t('errors.operation_failed')));
     } finally {
       setLoading(false);
     }
@@ -536,7 +558,7 @@ const Categories = () => {
       
     } catch (error) {
       console.error('Error updating category:', error);
-      message.error('Failed to update category status');
+      message.error(handleApiError(error, 'Failed to update category status'));
     } finally {
       setLoading(false);
     }
@@ -567,7 +589,7 @@ const Categories = () => {
           fetchCategories();
           fetchCategoriesTree();
         } catch (error) {
-          message.error(t('categories.bulk_delete_error'));
+          message.error(handleApiError(error, t('categories.bulk_delete_error')));
         } finally {
           setBulkActionLoading(false);
         }
@@ -639,7 +661,7 @@ const Categories = () => {
       
     } catch (error) {
       console.error('Error in bulk status update:', error);
-      message.error('Failed to update categories');
+      message.error(handleApiError(error, 'Failed to update categories'));
     } finally {
       setBulkActionLoading(false);
     }
@@ -651,7 +673,7 @@ const Categories = () => {
       message.success(t('categories.sort_order_updated') || 'Sort order updated successfully');
       fetchCategories(); // Refresh the list to show new order
     } catch (error) {
-      message.error(error.message || 'Failed to update sort order');
+      message.error(handleApiError(error, 'Failed to update sort order'));
     }
   };
 
@@ -659,33 +681,64 @@ const Categories = () => {
     if (!hasSelected) return;
     
     const selectedCategories = sortedCategories.filter(category => selectedRowKeys.includes(category.id));
-    const csvData = selectedCategories.map(category => ({
-      'Category ID': category.id,
-      'Name (EN)': category.title_en,
-      'Name (AR)': category.title_ar,
-      'Description (EN)': category.description_en,
-      'Description (AR)': category.description_ar,
-      'Status': category.is_active ? 'Active' : 'Inactive',
-      'Products Count': category.products_count || 0,
-      'Created': new Date(category.created_at).toLocaleDateString()
-    }));
     
-    const csvContent = [
-      Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).map(val => `"${val || ''}"`).join(','))
-    ].join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `categories_export_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    message.success(t('categories.exported_successfully', { count: selectedRowKeys.length }));
+    // Import ExcelJS dynamically to avoid bundle size issues
+    import('exceljs').then(async (ExcelJS) => {
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet(t('categories.categories') || 'Categories');
+      
+      // Define columns
+      worksheet.columns = [
+        { header: t('categories.category_id') || 'Category ID', key: 'id', width: 12 },
+        { header: t('categories.name_en') || 'Name (EN)', key: 'title_en', width: 25 },
+        { header: t('categories.name_ar') || 'Name (AR)', key: 'title_ar', width: 25 },
+        { header: t('categories.description_en') || 'Description (EN)', key: 'description_en', width: 35 },
+        { header: t('categories.description_ar') || 'Description (AR)', key: 'description_ar', width: 35 },
+        { header: t('categories.status') || 'Status', key: 'status', width: 12 },
+        { header: t('categories.products_count') || 'Products Count', key: 'products_count', width: 15 },
+        { header: t('categories.created_date') || 'Created', key: 'created_at', width: 15 }
+      ];
+      
+      // Add data rows
+      selectedCategories.forEach(category => {
+        worksheet.addRow({
+          id: category.id,
+          title_en: category.title_en,
+          title_ar: category.title_ar,
+          description_en: category.description_en,
+          description_ar: category.description_ar,
+          status: category.is_active ? (t('common.active') || 'Active') : (t('common.inactive') || 'Inactive'),
+          products_count: category.products_count || 0,
+          created_at: new Date(category.created_at).toLocaleDateString()
+        });
+      });
+      
+      // Style the header row
+      worksheet.getRow(1).font = { bold: true };
+      worksheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE6F3FF' }
+      };
+      
+      // Generate buffer and download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `categories_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      message.success(t('categories.exported_successfully', { count: selectedRowKeys.length }) || `Successfully exported ${selectedRowKeys.length} categories`);
+    }).catch(error => {
+      console.error('Failed to load ExcelJS library:', error);
+      message.error(t('categories.export_failed') || 'Failed to export categories');
+    });
   };
 
   const clearSelection = () => {
@@ -1060,7 +1113,7 @@ const Categories = () => {
               </Button>
               <ExportButton
                 {...getCategoriesExportConfig(categories, columns)}
-                showFormats={['csv', 'excel', 'pdf']}
+                showFormats={['excel']}
               />
               <Dropdown
                 overlay={
@@ -1130,7 +1183,7 @@ const Categories = () => {
                     disabled={bulkActionLoading}
                     icon={<UploadOutlined />}
                   >
-                    {t('common.export')}
+                    {t('categories.export_excel') || t('common.export')}
                   </Button>
                   <Button 
                     danger

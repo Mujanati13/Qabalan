@@ -4,60 +4,85 @@ const jwt = require('jsonwebtoken');
 class SocketManager {
   constructor(server) {
     console.log('🏗️ Creating Socket.IO server...');
+    console.log('  - Environment:', process.env.NODE_ENV || 'development');
+    console.log('  - Port:', process.env.PORT || 3015);
+    console.log('  - Frontend URLs:', process.env.SOCKET_CORS_ORIGINS || 'Not set');
     
-    const corsOrigins = [
-      process.env.FRONTEND_URL || "http://localhost:5173",
-      process.env.ADMIN_DASHBOARD_URL || "http://localhost:3006",
-      process.env.WEB_CLIENT_URL || "http://localhost:3070",
-      "http://localhost:5173", // Default Vite port
-      "https://qablan.albech.me", // Production domain
-      "http://qablan.albech.me", // Production domain (HTTP)
-      /^https?:\/\/.*\.albech\.me$/, // Any subdomain of albech.me
-      /^https?:\/\/localhost:\d+$/, // Any localhost port
-    ];
-
-    // Parse additional origins from environment variable
-    if (process.env.SOCKET_CORS_ORIGINS) {
-      const additionalOrigins = process.env.SOCKET_CORS_ORIGINS.split(',');
-      corsOrigins.push(...additionalOrigins);
-    }
-    
-    console.log('🌐 CORS origins:', corsOrigins);
+    console.log('🌐 Socket.IO CORS: Allowing all origins for debugging');
     
     this.io = new Server(server, {
       cors: {
-        origin: corsOrigins,
-        methods: ["GET", "POST"],
-        credentials: true
+        origin: "*", // Allow all origins for debugging
+        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        credentials: true,
+        allowedHeaders: ["Content-Type", "Authorization"]
       },
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      allowEIO3: true, // Allow Engine.IO v3 clients
+      pingTimeout: 60000,
+      pingInterval: 25000
     });
 
     console.log('✅ Socket.IO server created successfully');
+    console.log('  - Available transports:', ['websocket', 'polling']);
+    console.log('  - CORS origin:', '*');
+    console.log('  - Ping timeout:', 60000);
+    console.log('  - Ping interval:', 25000);
     
     this.connectedClients = new Map(); // Store connected clients
     this.setupMiddleware();
     this.setupEventHandlers();
+    this.setupDebugEvents();
+  }
+
+  setupDebugEvents() {
+    // Debug connection attempts
+    this.io.engine.on('connection_error', (err) => {
+      console.error('🚨 Socket.IO Engine connection error:', err);
+      console.error('  - Error message:', err.message);
+      console.error('  - Error code:', err.code);
+      console.error('  - Context:', err.context);
+    });
+
+    this.io.engine.on('initial_headers', (headers, req) => {
+      console.log('📋 Initial headers from client:', {
+        origin: req.headers.origin,
+        userAgent: req.headers['user-agent'],
+        referer: req.headers.referer
+      });
+    });
   }
 
   setupMiddleware() {
+    // Debug middleware to log all connection attempts
+    this.io.use((socket, next) => {
+      console.log('🔍 Socket connection attempt:');
+      console.log('  - Socket ID:', socket.id);
+      console.log('  - Origin:', socket.handshake.headers.origin);
+      console.log('  - Referer:', socket.handshake.headers.referer);
+      console.log('  - Transport:', socket.conn.transport.name);
+      console.log('  - Auth token present:', !!socket.handshake.auth.token);
+      next();
+    });
+
     // Authentication middleware
     this.io.use((socket, next) => {
       try {
         const token = socket.handshake.auth.token;
         
         if (!token) {
+          console.error('❌ No authentication token provided');
           return next(new Error('Authentication token required'));
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
         socket.userId = decoded.id;
-        socket.userRole = decoded.role;
+        socket.userRole = decoded.userType; // Changed from decoded.role to decoded.userType
         
-        console.log(`Socket authenticated for user: ${decoded.id} (${decoded.role})`);
+        console.log(`✅ Socket authenticated for user: ${decoded.id} (${decoded.userType})`);
         next();
       } catch (error) {
-        console.error('Socket authentication failed:', error.message);
+        console.error('❌ Socket authentication failed:', error.message);
         next(new Error('Invalid authentication token'));
       }
     });
@@ -70,9 +95,13 @@ class SocketManager {
       // Store the connected client
       this.connectedClients.set(socket.userId, socket);
 
-      // Join admin room for admin-specific events
-      socket.join('admin-room');
-      console.log(`👤 User ${socket.userId} joined admin-room`);
+      // Only join admin room for admin users
+      if (socket.userRole === 'admin' || socket.userRole === 'staff') {
+        socket.join('admin-room');
+        console.log(`👤 Admin user ${socket.userId} (${socket.userRole}) joined admin-room`);
+      } else {
+        console.log(`👤 Regular user ${socket.userId} connected (not added to admin-room)`);
+      }
 
       // Send connection confirmation
       socket.emit('connection_confirmed', {

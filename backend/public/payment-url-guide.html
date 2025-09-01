@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MPGS Payment URL Guide</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f7fa;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .correct {
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        .incorrect {
+            background: #fff2f0;
+            border: 1px solid #ffccc7;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        .code {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+        button {
+            background: #1677ff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #0f5ec5;
+        }
+        .warning {
+            background: #fffbe6;
+            border: 1px solid #ffe58f;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚫 MPGS URL Usage Guide</h1>
+        
+        <div class="warning">
+            <h3>⚠️ You're using the wrong URL!</h3>
+            <p>The session URL is <strong>not meant for direct browser access</strong>. It's only for the checkout.js script to use internally.</p>
+        </div>
+
+        <div class="incorrect">
+            <h3>❌ WRONG - What you're doing:</h3>
+            <p>Opening this URL directly in browser:</p>
+            <div class="code">https://test-gateway.mastercard.com/checkout/version/73/merchant/TESTNITEST2/session/SESSION...</div>
+            <p><strong>Result:</strong> "Welcome to Payment Page" error message</p>
+        </div>
+
+        <div class="correct">
+            <h3>✅ CORRECT - What you should do:</h3>
+            <p>Use the payment view page that integrates checkout.js:</p>
+            <div class="code">http://localhost:3015/api/payments/mpgs/payment/view?orders_id=YOUR_ORDER_ID</div>
+            <p><strong>Result:</strong> Proper payment form with checkout.js integration</p>
+        </div>
+
+        <h2>📋 Step-by-step Instructions:</h2>
+        
+        <ol>
+            <li><strong>Create a test order first:</strong></li>
+            <button onclick="createTestOrder()">Create Test Order</button>
+            <div id="order-result"></div>
+            
+            <li><strong>Then use the correct payment URL:</strong></li>
+            <p>Format: <code>http://localhost:3015/api/payments/mpgs/payment/view?orders_id=ORDER_ID</code></p>
+            <button onclick="openPaymentPage()">Open Payment Page (Correct Way)</button>
+            <div id="payment-result"></div>
+        </ol>
+
+        <h2>🔧 Alternative Testing Options:</h2>
+        
+        <div class="correct">
+            <h3>Option 1: Use our test page</h3>
+            <button onclick="openTestPage()">Open Payment Test Page</button>
+        </div>
+        
+        <div class="correct">
+            <h3>Option 2: Test HPP (Direct Form POST)</h3>
+            <button onclick="openHPP()">Open HPP Test</button>
+        </div>
+
+        <h2>📖 How MPGS Hosted Checkout Works:</h2>
+        
+        <ol>
+            <li><strong>Backend creates session</strong> using MPGS API</li>
+            <li><strong>Frontend loads checkout.js</strong> with session ID</li>
+            <li><strong>checkout.js handles</strong> the secure payment form</li>
+            <li><strong>User completes payment</strong> in MPGS-hosted iframe/lightbox</li>
+            <li><strong>MPGS redirects back</strong> to your return URL</li>
+        </ol>
+
+        <div class="warning">
+            <h3>🔑 Key Point:</h3>
+            <p>Never open session URLs directly! Always use them through checkout.js or your payment view page.</p>
+        </div>
+    </div>
+
+    <script>
+        let lastOrderId = null;
+
+        async function createTestOrder() {
+            const resultDiv = document.getElementById('order-result');
+            try {
+                const response = await fetch('/api/payments/mpgs/create-test-order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: '25.50', currency: 'USD' })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    lastOrderId = data.order.id;
+                    resultDiv.innerHTML = `
+                        <div style="color: green; margin: 10px 0;">
+                            ✅ Order created: ID ${data.order.id}<br>
+                            Amount: ${data.order.total_amount} ${data.order.currency}
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = '<div style="color: red;">❌ Failed to create order</div>';
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div style="color: red;">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        function openPaymentPage() {
+            const resultDiv = document.getElementById('payment-result');
+            
+            if (!lastOrderId) {
+                resultDiv.innerHTML = '<div style="color: red;">❌ Please create a test order first!</div>';
+                return;
+            }
+            
+            const correctUrl = `/api/payments/mpgs/payment/view?orders_id=${lastOrderId}`;
+            window.open(correctUrl, '_blank');
+            
+            resultDiv.innerHTML = `
+                <div style="color: green; margin: 10px 0;">
+                    ✅ Opened correct payment page for order ${lastOrderId}<br>
+                    URL: <code>${correctUrl}</code>
+                </div>
+            `;
+        }
+
+        function openTestPage() {
+            window.open('/payment-test-clean.html', '_blank');
+        }
+
+        function openHPP() {
+            window.open('/api/payments/mpgs/hpp/test', '_blank');
+        }
+    </script>
+</body>
+</html>

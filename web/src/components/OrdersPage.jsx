@@ -8,7 +8,7 @@ import {
   ShoppingOutlined, ClockCircleOutlined, CheckCircleOutlined,
   CloseCircleOutlined, DeleteOutlined, EyeOutlined,
   PhoneOutlined, MailOutlined, EnvironmentOutlined,
-  CalendarOutlined, DollarOutlined
+  CalendarOutlined, DollarOutlined, CreditCardOutlined
 } from '@ant-design/icons';
 import { useOrders } from '../contexts/OrderContext';
 import AppLayout from './AppLayout';
@@ -69,6 +69,15 @@ const OrdersPage = () => {
   const showOrderDetails = (order) => {
     setSelectedOrder(order);
     setDetailsVisible(true);
+  };
+
+  const handlePayNow = (order) => {
+    // Get API URL from environment
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3015/api';
+    
+    // Redirect to MPGS payment page
+    const paymentUrl = `${apiUrl}/payments/mpgs/payment/view?orders_id=${order.id}`;
+    window.location.href = paymentUrl;
   };
 
   const handleDeleteOrder = (orderId) => {
@@ -154,6 +163,21 @@ const OrdersPage = () => {
       key: 'actions',
       render: (_, record) => (
         <Space>
+          {/* Pay Now button for unpaid orders */}
+          {(record.payment_method === 'card') && 
+           (record.payment_status === 'pending' || !record.payment_status) && (
+            <Tooltip title="Pay with Credit Card">
+              <Button 
+                type="primary"
+                size="small"
+                icon={<CreditCardOutlined />} 
+                onClick={() => handlePayNow(record)}
+              >
+                Pay Now
+              </Button>
+            </Tooltip>
+          )}
+          
           <Tooltip title="View Details">
             <Button 
               type="text" 
