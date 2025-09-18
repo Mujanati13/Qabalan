@@ -55,7 +55,9 @@ import {
   MoreOutlined,
   CarOutlined,
   DollarOutlined,
-  GiftOutlined
+  GiftOutlined,
+  FileTextOutlined,
+  DownOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import customersService from '../services/customersService';
@@ -63,6 +65,7 @@ import api from '../services/api';
 import dayjs from 'dayjs';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportCustomersToExcel } from '../utils/comprehensiveExportUtils';
 import EnhancedAddressForm from '../components/common/EnhancedAddressForm';
 
 const { Title, Text } = Typography;
@@ -447,6 +450,7 @@ const Customers = () => {
     });
   };
 
+  // Enhanced Customers Export with complete data
   const handleBulkExport = async () => {
     if (selectedRowKeys.length === 0) {
       message.warning(t('customers.bulk_actions.no_selection'));
@@ -457,114 +461,103 @@ const Customers = () => {
       setBulkActionLoading(true);
       const selectedCustomers = customers.filter(customer => selectedRowKeys.includes(customer.id));
       
-      // Import ExcelJS dynamically
-      const ExcelJS = await import('exceljs');
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet(t('customers.title') || 'Customers');
-      
-      // Add title
-      worksheet.mergeCells('A1:H1');
-      const titleCell = worksheet.getCell('A1');
-      titleCell.value = t('customers.export_report') || 'Customers Export Report';
-      titleCell.font = { bold: true, size: 16 };
-      titleCell.alignment = { horizontal: 'center' };
-      
-      // Add export info
-      worksheet.mergeCells('A2:H2');
-      const infoCell = worksheet.getCell('A2');
-      infoCell.value = `${t('customers.exported_date') || 'Exported on'}: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}`;
-      infoCell.font = { bold: true };
-      
-      // Define columns starting from row 4
-      const headers = [
-        t('customers.name') || 'Name',
-        t('customers.email') || 'Email',
-        t('customers.phone') || 'Phone',
-        t('customers.type') || 'Type',
-        t('customers.status') || 'Status',
-        t('customers.verified') || 'Verified',
-        t('customers.birthDate') || 'Birth Date',
-        t('customers.registrationDate') || 'Registration Date'
-      ];
-      
-      // Set up columns with proper widths
-      worksheet.columns = [
-        { header: headers[0], key: 'name', width: 25 },
-        { header: headers[1], key: 'email', width: 30 },
-        { header: headers[2], key: 'phone', width: 15 },
-        { header: headers[3], key: 'type', width: 12 },
-        { header: headers[4], key: 'status', width: 12 },
-        { header: headers[5], key: 'verified', width: 12 },
-        { header: headers[6], key: 'birth_date', width: 15 },
-        { header: headers[7], key: 'registration_date', width: 20 }
-      ];
-      
-      // Add headers at row 4
-      headers.forEach((header, index) => {
-        const cell = worksheet.getCell(4, index + 1);
-        cell.value = header;
-        cell.font = { bold: true };
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFE6F3FF' }
-        };
-        cell.border = {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        };
+      // Fetch complete customer details including addresses and order history
+      const customersWithDetails = await Promise.all(
+        selectedCustomers.map(async (customer) => {
+          try {
+            // Get detailed customer information
+            const customerDetails = await customersService.getCustomer(customer.id);
+            
+            // Merge with existing customer data
+            return {
+              ...customer,
+              ...customerDetails.data,
+              addresses: customerDetails.data?.addresses || [],
+              order_history: customerDetails.data?.order_history || customerDetails.data?.orders || []
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for customer ${customer.id}:`, error);
+            return customer;
+          }
+        })
+      );
+
+      // Use comprehensive export utility
+      await exportCustomersToExcel(customersWithDetails, {
+        includeOrderHistory: true,
+        includeAddresses: true,
+        filename: `FECS_Customers_Export_${selectedRowKeys.length}_Customers`,
+        t: t
       });
-      
-      // Add data rows starting from row 5
-      selectedCustomers.forEach((customer, index) => {
-        const row = worksheet.getRow(5 + index);
-        row.values = [
-          `${customer.first_name} ${customer.last_name}`,
-          customer.email,
-          customer.phone || '',
-          customer.user_type,
-          customer.is_active ? (t('common.active') || 'Active') : (t('common.inactive') || 'Inactive'),
-          customer.is_verified ? (t('common.yes') || 'Yes') : (t('common.no') || 'No'),
-          customer.birth_date ? dayjs(customer.birth_date).format('YYYY-MM-DD') : '',
-          dayjs(customer.created_at).format('YYYY-MM-DD HH:mm:ss')
-        ];
-        
-        // Add borders to data rows
-        row.eachCell((cell) => {
-          cell.border = {
-            top: { style: 'thin' },
-            left: { style: 'thin' },
-            bottom: { style: 'thin' },
-            right: { style: 'thin' }
-          };
-        });
-      });
-      
-      // Generate and download the file
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { 
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
-      });
-      
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `customers_export_${dayjs().format('YYYY-MM-DD')}.xlsx`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
 
       message.success(t('customers.bulk_actions.export_success'));
       setSelectedRowKeys([]);
+      
     } catch (error) {
       console.error('Error exporting customers:', error);
       message.error(t('customers.bulk_actions.operation_failed'));
     } finally {
       setBulkActionLoading(false);
+    }
+  };
+
+  // Export all customers
+  const handleExportAll = async () => {
+    try {
+      if (!customers || customers.length === 0) {
+        message.warning('No customers to export');
+        return;
+      }
+
+      const exportConfirm = Modal.confirm({
+        title: 'Export All Customers',
+        content: `Are you sure you want to export all ${customers.length} customers? This may take a few moments.`,
+        okText: 'Export',
+        okType: 'primary',
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            const loadingMessage = message.loading('Preparing complete export... This may take a few moments.', 0);
+
+            // Fetch complete details for all customers
+            const customersWithDetails = await Promise.all(
+              customers.map(async (customer) => {
+                try {
+                  const customerDetails = await customersService.getCustomer(customer.id);
+                  
+                  return {
+                    ...customer,
+                    ...customerDetails.data,
+                    addresses: customerDetails.data?.addresses || [],
+                    order_history: customerDetails.data?.order_history || customerDetails.data?.orders || []
+                  };
+                } catch (error) {
+                  console.warn(`Failed to fetch details for customer ${customer.id}:`, error);
+                  return customer;
+                }
+              })
+            );
+
+            // Use comprehensive export utility
+            await exportCustomersToExcel(customersWithDetails, {
+              includeOrderHistory: true,
+              includeAddresses: true,
+              filename: `FECS_All_Customers_Export_${customers.length}_Customers`,
+              t: t
+            });
+
+            loadingMessage();
+            
+          } catch (error) {
+            console.error('Export all customers error:', error);
+            message.error('Failed to export all customers. Please try again.');
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('Export all customers error:', error);
+      message.error('Failed to export customers. Please try again.');
     }
   };
 
@@ -1311,10 +1304,35 @@ const Customers = () => {
             {t('common.totalItems', { total: pagination.total })}
           </Text>
           <Space.Compact>
-            <ExportButton
-              {...getCustomersExportConfig(customers, columns)}
-              showFormats={['excel']}
-            />
+            <Dropdown
+              overlay={
+                <Menu>
+                  <Menu.Item
+                    key="export-all"
+                    icon={<DownloadOutlined />}
+                    onClick={handleExportAll}
+                    disabled={!customers || customers.length === 0}
+                  >
+                    Export All Customers ({customers?.length || 0})
+                  </Menu.Item>
+                  <Menu.Item
+                    key="export-selected"
+                    icon={<DownloadOutlined />}
+                    onClick={handleBulkExport}
+                    disabled={selectedRowKeys.length === 0}
+                  >
+                    Export Selected ({selectedRowKeys.length})
+                  </Menu.Item>
+                  <Menu.Divider />
+                  
+                </Menu>
+              }
+              trigger={['click']}
+            >
+              <Button icon={<DownloadOutlined />}>
+                Export <DownOutlined />
+              </Button>
+            </Dropdown>
             <Dropdown
               overlay={
                 <Menu>

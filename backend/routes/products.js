@@ -98,9 +98,11 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
         p.id, p.title_ar, p.title_en, p.description_ar, p.description_en,
         p.base_price, p.sale_price, p.loyalty_points, p.main_image, 
         p.is_active, p.is_featured, p.stock_status, p.sku, p.sort_order,
+        p.stock_quantity, p.created_at, p.updated_at,
         c.title_ar as category_title_ar, c.title_en as category_title_en,
-        COALESCE(p.sale_price, p.base_price) as final_price,
-        ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}${branch_id ? ',\n        bi.stock_quantity, bi.price_override' : ''}
+        ${branch_id ? 'bi.price_override, bi.stock_quantity as branch_stock_quantity, CASE WHEN bi.stock_quantity <= 0 THEN "out_of_stock" WHEN bi.stock_quantity <= bi.min_stock_level THEN "low_stock" ELSE "in_stock" END as branch_stock_status,' : ''}
+        ${branch_id ? 'COALESCE(bi.price_override, p.sale_price, p.base_price)' : 'COALESCE(p.sale_price, p.base_price)'} as final_price,
+        ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       ${branchJoin}
@@ -165,11 +167,9 @@ router.get('/:id', optionalAuth, validateId, async (req, res, next) => {
     res.json({
       success: true,
       data: {
-        product: {
-          ...product,
-          variants,
-          images
-        }
+        ...product,
+        variants,
+        images
       }
     });
 
@@ -368,7 +368,8 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       weight_unit,
       is_featured,
       is_active,
-      stock_status
+      stock_status,
+      stock_quantity
     } = req.body;
 
     // Check if product exists and get current image
@@ -557,6 +558,10 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
     if (stock_status !== undefined) {
       updateFields.push('stock_status = COALESCE(?, stock_status)');
       updateValues.push(stock_status || null);
+    }
+    if (stock_quantity !== undefined) {
+      updateFields.push('stock_quantity = COALESCE(?, stock_quantity)');
+      updateValues.push(stock_quantity !== undefined ? parseInt(stock_quantity) : null);
     }
 
     // Always update the timestamp
@@ -757,7 +762,8 @@ router.post('/:id/branches', authenticate, authorize('admin', 'staff'), validate
         variant_id = null, 
         stock_quantity = 0, 
         min_stock_level = 0,
-        price_override = null
+        price_override = null,
+        is_available = true
       } = branchAssignment;
 
       try {
@@ -798,16 +804,17 @@ router.post('/:id/branches', authenticate, authorize('admin', 'staff'), validate
               stock_quantity = ?,
               min_stock_level = ?,
               price_override = ?,
+              is_available = ?,
               updated_at = NOW()
             WHERE id = ?
-          `, [stock_quantity, min_stock_level, price_override, existingAssignment.id]);
+          `, [stock_quantity, min_stock_level, price_override, is_available ? 1 : 0, existingAssignment.id]);
         } else {
           // Create new assignment
           await executeQuery(`
             INSERT INTO branch_inventory (
-              branch_id, product_id, variant_id, stock_quantity, min_stock_level, price_override
-            ) VALUES (?, ?, ?, ?, ?, ?)
-          `, [branch_id, req.params.id, variant_id, stock_quantity, min_stock_level, price_override]);
+              branch_id, product_id, variant_id, stock_quantity, min_stock_level, price_override, is_available
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          `, [branch_id, req.params.id, variant_id, stock_quantity, min_stock_level, price_override, is_available ? 1 : 0]);
         }
 
         assignments.push({
@@ -863,7 +870,7 @@ router.get('/:id/branches', authenticate, authorize('admin', 'staff'), validateI
     const availability = await executeQuery(`
       SELECT 
         bi.id, bi.branch_id, bi.variant_id, bi.stock_quantity, 
-        bi.reserved_quantity, bi.min_stock_level, bi.price_override, bi.updated_at,
+        bi.reserved_quantity, bi.min_stock_level, bi.price_override, bi.is_available, bi.updated_at,
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
         UPPER(LEFT(REPLACE(b.title_en, ' ', ''), 4)) as branch_code,
         b.is_active as branch_is_active,
@@ -1313,11 +1320,13 @@ router.put('/:id/images/:imageId/sort', authenticate, authorize('admin', 'staff'
 /**
  * @route   GET /api/products/:id/variants
  * @desc    Get all variants for a specific product
- * @access  Private (Admin/Staff)
+ * @access  Private (Admin/Staff) or Public (with active_only filter)
  */
-router.get('/:id/variants', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+router.get('/:id/variants', optionalAuth, validateId, async (req, res, next) => {
   try {
     const productId = req.params.id;
+    const activeOnly = req.query.active_only === 'true';
+    const isAdmin = req.user && (req.user.user_type === 'admin' || req.user.user_type === 'staff');
     
     // First check if product exists
     const productResult = await executeQuery(
@@ -1333,7 +1342,15 @@ router.get('/:id/variants', authenticate, authorize('admin', 'staff'), validateI
       });
     }
     
-    // Get all variants for this product
+    // Build query based on user type and filter
+    let whereClause = 'WHERE product_id = ?';
+    const queryParams = [productId];
+    
+    // Non-admin users or when active_only is requested, filter for active variants only
+    if (!isAdmin || activeOnly) {
+      whereClause += ' AND is_active = 1';
+    }
+    
     const variants = await executeQuery(`
       SELECT 
         id,
@@ -1347,9 +1364,9 @@ router.get('/:id/variants', authenticate, authorize('admin', 'staff'), validateI
         created_at,
         updated_at
       FROM product_variants 
-      WHERE product_id = ? AND is_active = 1
+      ${whereClause}
       ORDER BY variant_name, variant_value
-    `, [productId]);
+    `, queryParams);
     
     res.json({
       success: true,
@@ -1375,13 +1392,15 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
       variant_value,
       price_modifier,
       stock_quantity,
-      sku
+      sku,
+      is_active
     } = req.body;
     
     // Sanitize and validate parameters - convert undefined to null for database compatibility
     const sanitizedPriceModifier = price_modifier !== undefined ? parseFloat(price_modifier) || 0 : 0;
     const sanitizedStockQuantity = stock_quantity !== undefined ? parseInt(stock_quantity) || 0 : 0;
     const sanitizedSku = sku !== undefined && sku !== '' ? sku : null;
+    const sanitizedIsActive = is_active !== undefined ? (is_active ? 1 : 0) : 1; // Default to active
     
     // Validate required fields
     if (!variant_name || !variant_value) {
@@ -1423,9 +1442,9 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
     // Insert new variant
     const result = await executeQuery(`
       INSERT INTO product_variants 
-      (product_id, variant_name, variant_value, price_modifier, stock_quantity, sku)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [productId, variant_name, variant_value, sanitizedPriceModifier, sanitizedStockQuantity, sanitizedSku]);
+      (product_id, variant_name, variant_value, price_modifier, stock_quantity, sku, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [productId, variant_name, variant_value, sanitizedPriceModifier, sanitizedStockQuantity, sanitizedSku, sanitizedIsActive]);
     
     // Get the created variant
     const newVariant = await executeQuery(
@@ -1584,6 +1603,57 @@ router.delete('/:id/variants/:variantId', authenticate, authorize('admin', 'staf
 });
 
 /**
+ * @route   PUT /api/products/:id/variants/:variantId/toggle-status
+ * @desc    Toggle the active status of a product variant
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/variants/:variantId/toggle-status', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const variantId = req.params.variantId;
+    
+    // Check if variant exists for this product
+    const variantResult = await executeQuery(
+      'SELECT id, is_active FROM product_variants WHERE id = ? AND product_id = ?',
+      [variantId, productId]
+    );
+    
+    if (variantResult.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product variant not found',
+        message_ar: 'متغير المنتج غير موجود'
+      });
+    }
+    
+    const currentStatus = variantResult[0].is_active;
+    const newStatus = currentStatus ? 0 : 1;
+    
+    // Toggle the status
+    await executeQuery(
+      'UPDATE product_variants SET is_active = ?, updated_at = NOW() WHERE id = ? AND product_id = ?',
+      [newStatus, variantId, productId]
+    );
+    
+    // Get updated variant
+    const updatedVariant = await executeQuery(
+      'SELECT * FROM product_variants WHERE id = ?',
+      [variantId]
+    );
+    
+    res.json({
+      success: true,
+      message: `Product variant ${newStatus ? 'activated' : 'deactivated'} successfully`,
+      message_ar: `تم ${newStatus ? 'تفعيل' : 'إلغاء تفعيل'} متغير المنتج بنجاح`,
+      data: updatedVariant[0]
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   GET /api/products/:id/variants/:variantId
  * @desc    Get a specific product variant
  * @access  Private (Admin/Staff)
@@ -1701,6 +1771,156 @@ router.put('/:id/sort-order', authenticate, authorize('admin', 'staff'), validat
     }
 
   } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/products/:id/stock
+ * @desc    Update product stock quantity directly (simple stock management)
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/stock', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const productId = req.params.id;
+    const { stock_quantity } = req.body;
+
+    // Validate stock_quantity
+    if (stock_quantity === undefined || stock_quantity === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Stock quantity is required',
+        message_ar: 'كمية المخزون مطلوبة'
+      });
+    }
+
+    const stockQuantityNum = parseInt(stock_quantity);
+    if (isNaN(stockQuantityNum) || stockQuantityNum < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Stock quantity must be a non-negative number',
+        message_ar: 'كمية المخزون يجب أن تكون رقماً غير سالب'
+      });
+    }
+
+    // Check if product exists
+    const productExists = await executeQuery(
+      'SELECT id FROM products WHERE id = ?',
+      [productId]
+    );
+
+    if (!productExists || productExists.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found',
+        message_ar: 'المنتج غير موجود'
+      });
+    }
+
+    // Update product stock quantity
+    const updateResult = await executeQuery(
+      'UPDATE products SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [stockQuantityNum, productId]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found or no changes made',
+        message_ar: 'المنتج غير موجود أو لم يتم إجراء تغييرات'
+      });
+    }
+
+    // Get updated product info
+    const updatedProduct = await executeQuery(`
+      SELECT 
+        id, title_ar, title_en, stock_quantity, stock_status,
+        updated_at
+      FROM products 
+      WHERE id = ?
+    `, [productId]);
+
+    res.json({
+      success: true,
+      message: 'Product stock quantity updated successfully',
+      message_ar: 'تم تحديث كمية مخزون المنتج بنجاح',
+      data: updatedProduct[0]
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/products/bulk-toggle-all
+ * @desc    Enable or disable all products at once
+ * @access  Private (Admin only)
+ */
+router.post('/bulk-toggle-all', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const { action, notes } = req.body; // action: 'enable' or 'disable'
+    
+    if (!action || !['enable', 'disable'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Action must be either "enable" or "disable"',
+        message_ar: 'يجب أن يكون الإجراء إما "تفعيل" أو "إلغاء تفعيل"'
+      });
+    }
+
+    const newStatus = action === 'enable' ? 1 : 0;
+    const adminUserId = req.user.id;
+
+    // Get current product counts for logging
+    const [activeCount] = await executeQuery(
+      'SELECT COUNT(*) as count FROM products WHERE is_active = 1'
+    );
+    const [inactiveCount] = await executeQuery(
+      'SELECT COUNT(*) as count FROM products WHERE is_active = 0'
+    );
+
+    // Update all products
+    const updateResult = await executeQuery(
+      'UPDATE products SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE is_active != ?',
+      [newStatus, newStatus]
+    );
+
+    // Get final counts
+    const [finalActiveCount] = await executeQuery(
+      'SELECT COUNT(*) as count FROM products WHERE is_active = 1'
+    );
+    const [finalInactiveCount] = await executeQuery(
+      'SELECT COUNT(*) as count FROM products WHERE is_active = 0'
+    );
+    const [totalCount] = await executeQuery(
+      'SELECT COUNT(*) as count FROM products'
+    );
+
+    // Log the action (you may want to create a dedicated log table for this)
+    console.log(`[ADMIN ACTION] User ${adminUserId} performed bulk ${action} on products`);
+    console.log(`[BULK TOGGLE] Affected ${updateResult.affectedRows} products`);
+    console.log(`[BULK TOGGLE] Before: ${activeCount.count} active, ${inactiveCount.count} inactive`);
+    console.log(`[BULK TOGGLE] After: ${finalActiveCount.count} active, ${finalInactiveCount.count} inactive`);
+
+    res.json({
+      success: true,
+      message: `Successfully ${action}d ${updateResult.affectedRows} products`,
+      message_ar: `تم ${action === 'enable' ? 'تفعيل' : 'إلغاء تفعيل'} ${updateResult.affectedRows} منتج بنجاح`,
+      data: {
+        action,
+        affected_products: updateResult.affectedRows,
+        total_products: totalCount.count,
+        active_products: finalActiveCount.count,
+        inactive_products: finalInactiveCount.count,
+        admin_user_id: adminUserId,
+        notes: notes || null,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Bulk toggle products error:', error);
     next(error);
   }
 });

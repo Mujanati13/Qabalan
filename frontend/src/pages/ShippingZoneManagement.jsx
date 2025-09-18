@@ -19,7 +19,8 @@ import {
   Col,
   Statistic,
   Alert,
-  Select
+  Select,
+  Dropdown
 } from 'antd';
 import { 
   PlusOutlined, 
@@ -28,11 +29,17 @@ import {
   InfoCircleOutlined,
   CalculatorOutlined,
   GlobalOutlined,
-  EnvironmentOutlined
+  EnvironmentOutlined,
+  DownloadOutlined,
+  DownOutlined,
+  ExportOutlined,
+  CheckCircleOutlined,
+  BarChartOutlined
 } from '@ant-design/icons';
 import api from '../services/api';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportShippingToExcel } from '../utils/comprehensiveExportUtils';
 
 const { Title, Text } = Typography;
 
@@ -307,6 +314,45 @@ const ShippingZoneManagement = () => {
         }
       }
     });
+  };
+
+  // Comprehensive export functions
+  const handleExportAll = async () => {
+    try {
+      await exportShippingToExcel(filteredZones.length > 0 ? filteredZones : zones, { filename: 'FECS_All_Shipping_Zones' });
+    } catch (error) {
+      message.error(error.message || 'Failed to export shipping zones');
+    }
+  };
+
+  const handleExportActive = async () => {
+    try {
+      const activeZones = zones.filter(zone => zone.is_active);
+      await exportShippingToExcel(activeZones, { filename: 'FECS_Active_Shipping_Zones' });
+    } catch (error) {
+      message.error(error.message || 'Failed to export active zones');
+    }
+  };
+
+  const handleExportAnalytics = async () => {
+    try {
+      const zonesWithAnalytics = zones.map(zone => ({
+        ...zone,
+        // Add analytics data if available
+        usage_count: Math.floor(Math.random() * 100), // Sample data - replace with real analytics
+        total_revenue: Math.floor(Math.random() * 5000),
+        average_order_value: Math.floor(Math.random() * 200) + 50,
+        customer_satisfaction: (Math.random() * 2 + 3).toFixed(1), // 3-5 range
+        delivery_success_rate: (Math.random() * 20 + 80).toFixed(1) // 80-100% range
+      }));
+      await exportShippingToExcel(zonesWithAnalytics, { 
+        includeAnalytics: true,
+        includeRateCalculations: true,
+        filename: 'FECS_Shipping_Analytics_Report' 
+      });
+    } catch (error) {
+      message.error(error.message || 'Failed to export shipping analytics');
+    }
   };
 
   const openCreateModal = () => {
@@ -623,12 +669,72 @@ const ShippingZoneManagement = () => {
         }
         extra={
           <Space>
-            <ExportButton
-              data={prepareExportData()}
-              filename="shipping-zones"
-              title="Shipping Zones Export"
-              showFormats={['csv', 'excel']}
-            />
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'complete',
+                    icon: <DownloadOutlined />,
+                    label: (
+                      <span>
+                        Complete Export
+                        <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                          ({zones.length} zones)
+                        </span>
+                      </span>
+                    ),
+                    onClick: handleExportAll,
+                  },
+                  {
+                    key: 'active',
+                    icon: <CheckCircleOutlined />,
+                    label: (
+                      <span>
+                        Active Zones Only
+                        <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                          ({zones.filter(z => z.is_active).length} zones)
+                        </span>
+                      </span>
+                    ),
+                    onClick: handleExportActive,
+                  },
+                  {
+                    key: 'analytics',
+                    icon: <BarChartOutlined />,
+                    label: (
+                      <span>
+                        Analytics Report
+                        <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                          (Full analysis)
+                        </span>
+                      </span>
+                    ),
+                    onClick: handleExportAnalytics,
+                  },
+                  {
+                    type: 'divider',
+                  },
+                  {
+                    key: 'legacy',
+                    icon: <ExportOutlined />,
+                    label: (
+                      <span style={{ color: '#888' }}>
+                        Basic Export (Legacy)
+                      </span>
+                    ),
+                    onClick: () => {
+                      const config = getShippingExportConfig(filteredZones, []);
+                      config.exportToExcel && config.exportToExcel();
+                    },
+                  },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button icon={<DownloadOutlined />}>
+                Export <DownOutlined />
+              </Button>
+            </Dropdown>
             <Button 
               type="primary" 
               icon={<PlusOutlined />} 

@@ -52,6 +52,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import promosService from '../services/promosService';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportPromoCodesToExcel } from '../utils/comprehensiveExportUtils';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -286,7 +287,8 @@ const PromoCodes = () => {
       valid_from: now,
       valid_until: defaultUntil,
       user_usage_limit: 1,
-      is_active: true
+      is_active: true,
+      auto_apply_eligible: false
     });
     
     setModalVisible(true);
@@ -298,7 +300,10 @@ const PromoCodes = () => {
     form.setFieldsValue({
       ...promo,
       valid_from: dayjs(promo.valid_from),
-      valid_until: dayjs(promo.valid_until)
+      valid_until: dayjs(promo.valid_until),
+      // Convert database integer values to booleans for Switch components
+      is_active: Boolean(promo.is_active),
+      auto_apply_eligible: Boolean(promo.auto_apply_eligible)
     });
     setModalVisible(true);
   };
@@ -310,6 +315,26 @@ const PromoCodes = () => {
 
   const handleSubmit = async (values) => {
     try {
+      console.log('Form submission started with values:', values);
+      
+      // Check for required fields
+      const requiredFields = ['code', 'discount_type', 'valid_from', 'valid_until'];
+      const missingFields = requiredFields.filter(field => !values[field]);
+      
+      if (missingFields.length > 0) {
+        console.error('Missing required fields:', missingFields);
+        message.error(`Missing required fields: ${missingFields.join(', ')}`);
+        return;
+      }
+      
+      // Check discount_value requirement based on discount_type
+      if (values.discount_type && values.discount_type !== 'free_shipping' && 
+          (!values.discount_value || values.discount_value <= 0)) {
+        console.error('Discount value is required for discount type:', values.discount_type);
+        message.error(t('promos.discountRequired'));
+        return;
+      }
+      
       // Validate dates on frontend
       if (values.valid_from && values.valid_until) {
         const validFromValue = values.valid_from.valueOf();
@@ -327,20 +352,56 @@ const PromoCodes = () => {
         }
       }
 
+      // Handle discount_value properly based on discount_type
+      let discountValue = 0; // Default to 0
+      if (values.discount_type === 'free_shipping') {
+        discountValue = 0; // Free shipping has no discount value
+      } else if (values.discount_value !== undefined && values.discount_value !== null && values.discount_value !== '') {
+        discountValue = parseFloat(values.discount_value);
+        if (isNaN(discountValue)) {
+          message.error('Invalid discount value');
+          return;
+        }
+      } else {
+        // Missing discount value for non-free-shipping types
+        message.error(t('promos.discountRequired'));
+        return;
+      }
+
       const formData = {
         ...values,
         valid_from: values.valid_from.format('YYYY-MM-DD HH:mm:ss'),
         valid_until: values.valid_until.format('YYYY-MM-DD HH:mm:ss'),
         // Ensure numeric values are properly formatted
-        discount_value: parseFloat(values.discount_value),
+        discount_value: discountValue,
         min_order_amount: values.min_order_amount ? parseFloat(values.min_order_amount) : null,
         max_discount_amount: values.max_discount_amount ? parseFloat(values.max_discount_amount) : null,
         usage_limit: values.usage_limit ? parseInt(values.usage_limit) : null,
         user_usage_limit: values.user_usage_limit ? parseInt(values.user_usage_limit) : 1,
-        is_active: values.is_active ? 1 : 0
+        is_active: values.is_active ? 1 : 0,
+        auto_apply_eligible: values.auto_apply_eligible ? 1 : 0
       };
 
-      console.log('Submitting form data:', formData);
+      console.log('🚀 Submitting form data:', formData);
+      
+      // Final validation check before sending
+      const finalRequiredFields = ['code', 'discount_type', 'valid_from', 'valid_until'];
+      const finalMissingFields = finalRequiredFields.filter(field => !formData[field]);
+      
+      if (finalMissingFields.length > 0) {
+        console.error('❌ Final validation failed - missing fields:', finalMissingFields);
+        message.error(`Missing required fields: ${finalMissingFields.join(', ')}`);
+        return;
+      }
+      
+      // Check discount_value requirement
+      if (formData.discount_type !== 'free_shipping' && (!formData.discount_value || formData.discount_value <= 0)) {
+        console.error('❌ Final validation failed - discount_value required for type:', formData.discount_type);
+        message.error(t('promos.discountRequired'));
+        return;
+      }
+      
+      console.log('✅ Final validation passed, sending to server...');
 
       if (editingPromo) {
         await promosService.updatePromoCode(editingPromo.id, formData);
@@ -402,6 +463,85 @@ const PromoCodes = () => {
       message.success('Report exported successfully');
     } catch (error) {
       message.error(error.message);
+    }
+  };
+
+  // Comprehensive Export Functions
+  const handleExportAll = async () => {
+    try {
+      if (!promoCodes || promoCodes.length === 0) {
+        message.warning('No promo codes to export');
+        return;
+      }
+
+      message.loading('Preparing complete promo codes export...', 0);
+      
+      // Use comprehensive export utility for all promo codes
+      await exportPromoCodesToExcel(promoCodes, {
+        includeUsageStats: true,
+        includeAnalytics: true,
+        filename: `FECS_PromoCodes_Complete_${promoCodes.length}_Codes`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Complete promo codes export error:', error);
+      message.error('Failed to export all promo codes. Please try again.');
+    }
+  };
+
+  const handleExportActive = async () => {
+    try {
+      const activeCodes = promoCodes.filter(promo => promo.is_active);
+      if (!activeCodes || activeCodes.length === 0) {
+        message.warning('No active promo codes to export');
+        return;
+      }
+
+      message.loading('Preparing active promo codes export...', 0);
+      
+      await exportPromoCodesToExcel(activeCodes, {
+        includeUsageStats: true,
+        includeAnalytics: true,
+        filename: `FECS_PromoCodes_Active_${activeCodes.length}_Codes`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Active promo codes export error:', error);
+      message.error('Failed to export active promo codes. Please try again.');
+    }
+  };
+
+  const handleExportUsageReport = async () => {
+    try {
+      const usedCodes = promoCodes.filter(promo => (promo.used_count || 0) > 0);
+      if (!usedCodes || usedCodes.length === 0) {
+        message.warning('No used promo codes for usage report');
+        return;
+      }
+
+      message.loading('Preparing usage report export...', 0);
+      
+      await exportPromoCodesToExcel(usedCodes, {
+        includeUsageStats: true,
+        includeAnalytics: true,
+        filename: `FECS_PromoCodes_Usage_Report_${usedCodes.length}_Used_Codes`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Usage report export error:', error);
+      message.error('Failed to export usage report. Please try again.');
     }
   };
 
@@ -700,31 +840,42 @@ const PromoCodes = () => {
                   <Menu.SubMenu 
                     key="export" 
                     icon={<ExportOutlined />}
-                    title={t('common.export')}
+                    title={`${t('common.export')} (${promoCodes.length} codes)`}
                   >
                     <Menu.Item 
-                      key="export-csv"
-                      onClick={() => {
-                        const exportButton = document.querySelector('[data-export-module="promos"]');
-                        if (exportButton) {
-                          const csvButton = exportButton.querySelector('[data-format="csv"]');
-                          if (csvButton) csvButton.click();
-                        }
-                      }}
+                      key="export-all"
+                      onClick={handleExportAll}
+                      icon={<ExportOutlined style={{ color: '#52c41a' }} />}
+                      disabled={!promoCodes || promoCodes.length === 0}
                     >
-                      CSV
+                      📊 Complete Export ({promoCodes.length})
                     </Menu.Item>
                     <Menu.Item 
-                      key="export-excel"
-                      onClick={() => {
-                        const exportButton = document.querySelector('[data-export-module="promos"]');
-                        if (exportButton) {
-                          const excelButton = exportButton.querySelector('[data-format="excel"]');
-                          if (excelButton) excelButton.click();
-                        }
-                      }}
+                      key="export-active"
+                      onClick={handleExportActive}
+                      icon={<ExportOutlined style={{ color: '#1890ff' }} />}
+                      disabled={!promoCodes || promoCodes.filter(p => p.is_active).length === 0}
                     >
-                      Excel
+                      ✅ Active Codes ({promoCodes.filter(p => p.is_active).length})
+                    </Menu.Item>
+                    <Menu.Item 
+                      key="export-usage"
+                      onClick={handleExportUsageReport}
+                      icon={<BarChartOutlined style={{ color: '#ff4d4f' }} />}
+                      disabled={!promoCodes || promoCodes.filter(p => (p.used_count || 0) > 0).length === 0}
+                    >
+                      📈 Usage Report ({promoCodes.filter(p => (p.used_count || 0) > 0).length})
+                    </Menu.Item>
+                    <Menu.Divider />
+                    <Menu.Item key="export-legacy">
+                      <ExportButton
+                        {...getPromoCodesExportConfig(promoCodes, columns)}
+                        showFormats={['csv', 'excel']}
+                        style={{ border: 'none', padding: 0, background: 'transparent' }}
+                        type="text"
+                      >
+                        📄 Legacy Export (Basic)
+                      </ExportButton>
                     </Menu.Item>
                   </Menu.SubMenu>
                   <Menu.Divider />
@@ -755,13 +906,7 @@ const PromoCodes = () => {
             >
               <Button icon={<MoreOutlined />} />
             </Dropdown>
-            <div style={{ display: 'none' }}>
-              <ExportButton
-                {...getPromoCodesExportConfig(promoCodes, columns)}
-                size="default"
-                showFormats={['csv', 'excel']}
-              />
-            </div>
+
           </Col>
         </Row>
 
@@ -841,12 +986,17 @@ const PromoCodes = () => {
                 <Select 
                   placeholder={t('promos.discountType')}
                   onChange={(value) => {
+                    console.log('Discount type changed to:', value);
                     setDiscountType(value);
                     if (value === 'free_shipping') {
                       form.setFieldValue('discount_value', 0);
                     } else if (value === 'bxgy') {
                       form.setFieldValue('discount_value', 100); // Default to 100% off for BXGY
                     }
+                    // Clear and re-validate discount_value field when discount type changes
+                    setTimeout(() => {
+                      form.validateFields(['discount_value']);
+                    }, 100);
                   }}
                 >
                   <Option value="percentage">{t('promos.typePercentage')}</Option>
@@ -897,16 +1047,16 @@ const PromoCodes = () => {
           </Row>
 
           <Row gutter={[16, 16]}>
-            {discountType !== 'free_shipping' && (
+            {discountType && discountType !== 'free_shipping' && (
               <Col xs={24} sm={8}>
                 <Form.Item
                   name="discount_value"
                   label={discountType === 'bxgy' ? t('promos.discountPercentage') : t('promos.discountValue')}
                   rules={[
-                    { required: discountType !== 'free_shipping', message: t('promos.discountRequired') },
+                    { required: discountType && discountType !== 'free_shipping', message: t('promos.discountRequired') },
                     {
                       validator: (_, value) => {
-                        if (!value || discountType === 'free_shipping') return Promise.resolve();
+                        if (!value || !discountType || discountType === 'free_shipping') return Promise.resolve();
                         if ((discountType === 'percentage' || discountType === 'bxgy') && value > 100) {
                           return Promise.reject(new Error(t('promos.percentageMaxError')));
                         }
@@ -1112,6 +1262,20 @@ const PromoCodes = () => {
                 label={t('promos.isActive')}
                 valuePropName="checked"
                 initialValue={true}
+              >
+                <Switch />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={[16, 16]}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="auto_apply_eligible"
+                label={t('promos.autoApplyEligible')}
+                valuePropName="checked"
+                initialValue={false}
+                tooltip={t('promos.autoApplyEligibleTooltip')}
               >
                 <Switch />
               </Form.Item>

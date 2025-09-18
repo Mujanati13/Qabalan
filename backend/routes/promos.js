@@ -11,6 +11,54 @@ const {
 } = require('../middleware/promoValidation');
 
 /**
+ * @route   GET /api/promos/available
+ * @desc    Get available promo codes for auto-detection (public endpoint)
+ * @access  Public
+ */
+router.get('/available', async (req, res, next) => {
+  try {
+    // Only get active promo codes that are within their validity period
+    const query = `
+      SELECT 
+        id,
+        code,
+        title_en,
+        title_ar,
+        description_en,
+        description_ar,
+        discount_type,
+        discount_value,
+        max_discount_amount,
+        min_order_amount,
+        usage_limit,
+        usage_count,
+        valid_from,
+        valid_until,
+        auto_apply_eligible,
+        user_usage_limit
+      FROM promo_codes 
+      WHERE is_active = 1 
+        AND valid_from <= NOW() 
+        AND valid_until >= NOW()
+        AND (usage_limit IS NULL OR usage_count < usage_limit)
+        AND auto_apply_eligible = 1
+      ORDER BY discount_value DESC, min_order_amount ASC
+    `;
+
+    const promoCodes = await executeQuery(query);
+
+    res.json({
+      success: true,
+      data: promoCodes,
+      count: promoCodes.length
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * @route   GET /api/promos
  * @desc    Get all promo codes with filtering and pagination
  * @access  Private (Admin)
@@ -88,7 +136,7 @@ router.get('/', authenticate, authorize('admin', 'staff'), validatePagination, v
         pc.id, pc.code, pc.title_ar, pc.title_en, pc.description_ar, pc.description_en,
         pc.discount_type, pc.discount_value, pc.min_order_amount, pc.max_discount_amount,
         pc.usage_limit, pc.usage_count, pc.user_usage_limit,
-        pc.valid_from, pc.valid_until, pc.is_active,
+        pc.valid_from, pc.valid_until, pc.is_active, pc.auto_apply_eligible,
         pc.created_at, pc.updated_at,
         CASE 
           WHEN pc.is_active = 0 THEN 'inactive'
@@ -248,6 +296,8 @@ router.get('/:id', authenticate, authorize('admin', 'staff'), validateId, async 
  */
 router.post('/', authenticate, authorize('admin', 'staff'), validatePromoCode, async (req, res, next) => {
   try {
+    console.log('🔍 PROMO CREATION DEBUG - Received data:', JSON.stringify(req.body, null, 2));
+    
     const {
       code,
       title_ar,
@@ -262,15 +312,37 @@ router.post('/', authenticate, authorize('admin', 'staff'), validatePromoCode, a
       user_usage_limit,
       valid_from,
       valid_until,
-      is_active = true
+      is_active = true,
+      auto_apply_eligible = 0
     } = req.body;
 
-    // Validation
-    if (!code || !discount_type || !discount_value || !valid_from || !valid_until) {
+    // Debug individual fields
+    console.log('📊 Required fields check:');
+    console.log(`  code: "${code}" (${typeof code})`);
+    console.log(`  discount_type: "${discount_type}" (${typeof discount_type})`);
+    console.log(`  discount_value: ${discount_value} (${typeof discount_value})`);
+    console.log(`  valid_from: "${valid_from}" (${typeof valid_from})`);
+    console.log(`  valid_until: "${valid_until}" (${typeof valid_until})`);
+
+    // More specific validation with detailed error messages
+    const missingFields = [];
+    if (!code) missingFields.push('code');
+    if (!discount_type) missingFields.push('discount_type');
+    if (discount_type !== 'free_shipping' && (!discount_value || discount_value <= 0)) missingFields.push('discount_value');
+    if (!valid_from) missingFields.push('valid_from');
+    if (!valid_until) missingFields.push('valid_until');
+
+    if (missingFields.length > 0) {
+      console.error('❌ Validation failed - missing fields:', missingFields);
       return res.status(400).json({
         success: false,
-        message: 'Code, discount type, discount value, valid from and valid until are required',
-        message_ar: 'الكود ونوع الخصم وقيمة الخصم وتاريخ البداية والنهاية مطلوبة'
+        message: `Missing or invalid required fields: ${missingFields.join(', ')}`,
+        message_ar: 'الكود ونوع الخصم وقيمة الخصم وتاريخ البداية والنهاية مطلوبة',
+        debug: {
+          receivedFields: Object.keys(req.body),
+          missingFields,
+          fieldValues: { code, discount_type, discount_value, valid_from, valid_until }
+        }
       });
     }
 
@@ -331,8 +403,8 @@ router.post('/', authenticate, authorize('admin', 'staff'), validatePromoCode, a
       INSERT INTO promo_codes (
         code, title_ar, title_en, description_ar, description_en,
         discount_type, discount_value, min_order_amount, max_discount_amount,
-        usage_limit, user_usage_limit, valid_from, valid_until, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        usage_limit, user_usage_limit, valid_from, valid_until, is_active, auto_apply_eligible
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       code.toUpperCase(), 
       title_ar || null, 
@@ -347,7 +419,8 @@ router.post('/', authenticate, authorize('admin', 'staff'), validatePromoCode, a
       user_usage_limit || null, 
       valid_from, 
       valid_until, 
-      is_active
+      is_active,
+      auto_apply_eligible || 0
     ]);
 
     // Get the created promo code
@@ -396,7 +469,8 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, valida
       user_usage_limit,
       valid_from,
       valid_until,
-      is_active
+      is_active,
+      auto_apply_eligible
     } = req.body;
 
     // Check if promo code exists
@@ -531,6 +605,10 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, valida
     if (is_active !== undefined) {
       updateFields.push('is_active = ?');
       updateValues.push(is_active);
+    }
+    if (auto_apply_eligible !== undefined) {
+      updateFields.push('auto_apply_eligible = ?');
+      updateValues.push(auto_apply_eligible);
     }
 
     if (updateFields.length === 0) {

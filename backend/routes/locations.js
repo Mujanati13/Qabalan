@@ -96,7 +96,36 @@ const validateStreetData = (req, res, next) => {
  */
 router.get('/cities', authenticate, authorize('admin'), async (req, res, next) => {
   try {
-    // Simple query without any parameters
+    const { page = 1, limit = 20, search, is_active } = req.query;
+    
+    // Build WHERE conditions
+    const conditions = [];
+    const params = [];
+
+    // Search filter
+    if (search && search.trim && search.trim()) {
+      conditions.push('(c.title_ar LIKE ? OR c.title_en LIKE ?)');
+      const searchTerm = `%${search.trim()}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    // Active status filter
+    if (is_active && is_active !== 'all') {
+      conditions.push('c.is_active = ?');
+      params.push(is_active === 'true' ? 1 : 0);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const totalQuery = `SELECT COUNT(*) as total FROM cities c ${whereClause}`;
+    const [{ total }] = await executeQuery(totalQuery, params);
+
+    // Calculate pagination
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    // Get cities with pagination
     const cities = await executeQuery(`
       SELECT 
         c.id,
@@ -107,17 +136,19 @@ router.get('/cities', authenticate, authorize('admin'), async (req, res, next) =
         c.updated_at,
         (SELECT COUNT(*) FROM areas WHERE city_id = c.id AND is_active = 1) as areas_count
       FROM cities c
+      ${whereClause}
       ORDER BY c.title_en ASC
-    `);
+      LIMIT ? OFFSET ?
+    `, [...params, parseInt(limit), parseInt(offset)]);
 
     res.json({
       success: true,
       data: cities,
       pagination: {
-        current: 1,
-        pageSize: cities.length,
-        total: cities.length,
-        pages: 1
+        current: parseInt(page),
+        pageSize: parseInt(limit),
+        total: total,
+        pages: totalPages
       }
     });
   } catch (error) {
@@ -309,7 +340,47 @@ router.delete('/cities/:id', authenticate, authorize('admin'), validateId, async
  */
 router.get('/areas', authenticate, authorize('admin'), async (req, res, next) => {
   try {
-    // Simple query without any parameters
+    const { page = 1, limit = 20, search, is_active, city_id } = req.query;
+    
+    // Build WHERE conditions
+    const conditions = [];
+    const params = [];
+
+    // Search filter
+    if (search && search.trim && search.trim()) {
+      conditions.push('(a.title_ar LIKE ? OR a.title_en LIKE ?)');
+      const searchTerm = `%${search.trim()}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    // Active status filter
+    if (is_active && is_active !== 'all') {
+      conditions.push('a.is_active = ?');
+      params.push(is_active === 'true' ? 1 : 0);
+    }
+
+    // City filter
+    if (city_id && city_id !== 'all') {
+      conditions.push('a.city_id = ?');
+      params.push(parseInt(city_id));
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const totalQuery = `
+      SELECT COUNT(*) as total 
+      FROM areas a
+      LEFT JOIN cities c ON a.city_id = c.id
+      ${whereClause}
+    `;
+    const [{ total }] = await executeQuery(totalQuery, params);
+
+    // Calculate pagination
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    // Get areas with pagination
     const areas = await executeQuery(`
       SELECT 
         a.id,
@@ -325,17 +396,19 @@ router.get('/areas', authenticate, authorize('admin'), async (req, res, next) =>
         (SELECT COUNT(*) FROM streets WHERE area_id = a.id AND is_active = 1) as streets_count
       FROM areas a
       LEFT JOIN cities c ON a.city_id = c.id
+      ${whereClause}
       ORDER BY c.title_en ASC, a.title_en ASC
-    `);
+      LIMIT ? OFFSET ?
+    `, [...params, parseInt(limit), offset]);
 
     res.json({
       success: true,
       data: areas,
       pagination: {
-        current: 1,
-        pageSize: areas.length,
-        total: areas.length,
-        pages: 1
+        current: parseInt(page),
+        pageSize: parseInt(limit),
+        total: total,
+        pages: totalPages
       }
     });
   } catch (error) {
@@ -576,7 +649,54 @@ router.delete('/areas/:id', authenticate, authorize('admin'), validateId, async 
  */
 router.get('/streets', authenticate, authorize('admin'), async (req, res, next) => {
   try {
-    // Simple query without any parameters
+    const { page = 1, limit = 20, search, is_active, city_id, area_id } = req.query;
+    
+    // Build WHERE conditions
+    const conditions = [];
+    const params = [];
+
+    // Search filter
+    if (search && search.trim && search.trim()) {
+      conditions.push('(s.title_ar LIKE ? OR s.title_en LIKE ?)');
+      const searchTerm = `%${search.trim()}%`;
+      params.push(searchTerm, searchTerm);
+    }
+
+    // Active status filter
+    if (is_active && is_active !== 'all') {
+      conditions.push('s.is_active = ?');
+      params.push(is_active === 'true' ? 1 : 0);
+    }
+
+    // City filter
+    if (city_id && city_id !== 'all') {
+      conditions.push('a.city_id = ?');
+      params.push(parseInt(city_id));
+    }
+
+    // Area filter
+    if (area_id && area_id !== 'all') {
+      conditions.push('s.area_id = ?');
+      params.push(parseInt(area_id));
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const totalQuery = `
+      SELECT COUNT(*) as total 
+      FROM streets s
+      LEFT JOIN areas a ON s.area_id = a.id
+      LEFT JOIN cities c ON a.city_id = c.id
+      ${whereClause}
+    `;
+    const [{ total }] = await executeQuery(totalQuery, params);
+
+    // Calculate pagination
+    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const totalPages = Math.ceil(total / parseInt(limit));
+
+    // Get streets with pagination
     const streets = await executeQuery(`
       SELECT 
         s.id,
@@ -594,17 +714,19 @@ router.get('/streets', authenticate, authorize('admin'), async (req, res, next) 
       FROM streets s
       LEFT JOIN areas a ON s.area_id = a.id
       LEFT JOIN cities c ON a.city_id = c.id
+      ${whereClause}
       ORDER BY c.title_en ASC, a.title_en ASC, s.title_en ASC
-    `);
+      LIMIT ? OFFSET ?
+    `, [...params, parseInt(limit), offset]);
 
     res.json({
       success: true,
       data: streets,
       pagination: {
-        current: 1,
-        pageSize: streets.length,
-        total: streets.length,
-        pages: 1
+        current: parseInt(page),
+        pageSize: parseInt(limit),
+        total: total,
+        pages: totalPages
       }
     });
   } catch (error) {

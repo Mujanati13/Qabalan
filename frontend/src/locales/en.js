@@ -271,6 +271,8 @@ export const en = {
     saveError: 'Failed to save product',
     statusUpdated: 'Product status updated successfully',
     statusUpdateError: 'Failed to update product status',
+    sort_order: 'Sort Order',
+    sort_order_updated: 'Sort order updated successfully',
     english: 'English',
     arabic: 'Arabic',
     
@@ -315,7 +317,13 @@ export const en = {
     variantAddError: 'Failed to add variants',
     variantDeletedSuccess: 'Variant deleted successfully',
     variantDeleteError: 'Failed to delete variant',
-    deleteVariantConfirm: 'Are you sure you want to delete this variant?'
+    deleteVariantConfirm: 'Are you sure you want to delete this variant?',
+    variantStatusUpdated: 'Variant status updated successfully',
+    variantStatusUpdateError: 'Failed to update variant status',
+    editVariant: 'Edit Variant',
+    updateVariant: 'Update Variant',
+    variantUpdatedSuccess: 'Variant updated successfully',
+    variantUpdateError: 'Failed to update variant'
   },
 
   // Categories
@@ -576,6 +584,7 @@ export const en = {
     details: 'Order Details',
     items: 'items',
     items_count: 'Items',
+    itemsCount: 'Items',
     
     // Order Types
     delivery: 'Delivery',
@@ -632,6 +641,7 @@ export const en = {
     yesterday: 'Yesterday',
     this_week: 'This Week',
     this_month: 'This Month',
+    all_time: 'All Time',
     
     // Statistics
     total_orders: 'Total Orders',
@@ -648,6 +658,13 @@ export const en = {
     subtotal: 'Subtotal',
     delivery_fee: 'Delivery Fee',
     deliveryFee: 'Delivery Fee',
+    orderDateTime: 'Order Date/Time',
+    customerName: 'Customer Name',
+    phoneNumber: 'Phone',
+    email: 'Email',
+    location: 'Location/Address',
+    discount: 'Discount',
+    totalAmount: 'Total Amount',
     clickToEditDeliveryFee: 'Click to edit delivery fee',
     resetDeliveryFee: 'Reset to calculated fee',
     tax_amount: 'Tax Amount',
@@ -1329,6 +1346,9 @@ export const en = {
     isActive: 'Active',
     isActiveHelp: 'Whether this promo code is currently active',
     
+    autoApplyEligible: 'Auto-Apply in Mobile',
+    autoApplyEligibleTooltip: 'Allow this promo code to be automatically detected and suggested in the mobile app',
+    
     // Table Columns
     codeColumn: 'Code',
     titleColumn: 'Title',
@@ -1751,6 +1771,14 @@ export const en = {
     selectLocationFirst: 'Select location on map first',
     selectLocationForDeliveryFee: 'Select location on map for accurate delivery fee',
     manualEntryNote: 'You can still manually enter address information in the Address Details tab.',
+    
+    // Search functionality
+    searchLocation: 'Search Location',
+    searchPlaceholder: 'Enter address or place name',
+    searchForPlaces: 'Search for places',
+    selectFromResults: 'Select from search results',
+    noResultsFound: 'No results found',
+    searchError: 'Error searching for location',
     
     // Navigation
     previous: 'Previous',

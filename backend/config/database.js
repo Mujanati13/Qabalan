@@ -37,7 +37,7 @@ const testConnection = async () => {
 // Execute query with error handling
 const executeQuery = async (query, params = []) => {
   try {
-    const [results] = await pool.execute(query, params);
+    const [results] = await pool.query(query, params);
     return results;
   } catch (error) {
     console.error('Database query error:', error.message);

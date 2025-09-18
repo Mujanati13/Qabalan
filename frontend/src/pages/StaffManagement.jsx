@@ -52,14 +52,19 @@ import {
   ThunderboltOutlined,
   HistoryOutlined,
   ClockCircleOutlined,
-  ClearOutlined
+  ClearOutlined,
+  DownloadOutlined,
+  DownOutlined,
+  ExportOutlined,
+  CheckCircleOutlined,
+  UsergroupAddOutlined
 } from '@ant-design/icons';
 import moment from 'moment';
 import dayjs from 'dayjs';
 import staffRoleService from '../services/staffRoleService';
-import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
 import { useAuth } from '../hooks/useAuth';
+import { exportStaffToExcel } from '../utils/comprehensiveExportUtils';
 
 const { TabPane } = Tabs;
 const { Option } = Select;
@@ -1059,6 +1064,41 @@ const StaffManagement = () => {
     }
   };
 
+  // Comprehensive export functions
+  const handleExportAllStaff = async () => {
+    try {
+      await exportStaffToExcel(staff, roles, 'all');
+    } catch (error) {
+      message.error(error.message || 'Failed to export staff data');
+    }
+  };
+
+  const handleExportActiveStaff = async () => {
+    try {
+      const activeStaff = staff.filter(s => s.is_active);
+      await exportStaffToExcel(activeStaff, roles, 'active');
+    } catch (error) {
+      message.error(error.message || 'Failed to export active staff');
+    }
+  };
+
+  const handleExportByDepartment = async (department) => {
+    try {
+      const deptStaff = staff.filter(s => s.department === department);
+      await exportStaffToExcel(deptStaff, roles, department);
+    } catch (error) {
+      message.error(error.message || `Failed to export ${department} staff`);
+    }
+  };
+
+  const handleExportRoles = async () => {
+    try {
+      await exportStaffToExcel(staff, roles, 'roles');
+    } catch (error) {
+      message.error(error.message || 'Failed to export roles data');
+    }
+  };
+
   // Role assignment functions - Enhanced with advanced features
   const handleAssignRole = (record) => {
     setSelectedStaff(record);
@@ -1709,18 +1749,121 @@ const StaffManagement = () => {
                 </Button>
               )}
               {activeTab === 'staff' && (
-                <ExportButton
-                  {...getStaffExportConfig(staff, staffColumns)}
-                  showFormats={['csv', 'excel']}
-                  size="small"
-                />
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: 'complete',
+                        icon: <DownloadOutlined />,
+                        label: (
+                          <span>
+                            Complete Export
+                            <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                              ({staff.length} staff)
+                            </span>
+                          </span>
+                        ),
+                        onClick: handleExportAllStaff,
+                      },
+                      {
+                        key: 'active',
+                        icon: <CheckCircleOutlined />,
+                        label: (
+                          <span>
+                            Active Staff Only
+                            <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                              ({staff.filter(s => s.is_active).length} staff)
+                            </span>
+                          </span>
+                        ),
+                        onClick: handleExportActiveStaff,
+                      },
+                      {
+                        type: 'divider',
+                      },
+                      {
+                        key: 'by-dept',
+                        icon: <TeamOutlined />,
+                        label: 'By Department',
+                        children: [...new Set(staff.map(s => s.department).filter(Boolean))].map(dept => ({
+                          key: dept,
+                          label: (
+                            <span>
+                              {dept}
+                              <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                ({staff.filter(s => s.department === dept).length})
+                              </span>
+                            </span>
+                          ),
+                          onClick: () => handleExportByDepartment(dept),
+                        })),
+                      },
+                      {
+                        type: 'divider',
+                      },
+                      {
+                        key: 'legacy',
+                        icon: <ExportOutlined />,
+                        label: (
+                          <span style={{ color: '#888' }}>
+                            Basic Export (Legacy)
+                          </span>
+                        ),
+                        onClick: () => {
+                          const config = getStaffExportConfig(staff, staffColumns);
+                          config.exportToExcel && config.exportToExcel();
+                        },
+                      },
+                    ],
+                  }}
+                  trigger={['click']}
+                >
+                  <Button icon={<DownloadOutlined />} size="small">
+                    Export <DownOutlined />
+                  </Button>
+                </Dropdown>
               )}
               {activeTab === 'roles' && (
-                <ExportButton
-                  {...getRolesExportConfig(roles, roleColumns)}
-                  showFormats={['csv', 'excel']}
-                  size="small"
-                />
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: 'complete',
+                        icon: <DownloadOutlined />,
+                        label: (
+                          <span>
+                            Complete Roles Export
+                            <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                              ({roles.length} roles)
+                            </span>
+                          </span>
+                        ),
+                        onClick: handleExportRoles,
+                      },
+                      {
+                        type: 'divider',
+                      },
+                      {
+                        key: 'legacy',
+                        icon: <ExportOutlined />,
+                        label: (
+                          <span style={{ color: '#888' }}>
+                            Basic Export (Legacy)
+                          </span>
+                        ),
+                        onClick: () => {
+                          const config = getRolesExportConfig(roles, roleColumns);
+                          config.exportToExcel && config.exportToExcel();
+                        },
+                      },
+                    ],
+                  }}
+                  trigger={['click']}
+                >
+                  <Button icon={<DownloadOutlined />} size="small">
+                    Export <DownOutlined />
+                  </Button>
+                </Dropdown>
               )}
               <Dropdown
                 overlay={

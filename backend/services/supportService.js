@@ -322,7 +322,9 @@ class SupportService {
       priority = null,
       category = null,
       assigned_admin_id = null,
-      search = null
+      search = null,
+      createdAfter = null,
+      createdBefore = null
     } = options;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
@@ -347,11 +349,23 @@ class SupportService {
     if (assigned_admin_id) {
       whereConditions.push('st.assigned_admin_id = ?');
       queryParams.push(assigned_admin_id);
-    }      if (search) {
-        whereConditions.push('(st.ticket_number LIKE ? OR st.subject LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)');
-        const searchTerm = `%${search}%`;
-        queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
-      }
+    }
+
+    if (createdAfter) {
+      whereConditions.push('st.created_at >= ?');
+      queryParams.push(new Date(createdAfter));
+    }
+
+    if (createdBefore) {
+      whereConditions.push('st.created_at <= ?');
+      queryParams.push(new Date(createdBefore));
+    }
+
+    if (search) {
+      whereConditions.push('(st.ticket_number LIKE ? OR st.subject LIKE ? OR u.first_name LIKE ? OR u.last_name LIKE ?)');
+      const searchTerm = `%${search}%`;
+      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+    }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 

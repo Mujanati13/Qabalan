@@ -92,8 +92,8 @@ app.use(cors({
     /^https?:\/\/localhost:\d+$/, // Any localhost port
   ],
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with']
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-requested-with', 'Accept-Language']
 }));
 
 // Compression middleware
@@ -119,6 +119,15 @@ app.use((req, res, next) => {
 
 // Health check
 app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Health check
+app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),

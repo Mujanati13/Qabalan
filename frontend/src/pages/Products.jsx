@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   Table,
@@ -56,6 +56,7 @@ import productsService from "../services/productsService";
 import categoriesService from "../services/categoriesService";
 import ExportButton from "../components/common/ExportButton";
 import { useExportConfig } from "../hooks/useExportConfig";
+import { exportProductsToExcel } from '../utils/comprehensiveExportUtils';
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const { Title, Text } = Typography;
@@ -119,6 +120,7 @@ const Products = () => {
       "branches.productAddedToBranches": "Product added to branches successfully",
       "branches.productRemovedFromBranch": "Product removed from branch successfully",
       "branches.stockUpdated": "Stock quantity updated successfully",
+      "branches.availabilityUpdated": "Availability status updated successfully",
       // Bulk branch operations
       "branches.branchActions": "Branch Actions",
       "branches.addToBranches": "Add to Branches", 
@@ -187,6 +189,9 @@ const Products = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [productVariants, setProductVariants] = useState([]);
   const [variantForm] = Form.useForm();
+  const [editingVariant, setEditingVariant] = useState(null);
+  const [isEditVariantModalVisible, setIsEditVariantModalVisible] = useState(false);
+  const [editVariantForm] = Form.useForm();
 
   // Branch-related state
   const [branches, setBranches] = useState([]);
@@ -464,6 +469,10 @@ const Products = () => {
 
   const handleAddProductToBranch = async (values) => {
     try {
+      console.log('=== Add Product to Branch Debug ===');
+      console.log('Form values:', values);
+      console.log('Current productBranches before API call:', productBranches);
+      
       if (values.branches && values.branches.length > 0) {
         // Validate data before sending
         const validBranches = values.branches.filter(branch => 
@@ -472,23 +481,34 @@ const Products = () => {
           branch.stock_quantity >= 0
         );
 
+        console.log('Valid branches to send:', validBranches);
+
         if (validBranches.length === 0) {
           message.error('Please select at least one branch with valid stock quantity');
           return;
         }
 
         // Send the branches array as expected by the API
-        await api.post(`/products/${selectedProduct.id}/branches`, {
+        const response = await api.post(`/products/${selectedProduct.id}/branches`, {
           branches: validBranches
         });
+        
+        console.log('API Response:', response.data);
         message.success(translatedT('branches.productAddedToBranches'));
-        loadProductBranches(selectedProduct.id);
+        
+        console.log('Reloading product branches...');
+        await loadProductBranches(selectedProduct.id);
+        console.log('Product branches after reload:', productBranches);
+        
         productBranchForm.resetFields();
+        console.log('=== Add Product to Branch Complete ===');
       } else {
         message.error('Please add at least one branch');
       }
     } catch (error) {
+      console.error('=== Add Product to Branch Error ===');
       console.error('Error adding product to branches:', error);
+      console.error('Error details:', error.response?.data);
       handleApiError(error, 'Failed to add product to branches');
     }
   };
@@ -512,6 +532,27 @@ const Products = () => {
     }
   };
 
+  // Simple direct product stock update function
+  const handleUpdateProductStock = async (productId, stockQuantity) => {
+    try {
+      console.log('Updating product stock directly for product ID:', productId);
+      console.log('New stock quantity:', stockQuantity);
+      
+      await api.put(`/products/${productId}/stock`, {
+        stock_quantity: stockQuantity
+      });
+      message.success('Stock quantity updated successfully');
+      
+      // Reload products list to reflect changes
+      loadProducts();
+    } catch (error) {
+      console.error('Error updating stock:', error);
+      console.error('Error details:', error.response?.data);
+      handleApiError(error, 'Failed to update stock quantity');
+    }
+  };
+
+  // Keep the existing branch stock function for compatibility with product details view
   const handleUpdateProductBranchStock = async (branchInventoryRecord, stockQuantity) => {
     try {
       // Use the branch_id (not the inventory ID) for the update operation
@@ -526,11 +567,45 @@ const Products = () => {
         stock_quantity: stockQuantity
       });
       message.success(translatedT('branches.stockUpdated'));
+      
+      // Reload both product branches and main products list to reflect changes
       loadProductBranches(selectedProduct.id);
+      loadProducts(); // Refresh main products list with updated stock quantities
     } catch (error) {
       console.error('Error updating stock:', error);
       console.error('Error details:', error.response?.data);
       handleApiError(error, 'Failed to update stock quantity');
+    }
+  };
+
+  const handleUpdateProductBranchAvailability = async (branchInventoryRecord, isAvailable) => {
+    try {
+      // Use the branch_id (not the inventory ID) for the update operation
+      const branchId = branchInventoryRecord.branch_id;
+      
+      console.log('=== Availability Update Debug ===');
+      console.log('Updating product availability for branch ID:', branchId);
+      console.log('Product ID:', selectedProduct.id);
+      console.log('New availability status:', isAvailable);
+      console.log('Full record:', branchInventoryRecord);
+      console.log('API URL:', `/products/${selectedProduct.id}/branches/${branchId}`);
+      
+      const response = await api.put(`/products/${selectedProduct.id}/branches/${branchId}`, {
+        is_available: isAvailable
+      });
+      
+      console.log('API Response:', response.data);
+      message.success(translatedT('branches.availabilityUpdated') || 'Availability updated successfully');
+      
+      // Reload product branches to reflect changes
+      await loadProductBranches(selectedProduct.id);
+      console.log('=== Availability Update Complete ===');
+    } catch (error) {
+      console.error('=== Availability Update Error ===');
+      console.error('Error updating availability:', error);
+      console.error('Error details:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+      handleApiError(error, 'Failed to update availability status');
     }
   };
 
@@ -737,9 +812,19 @@ const Products = () => {
     setIsModalVisible(true);
   };
 
-  const handleView = (product) => {
-    setViewingProduct(product);
-    setIsViewModalVisible(true);
+  const handleView = async (product) => {
+    try {
+      // Fetch fresh product data including current stock quantities
+      const response = await api.get(`/products/${product.id}`);
+      setViewingProduct(response.data.data);
+      setIsViewModalVisible(true);
+    } catch (error) {
+      console.error('Error fetching product details:', error);
+      // Fallback to cached data if API fails
+      setViewingProduct(product);
+      setIsViewModalVisible(true);
+      handleApiError(error, 'Failed to load product details');
+    }
   };
 
   const handleDelete = async (id) => {
@@ -759,6 +844,23 @@ const Products = () => {
   const handleProductSortOrderChange = async (productId, direction) => {
     try {
       await productsService.adjustSortOrder(productId, direction);
+      message.success(t("products.sort_order_updated") || 'Sort order updated successfully');
+      loadProducts(); // Refresh the list to show new order
+    } catch (error) {
+      message.error(error.message || 'Failed to update sort order');
+    }
+  };
+
+  // Handle direct sort order input change
+  const handleDirectSortOrderChange = async (productId, newSortOrder) => {
+    try {
+      const numericSortOrder = parseInt(newSortOrder);
+      if (isNaN(numericSortOrder) || numericSortOrder < 0) {
+        message.error(t("products.invalid_sort_order") || 'Sort order must be a non-negative number');
+        return;
+      }
+      
+      await productsService.updateSortOrder(productId, numericSortOrder);
       message.success(t("products.sort_order_updated") || 'Sort order updated successfully');
       loadProducts(); // Refresh the list to show new order
     } catch (error) {
@@ -829,39 +931,58 @@ const Products = () => {
     });
   };
 
-  const handleBulkExport = () => {
+  const handleBulkExport = async () => {
     if (!hasSelected) return;
     
-    const selectedProducts = products.filter(product => selectedRowKeys.includes(product.id));
-    const csvData = selectedProducts.map(product => ({
-      'Product ID': product.id,
-      'Name (EN)': product.title_en,
-      'Name (AR)': product.title_ar,
-      'SKU': product.sku,
-      'Category': product.category_title_en || product.category_title_ar,
-      'Price': product.base_price,
-      'Sale Price': product.sale_price,
-      'Stock': product.stock_quantity,
-      'Status': product.is_active ? 'Active' : 'Inactive',
-      'Created': new Date(product.created_at).toLocaleDateString()
-    }));
-    
-    const csvContent = [
-      Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).map(val => `"${val || ''}"`).join(','))
-    ].join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `products_export_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    message.success(t('products.exported_successfully', { count: selectedRowKeys.length }));
+    try {
+      message.loading('Preparing comprehensive products export...', 0);
+      
+      const selectedProducts = products.filter(product => selectedRowKeys.includes(product.id));
+      
+      // Use comprehensive export utility
+      await exportProductsToExcel(selectedProducts, {
+        includeInventory: true,
+        includeVariants: true,
+        includeBranches: true,
+        filename: `FECS_Products_Selected_${selectedProducts.length}_Items`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Products export error:', error);
+      message.error('Failed to export selected products. Please try again.');
+    }
+  };
+
+  // Export all products with comprehensive data
+  const handleExportAll = async () => {
+    try {
+      if (!products || products.length === 0) {
+        message.warning('No products to export');
+        return;
+      }
+
+      message.loading('Preparing complete products export...', 0);
+      
+      // Use comprehensive export utility for all products
+      await exportProductsToExcel(products, {
+        includeInventory: true,
+        includeVariants: true,
+        includeBranches: true,
+        filename: `FECS_Products_Complete_${products.length}_Products`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Complete products export error:', error);
+      message.error('Failed to export all products. Please try again.');
+    }
   };
 
   const clearSelection = () => {
@@ -1220,6 +1341,52 @@ const Products = () => {
     }
   };
 
+  const handleToggleVariantStatus = async (variantId) => {
+    try {
+      await productsService.toggleVariantStatus(selectedProduct.id, variantId);
+      message.success(t('products.variantStatusUpdated'));
+      loadProductVariants(selectedProduct.id);
+    } catch (error) {
+      message.error(
+        error.response?.data?.message || 
+        error.message || 
+        t('products.variantStatusUpdateError')
+      );
+    }
+  };
+
+  const handleEditVariant = (variant) => {
+    setEditingVariant(variant);
+    editVariantForm.setFieldsValue({
+      variant_name: variant.variant_name,
+      variant_value: variant.variant_value,
+      price_modifier: parseFloat(variant.price_modifier) || 0,
+      stock_quantity: variant.stock_quantity,
+      sku: variant.sku,
+      is_active: !!variant.is_active
+    });
+    setIsEditVariantModalVisible(true);
+  };
+
+  const handleUpdateVariant = async (values) => {
+    if (!editingVariant) return;
+    
+    try {
+      await productsService.updateProductVariant(selectedProduct.id, editingVariant.id, values);
+      message.success(t('products.variantUpdatedSuccess'));
+      loadProductVariants(selectedProduct.id);
+      setIsEditVariantModalVisible(false);
+      setEditingVariant(null);
+      editVariantForm.resetFields();
+    } catch (error) {
+      message.error(
+        error.response?.data?.message || 
+        error.message || 
+        t('products.variantUpdateError')
+      );
+    }
+  };
+
   const toggleProductStatus = async (productId) => {
     try {
       setSwitchLoading(prev => ({ ...prev, [productId]: true }));
@@ -1237,9 +1404,18 @@ const Products = () => {
     }
   };
 
-  // Since filtering is now done on the backend (search, category, branch, status),
-  // we can use products directly from the API response
-  const filteredProducts = Array.isArray(products) ? products : [];
+  // Apply filtering on the products data
+  const filteredProducts = useMemo(() => {
+    if (!Array.isArray(products)) return [];
+    
+    return products.filter(product => {
+      // Status filter
+      if (statusFilter === "active" && !product.is_active) return false;
+      if (statusFilter === "inactive" && product.is_active) return false;
+      
+      return true;
+    });
+  }, [products, statusFilter]);
 
   // Table sorting hook
   const {
@@ -1351,12 +1527,29 @@ const Products = () => {
       title: t("products.sort_order") || "Sort Order",
       dataIndex: "sort_order",
       key: "sort_order",
-      width: 120,
+      width: 150,
       responsive: ["md"],
       ...getColumnSortProps('sort_order', 'number'),
       render: (sortOrder, record) => (
-        <Space size="small">
-          <span>{sortOrder || 0}</span>
+        <Space size="small" direction="vertical" style={{ width: '100%' }}>
+          <InputNumber
+            size="small"
+            value={sortOrder || 0}
+            min={0}
+            max={9999}
+            style={{ width: '80px' }}
+            onChange={(value) => {
+              if (value !== null && value !== undefined && value !== sortOrder) {
+                handleDirectSortOrderChange(record.id, value);
+              }
+            }}
+            onPressEnter={(e) => {
+              const value = parseInt(e.target.value);
+              if (!isNaN(value) && value !== sortOrder) {
+                handleDirectSortOrderChange(record.id, value);
+              }
+            }}
+          />
           <div>
             <Button
               type="text"
@@ -1364,14 +1557,16 @@ const Products = () => {
               icon={<span style={{ fontSize: '10px' }}>▲</span>}
               onClick={() => handleProductSortOrderChange(record.id, 'decrement')}
               disabled={(sortOrder || 0) <= 0}
-              style={{ padding: '0 2px', height: '16px', lineHeight: '16px' }}
+              style={{ padding: '0 4px', height: '16px', lineHeight: '16px' }}
+              title={t("products.move_up") || "Move up"}
             />
             <Button
               type="text"
               size="small"
               icon={<span style={{ fontSize: '10px' }}>▼</span>}
               onClick={() => handleProductSortOrderChange(record.id, 'increment')}
-              style={{ padding: '0 2px', height: '16px', lineHeight: '16px' }}
+              style={{ padding: '0 4px', height: '16px', lineHeight: '16px' }}
+              title={t("products.move_down") || "Move down"}
             />
           </div>
         </Space>
@@ -1403,6 +1598,51 @@ const Products = () => {
                 ${Number(basePrice).toFixed(2)}
               </div>
             )}
+          </div>
+        );
+      },
+    },
+    {
+      title: "Stock Qty",
+      dataIndex: "stock_quantity",
+      key: "stock_quantity",
+      width: 120,
+      responsive: ["md"],
+      ...getColumnSortProps('stock_quantity', 'number'),
+      render: (stockQuantity, record) => {
+        const qty = stockQuantity || 0;
+        const minLevel = record.min_stock_level || 0;
+        const isLowStock = qty <= minLevel && minLevel > 0;
+        
+        return (
+          <div style={{ textAlign: 'center' }}>
+            <InputNumber
+              size="small"
+              value={qty}
+              min={0}
+              style={{ 
+                width: 70,
+                color: qty <= 0 ? '#ff4d4f' : isLowStock ? '#fa8c16' : '#52c41a'
+              }}
+              onChange={(newValue) => {
+                if (newValue !== null && newValue !== qty) {
+                  handleUpdateProductStock(record.id, newValue);
+                }
+              }}
+              onPressEnter={(e) => e.target.blur()}
+            />
+            <div style={{ marginTop: 2 }}>
+              {isLowStock && qty > 0 && (
+                <Tag color="orange" size="small" style={{ fontSize: '10px' }}>
+                  Low
+                </Tag>
+              )}
+              {qty <= 0 && (
+                <Tag color="red" size="small" style={{ fontSize: '10px' }}>
+                  Out
+                </Tag>
+              )}
+            </div>
           </div>
         );
       },
@@ -1717,19 +1957,29 @@ const Products = () => {
                   >
                     {t("products.add")}
                   </Menu.Item>
-                  <Menu.Item key="export">
-                    <ExportButton
-                      {...getProductsExportConfig(filteredProducts, columns)}
-                      style={{ border: 'none', padding: 0, background: 'transparent' }}
-                      showFormats={['csv', 'excel']}
-                      type="text"
+                  <Menu.SubMenu key="export" title={
+                    <Space>
+                      <UploadOutlined />
+                      {t("common.export")} ({filteredProducts.length} items)
+                    </Space>
+                  }>
+                    <Menu.Item 
+                      key="export-all" 
+                      onClick={handleExportAll}
+                      icon={<UploadOutlined style={{ color: '#52c41a' }} />}
                     >
-                      <Space>
-                        <UploadOutlined />
-                        {t("common.export")}
-                      </Space>
-                    </ExportButton>
-                  </Menu.Item>
+                      📊 Complete Products Export
+                    </Menu.Item>
+                    <Menu.Item 
+                      key="export-selected" 
+                      onClick={handleBulkExport}
+                      disabled={!hasSelected}
+                      icon={<UploadOutlined style={{ color: '#1890ff' }} />}
+                    >
+                      📋 Export Selected ({selectedRowKeys.length})
+                    </Menu.Item>
+                    <Menu.Divider />
+                  </Menu.SubMenu>
                 </Menu>
               }
               trigger={['click']}
@@ -2102,8 +2352,8 @@ const Products = () => {
             <Col xs={24} sm={12} md={8}>
               <Form.Item
                 name="stock_quantity"
-                label={t("products.stockQuantity")}
-                rules={[{ required: true, message: t("products.stockQuantityRequired") }]}
+                label={translatedT("branches.stockQuantity")}
+                rules={[{ required: true, message: translatedT("branches.stockQuantityRequired") }]}
               >
                 <InputNumber
                   min={0}
@@ -2210,7 +2460,12 @@ const Products = () => {
       </Modal>
 
       <Modal
-        title={t("products.view")}
+        title={
+          <Space>
+            <EyeOutlined />
+            {t("products.view")} - {viewingProduct?.title_en || viewingProduct?.name || "Product Details"}
+          </Space>
+        }
         open={isViewModalVisible}
         onCancel={() => setIsViewModalVisible(false)}
         footer={[
@@ -2218,185 +2473,336 @@ const Products = () => {
             {t("common.close")}
           </Button>,
         ]}
-        width="90%"
-        style={{ maxWidth: 800, top: 20 }}
+        width="95%"
+        style={{ maxWidth: 1200, top: 20 }}
         destroyOnClose
       >
         {viewingProduct && (
           <div>
-            <Row gutter={[16, 24]} style={{ marginBottom: "24px" }}>
-              <Col xs={24} sm={8} md={8}>
-                <div style={{ textAlign: "center" }}>
-                  {viewingProduct.main_image ? (
-                    <img
-                      src={getImageUrl(viewingProduct.main_image)}
-                      alt="Product"
+            {/* Main Product Info */}
+            <Row gutter={[24, 24]} style={{ marginBottom: "24px" }}>
+              <Col xs={24} md={8}>
+                <Card size="small" title="Product Image">
+                  <div style={{ textAlign: "center" }}>
+                    {viewingProduct.main_image ? (
+                      <img
+                        src={getImageUrl(viewingProduct.main_image)}
+                        alt="Product"
+                        style={{
+                          width: "100%",
+                          maxWidth: "250px",
+                          height: "auto",
+                          borderRadius: "8px",
+                          border: "1px solid #f0f0f0",
+                        }}
+                        onError={(e) => {
+                          e.target.style.display = "none";
+                          e.target.nextSibling.style.display = "flex";
+                        }}
+                      />
+                    ) : null}
+                    <div
                       style={{
-                        width: "100%",
-                        maxWidth: "200px",
-                        height: "auto",
-                        borderRadius: "8px",
+                        display: viewingProduct.main_image ? "none" : "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        height: 200,
                         border: "1px solid #f0f0f0",
+                        borderRadius: "8px",
+                        color: "#ccc",
                       }}
-                      onError={(e) => {
-                        e.target.style.display = "none";
-                        e.target.nextSibling.style.display = "flex";
-                      }}
-                    />
-                  ) : null}
-                  <div
-                    style={{
-                      display: viewingProduct.main_image ? "none" : "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      height: 200,
-                      border: "1px solid #f0f0f0",
-                      borderRadius: "8px",
-                      color: "#ccc",
-                    }}
-                  >
-                    <UploadOutlined style={{ fontSize: "48px" }} />
-                  </div>
-                </div>
-              </Col>
-              <Col xs={24} sm={16} md={16}>
-                <Title
-                  level={3}
-                  style={{
-                    marginBottom: "16px",
-                    fontSize: "clamp(1.2rem, 3vw, 1.5rem)",
-                  }}
-                >
-                  {viewingProduct.title_en ||
-                    viewingProduct.name ||
-                    "Unnamed Product"}
-                </Title>
-                {viewingProduct.title_ar && (
-                  <Title
-                    level={4}
-                    style={{
-                      color: "#666",
-                      marginBottom: "16px",
-                      fontSize: "clamp(1rem, 2.5vw, 1.2rem)",
-                    }}
-                  >
-                    {viewingProduct.title_ar}
-                  </Title>
-                )}
-
-                <Row gutter={[16, 12]} style={{ marginBottom: "12px" }}>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.category")}: </Text>
-                    <Text>
-                      {viewingProduct.category_title_en ||
-                        viewingProduct.category_name ||
-                        "Uncategorized"}
-                    </Text>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.sku")}: </Text>
-                    <Text>{viewingProduct.sku || "N/A"}</Text>
-                  </Col>
-                </Row>
-
-                <Row gutter={[16, 12]} style={{ marginBottom: "12px" }}>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.basePrice")}: </Text>
-                    <Text>
-                      ${Number(viewingProduct.base_price || 0).toFixed(2)}
-                    </Text>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.salePrice")}: </Text>
-                    <Text>
-                      {viewingProduct.sale_price
-                        ? `$${Number(viewingProduct.sale_price).toFixed(2)}`
-                        : "N/A"}
-                    </Text>
-                  </Col>
-                </Row>
-
-                <Row gutter={[16, 12]} style={{ marginBottom: "12px" }}>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.loyaltyPoints")}: </Text>
-                    <Tag color="blue">
-                      {viewingProduct.loyalty_points || 0}{" "}
-                      {t("products.points")}
-                    </Tag>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.weight")}: </Text>
-                    <Text>
-                      {viewingProduct.weight
-                        ? `${viewingProduct.weight} ${
-                            viewingProduct.weight_unit || "g"
-                          }`
-                        : "N/A"}
-                    </Text>
-                  </Col>
-                </Row>
-
-                <Row gutter={[16, 12]} style={{ marginBottom: "12px" }}>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.status")}: </Text>
-                    <Tag color={(viewingProduct.is_active === 1 || viewingProduct.is_active === true || viewingProduct.is_active === "1") ? "green" : "red"}>
-                      {(viewingProduct.is_active === 1 || viewingProduct.is_active === true || viewingProduct.is_active === "1")
-                        ? t("products.status_active")
-                        : t("products.status_inactive")}
-                    </Tag>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Text strong>{t("products.stockStatus")}: </Text>
-                    <Tag
-                      color={
-                        viewingProduct.stock_status === "in_stock"
-                          ? "green"
-                          : viewingProduct.stock_status === "limited"
-                          ? "orange"
-                          : "red"
-                      }
                     >
-                      {viewingProduct.stock_status === "in_stock"
-                        ? t("products.inStock")
-                        : viewingProduct.stock_status === "limited"
-                        ? t("products.limitedStock")
-                        : t("products.outOfStock")}
-                    </Tag>
-                  </Col>
-                </Row>
+                      <UploadOutlined style={{ fontSize: "48px" }} />
+                    </div>
+                  </div>
+                </Card>
+              </Col>
+              
+              <Col xs={24} md={16}>
+                <Card size="small" title="Basic Information">
+                  <Title level={4} style={{ marginTop: 0, marginBottom: "16px" }}>
+                    {viewingProduct.title_en || viewingProduct.name || "Unnamed Product"}
+                  </Title>
+                  {viewingProduct.title_ar && (
+                    <Title level={5} style={{ color: "#666", marginBottom: "16px" }}>
+                      {viewingProduct.title_ar}
+                    </Title>
+                  )}
 
-                {viewingProduct.is_featured && (
-                  <Row gutter={[16, 12]} style={{ marginBottom: "12px" }}>
-                    <Col span={24}>
-                      <Tag color="gold">{t("products.featured")}</Tag>
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Product ID: </Text>
+                      <Text code>{viewingProduct.id}</Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.sku")}: </Text>
+                      <Text code>{viewingProduct.sku || "N/A"}</Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.category")}: </Text>
+                      <Tag color="blue">
+                        {viewingProduct.category_title_en ||
+                          viewingProduct.category_name ||
+                          "Uncategorized"}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Sort Order: </Text>
+                      <Text>{viewingProduct.sort_order || 0}</Text>
                     </Col>
                   </Row>
-                )}
+                </Card>
               </Col>
             </Row>
 
-            {(viewingProduct.description_en ||
-              viewingProduct.description_ar) && (
-              <div>
-                <Title
-                  level={4}
-                  style={{ fontSize: "clamp(1rem, 2.5vw, 1.2rem)" }}
-                >
-                  {t("products.description")}
-                </Title>
-                {viewingProduct.description_en && (
-                  <div style={{ marginBottom: "12px" }}>
-                    <Text strong>{t("products.english")}: </Text>
-                    <Text>{viewingProduct.description_en}</Text>
-                  </div>
-                )}
-                {viewingProduct.description_ar && (
-                  <div>
-                    <Text strong>{t("products.arabic")}: </Text>
-                    <Text>{viewingProduct.description_ar}</Text>
-                  </div>
-                )}
-              </div>
+            {/* Pricing and Stock Information */}
+            <Row gutter={[24, 24]} style={{ marginBottom: "24px" }}>
+              <Col xs={24} md={12}>
+                <Card size="small" title="💰 Pricing Information">
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={12}>
+                      <Statistic
+                        title={t("products.basePrice")}
+                        value={Number(viewingProduct.base_price || 0)}
+                        precision={2}
+                        prefix="$"
+                        valueStyle={{ color: '#1890ff' }}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Statistic
+                        title={t("products.salePrice")}
+                        value={viewingProduct.sale_price ? Number(viewingProduct.sale_price) : 0}
+                        precision={2}
+                        prefix="$"
+                        valueStyle={{ color: viewingProduct.sale_price ? '#52c41a' : '#999' }}
+                      />
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.loyaltyPoints")}: </Text>
+                      <Tag color="purple" style={{ fontSize: '14px' }}>
+                        {viewingProduct.loyalty_points || 0} {t("products.points")}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Price Status: </Text>
+                      <Tag color={viewingProduct.sale_price ? "green" : "default"}>
+                        {viewingProduct.sale_price ? "On Sale" : "Regular Price"}
+                      </Tag>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+
+              <Col xs={24} md={12}>
+                <Card size="small" title="📦 Stock & Inventory">
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Stock Quantity: </Text>
+                      <Text style={{ 
+                        fontSize: '16px', 
+                        fontWeight: 'bold',
+                        color: (viewingProduct.stock_quantity || 0) > 0 ? '#52c41a' : '#ff4d4f'
+                      }}>
+                        {viewingProduct.stock_quantity || 0} units
+                      </Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Min Stock Level: </Text>
+                      <Text>{viewingProduct.min_stock_level || 0} units</Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.stockStatus")}: </Text>
+                      <Tag
+                        color={
+                          viewingProduct.stock_status === "in_stock"
+                            ? "green"
+                            : viewingProduct.stock_status === "limited"
+                            ? "orange"
+                            : "red"
+                        }
+                        style={{ fontSize: '12px' }}
+                      >
+                        {viewingProduct.stock_status === "in_stock"
+                          ? t("products.inStock")
+                          : viewingProduct.stock_status === "limited"
+                          ? t("products.limitedStock")
+                          : t("products.outOfStock")}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Stock Alert: </Text>
+                      <Tag color={(viewingProduct.stock_quantity || 0) <= (viewingProduct.min_stock_level || 0) ? "red" : "green"}>
+                        {(viewingProduct.stock_quantity || 0) <= (viewingProduct.min_stock_level || 0) ? "Low Stock" : "Adequate"}
+                      </Tag>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Physical Properties and Status */}
+            <Row gutter={[24, 24]} style={{ marginBottom: "24px" }}>
+              <Col xs={24} md={12}>
+                <Card size="small" title="📏 Physical Properties">
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.weight")}: </Text>
+                      <Text>
+                        {viewingProduct.weight
+                          ? `${viewingProduct.weight} ${viewingProduct.weight_unit || "g"}`
+                          : "N/A"}
+                      </Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Dimensions: </Text>
+                      <Text>
+                        {viewingProduct.length && viewingProduct.width && viewingProduct.height
+                          ? `${viewingProduct.length} × ${viewingProduct.width} × ${viewingProduct.height} ${viewingProduct.dimension_unit || "cm"}`
+                          : "N/A"}
+                      </Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Volume: </Text>
+                      <Text>
+                        {viewingProduct.length && viewingProduct.width && viewingProduct.height
+                          ? `${(viewingProduct.length * viewingProduct.width * viewingProduct.height).toFixed(2)} ${viewingProduct.dimension_unit || "cm"}³`
+                          : "N/A"}
+                      </Text>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Perishable: </Text>
+                      <Tag color={viewingProduct.is_perishable ? "orange" : "default"}>
+                        {viewingProduct.is_perishable ? "Yes" : "No"}
+                      </Tag>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+
+              <Col xs={24} md={12}>
+                <Card size="small" title="⚙️ Status & Settings">
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={12}>
+                      <Text strong>{t("products.status")}: </Text>
+                      <Tag color={(viewingProduct.is_active === 1 || viewingProduct.is_active === true || viewingProduct.is_active === "1") ? "green" : "red"}>
+                        {(viewingProduct.is_active === 1 || viewingProduct.is_active === true || viewingProduct.is_active === "1")
+                          ? t("products.status_active")
+                          : t("products.status_inactive")}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Featured: </Text>
+                      <Tag color={viewingProduct.is_featured ? "gold" : "default"}>
+                        {viewingProduct.is_featured ? "Featured" : "Regular"}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Digital Product: </Text>
+                      <Tag color={viewingProduct.is_digital ? "blue" : "default"}>
+                        {viewingProduct.is_digital ? "Digital" : "Physical"}
+                      </Tag>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Text strong>Requires Shipping: </Text>
+                      <Tag color={viewingProduct.requires_shipping === false ? "orange" : "green"}>
+                        {viewingProduct.requires_shipping === false ? "No Shipping" : "Shipping Required"}
+                      </Tag>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Timestamps */}
+            <Row gutter={[24, 24]} style={{ marginBottom: "24px" }}>
+              <Col xs={24}>
+                <Card size="small" title="📅 Timeline Information">
+                  <Row gutter={[16, 12]}>
+                    <Col xs={24} sm={8}>
+                      <Text strong>Created: </Text>
+                      <Text>{viewingProduct.created_at ? new Date(viewingProduct.created_at).toLocaleString() : "N/A"}</Text>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Text strong>Last Updated: </Text>
+                      <Text>{viewingProduct.updated_at ? new Date(viewingProduct.updated_at).toLocaleString() : "N/A"}</Text>
+                    </Col>
+                    <Col xs={24} sm={8}>
+                      <Text strong>Available Since: </Text>
+                      <Text>{viewingProduct.availability_date ? new Date(viewingProduct.availability_date).toLocaleDateString() : "Immediately"}</Text>
+                    </Col>
+                  </Row>
+                </Card>
+              </Col>
+            </Row>
+
+            {/* Description */}
+            {(viewingProduct.description_en || viewingProduct.description_ar) && (
+              <Row gutter={[24, 24]} style={{ marginBottom: "24px" }}>
+                <Col xs={24}>
+                  <Card size="small" title="📝 Description">
+                    {viewingProduct.description_en && (
+                      <div style={{ marginBottom: "16px" }}>
+                        <Text strong>English Description:</Text>
+                        <div style={{ 
+                          marginTop: 8, 
+                          padding: 12, 
+                          background: '#fafafa', 
+                          borderRadius: 6,
+                          border: '1px solid #f0f0f0'
+                        }}>
+                          <Text>{viewingProduct.description_en}</Text>
+                        </div>
+                      </div>
+                    )}
+                    {viewingProduct.description_ar && (
+                      <div>
+                        <Text strong>Arabic Description:</Text>
+                        <div style={{ 
+                          marginTop: 8, 
+                          padding: 12, 
+                          background: '#fafafa', 
+                          borderRadius: 6,
+                          border: '1px solid #f0f0f0',
+                          direction: 'rtl'
+                        }}>
+                          <Text>{viewingProduct.description_ar}</Text>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                </Col>
+              </Row>
+            )}
+
+            {/* Additional Images */}
+            {viewingProduct.additional_images && viewingProduct.additional_images.length > 0 && (
+              <Row gutter={[24, 24]}>
+                <Col xs={24}>
+                  <Card size="small" title="🖼️ Additional Images">
+                    <Row gutter={[16, 16]}>
+                      {viewingProduct.additional_images.map((image, index) => (
+                        <Col xs={12} sm={8} md={6} lg={4} key={index}>
+                          <img
+                            src={getImageUrl(image)}
+                            alt={`Additional ${index + 1}`}
+                            style={{
+                              width: "100%",
+                              height: "120px",
+                              objectFit: "cover",
+                              borderRadius: "6px",
+                              border: "1px solid #f0f0f0",
+                            }}
+                            onError={(e) => {
+                              e.target.style.display = "none";
+                            }}
+                          />
+                        </Col>
+                      ))}
+                    </Row>
+                  </Card>
+                </Col>
+              </Row>
             )}
           </div>
         )}
@@ -2507,6 +2913,20 @@ const Products = () => {
                             <Input placeholder={t("products.variantSkuPlaceholder")} />
                           </Form.Item>
                         </Col>
+                        <Col xs={24} sm={4} md={2}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'is_active']}
+                            label={t("common.status")}
+                            valuePropName="checked"
+                            initialValue={true}
+                          >
+                            <Switch
+                              checkedChildren={t("common.active")}
+                              unCheckedChildren={t("common.inactive")}
+                            />
+                          </Form.Item>
+                        </Col>
                         <Col xs={24} sm={2} md={1}>
                           <Form.Item label=" ">
                             <Button
@@ -2588,23 +3008,48 @@ const Products = () => {
                   render: (value) => value || '-',
                 },
                 {
+                  title: t("common.status"),
+                  dataIndex: "is_active",
+                  key: "is_active",
+                  width: 80,
+                  render: (isActive, record) => (
+                    <Switch
+                      checked={!!isActive}
+                      onChange={() => handleToggleVariantStatus(record.id)}
+                      size="small"
+                      checkedChildren={t("common.active")}
+                      unCheckedChildren={t("common.inactive")}
+                    />
+                  ),
+                },
+                {
                   title: t("common.actions"),
                   key: "actions",
-                  width: 100,
+                  width: 150,
                   render: (_, record) => (
-                    <Popconfirm
-                      title={t("products.deleteVariantConfirm")}
-                      onConfirm={() => handleDeleteVariant(record.id)}
-                      okText={t("common.yes")}
-                      cancelText={t("common.no")}
-                    >
+                    <Space size="small">
                       <Button
                         type="text"
-                        danger
                         size="small"
-                        icon={<DeleteOutlined />}
+                        icon={<EditOutlined />}
+                        onClick={() => handleEditVariant(record)}
+                        title={t("common.edit")}
                       />
-                    </Popconfirm>
+                      <Popconfirm
+                        title={t("products.deleteVariantConfirm")}
+                        onConfirm={() => handleDeleteVariant(record.id)}
+                        okText={t("common.yes")}
+                        cancelText={t("common.no")}
+                      >
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          title={t("common.delete")}
+                        />
+                      </Popconfirm>
+                    </Space>
                   ),
                 },
               ]}
@@ -2617,6 +3062,125 @@ const Products = () => {
             </div>
           )}
         </Card>
+      </Modal>
+
+      {/* Edit Variant Modal */}
+      <Modal
+        title={
+          <Space>
+            <EditOutlined />
+            {t("products.editVariant")}
+          </Space>
+        }
+        open={isEditVariantModalVisible}
+        onCancel={() => {
+          setIsEditVariantModalVisible(false);
+          setEditingVariant(null);
+          editVariantForm.resetFields();
+        }}
+        footer={null}
+        width={600}
+        destroyOnClose
+      >
+        <Form
+          form={editVariantForm}
+          layout="vertical"
+          onFinish={handleUpdateVariant}
+        >
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="variant_name"
+                label={t("products.variantName")}
+                rules={[{ required: true, message: t("products.variantNameRequired") }]}
+              >
+                <Select placeholder={t("products.selectVariantType")}>
+                  <Option value="Size">{t("products.size")}</Option>
+                  <Option value="Color">{t("products.color")}</Option>
+                  <Option value="Material">{t("products.material")}</Option>
+                  <Option value="Style">{t("products.style")}</Option>
+                  <Option value="Weight">{t("products.weight")}</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="variant_value"
+                label={t("products.variantValue")}
+                rules={[{ required: true, message: t("products.variantValueRequired") }]}
+              >
+                <Input placeholder={t("products.variantValuePlaceholder")} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} sm={8}>
+              <Form.Item
+                name="price_modifier"
+                label={t("products.priceModifier")}
+              >
+                <InputNumber 
+                  style={{ width: '100%' }}
+                  placeholder="0.00"
+                  precision={2}
+                  addonBefore="$"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item
+                name="stock_quantity"
+                label={t("products.stock")}
+                rules={[{ required: true, message: t("products.stockRequired") }]}
+              >
+                <InputNumber 
+                  style={{ width: '100%' }}
+                  min={0}
+                  placeholder="0"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={8}>
+              <Form.Item
+                name="sku"
+                label={t("products.variantSku")}
+              >
+                <Input placeholder={t("products.variantSkuPlaceholder")} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="is_active"
+                label={t("common.status")}
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={t("common.active")}
+                  unCheckedChildren={t("common.inactive")}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit">
+                {t("products.updateVariant")}
+              </Button>
+              <Button onClick={() => {
+                setIsEditVariantModalVisible(false);
+                setEditingVariant(null);
+                editVariantForm.resetFields();
+              }}>
+                {t("common.cancel")}
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* Branch Management Modal */}
@@ -2886,7 +3450,12 @@ const Products = () => {
                   <Form.Item>
                     <Button
                       type="dashed"
-                      onClick={() => add()}
+                      onClick={() => add({
+                        stock_quantity: 0,
+                        min_stock_level: 0,
+                        price_override: null,
+                        is_available: true
+                      })}
                       block
                       icon={<PlusOutlined />}
                     >
@@ -2964,10 +3533,16 @@ const Products = () => {
                   title: translatedT("branches.status"),
                   dataIndex: "is_available",
                   key: "is_available",
-                  render: (isAvailable) => (
-                    <Tag color={isAvailable ? 'green' : 'red'}>
-                      {isAvailable ? translatedT("branches.available") : translatedT("branches.unavailable")}
-                    </Tag>
+                  render: (isAvailable, record) => (
+                    <Switch
+                      size="small"
+                      checked={isAvailable}
+                      onChange={(checked) => 
+                        handleUpdateProductBranchAvailability(record, checked)
+                      }
+                      checkedChildren={translatedT("branches.available")}
+                      unCheckedChildren={translatedT("branches.unavailable")}
+                    />
                   ),
                 },
                 {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card,
   Table,
@@ -46,6 +46,7 @@ import categoriesService from '../services/categoriesService';
 import productsService from '../services/productsService';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportCategoriesToExcel } from '../utils/comprehensiveExportUtils';
 const API_BASE_URL = import.meta.env.VITE_API_URL
 
 const { Title, Text } = Typography;
@@ -132,7 +133,7 @@ const Categories = () => {
   const [editingCategory, setEditingCategory] = useState(null);
   const [assigningCategory, setAssigningCategory] = useState(null);
   const [searchText, setSearchText] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
+  const [statusFilter, setStatusFilter] = useState('active'); // 'all', 'active', 'inactive'
   const [allProducts, setAllProducts] = useState([]);
   const [assignedProducts, setAssignedProducts] = useState([]);
   const [form] = Form.useForm();
@@ -167,11 +168,24 @@ const Categories = () => {
     return defaultMessage;
   };
 
+  // Apply status filtering to categories
+  const filteredCategories = useMemo(() => {
+    if (!Array.isArray(categories)) return [];
+    
+    return categories.filter(category => {
+      // Status filter
+      if (statusFilter === 'active' && !category.is_active) return false;
+      if (statusFilter === 'inactive' && category.is_active) return false;
+      
+      return true;
+    });
+  }, [categories, statusFilter]);
+
   // Table sorting hook
   const {
     sortedData: sortedCategories,
     getColumnSortProps
-  } = useTableSorting(categories, [
+  } = useTableSorting(filteredCategories, [
     { key: 'created_at', direction: 'desc', comparator: (a, b, direction) => {
       const aVal = new Date(a).getTime() || 0;
       const bVal = new Date(b).getTime() || 0;
@@ -211,14 +225,14 @@ const Categories = () => {
     fetchCategories();
     fetchCategoriesTree();
     loadCategoryShippingAnalytics();
-  }, [searchText, showInactive]);
+  }, [searchText, statusFilter]);
 
   const fetchCategories = async () => {
     try {
       setLoading(true);
       const params = {
         search: searchText || undefined,
-        include_inactive: showInactive
+        include_inactive: statusFilter === 'all' || statusFilter === 'inactive'
       };
       const response = await categoriesService.getCategories(params);
       setCategories(response.data);
@@ -231,7 +245,7 @@ const Categories = () => {
 
   const fetchCategoriesTree = async () => {
     try {
-      const response = await categoriesService.getCategoriesTree(showInactive);
+      const response = await categoriesService.getCategoriesTree(statusFilter === 'all' || statusFilter === 'inactive');
       setCategoriesTree(response.data);
     } catch (error) {
       console.error('Failed to fetch categories tree:', error);
@@ -677,68 +691,56 @@ const Categories = () => {
     }
   };
 
-  const handleBulkExport = () => {
+  const handleBulkExport = async () => {
     if (!hasSelected) return;
     
-    const selectedCategories = sortedCategories.filter(category => selectedRowKeys.includes(category.id));
-    
-    // Import ExcelJS dynamically to avoid bundle size issues
-    import('exceljs').then(async (ExcelJS) => {
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet(t('categories.categories') || 'Categories');
+    try {
+      message.loading('Preparing comprehensive categories export...', 0);
       
-      // Define columns
-      worksheet.columns = [
-        { header: t('categories.category_id') || 'Category ID', key: 'id', width: 12 },
-        { header: t('categories.name_en') || 'Name (EN)', key: 'title_en', width: 25 },
-        { header: t('categories.name_ar') || 'Name (AR)', key: 'title_ar', width: 25 },
-        { header: t('categories.description_en') || 'Description (EN)', key: 'description_en', width: 35 },
-        { header: t('categories.description_ar') || 'Description (AR)', key: 'description_ar', width: 35 },
-        { header: t('categories.status') || 'Status', key: 'status', width: 12 },
-        { header: t('categories.products_count') || 'Products Count', key: 'products_count', width: 15 },
-        { header: t('categories.created_date') || 'Created', key: 'created_at', width: 15 }
-      ];
+      const selectedCategories = sortedCategories.filter(category => selectedRowKeys.includes(category.id));
       
-      // Add data rows
-      selectedCategories.forEach(category => {
-        worksheet.addRow({
-          id: category.id,
-          title_en: category.title_en,
-          title_ar: category.title_ar,
-          description_en: category.description_en,
-          description_ar: category.description_ar,
-          status: category.is_active ? (t('common.active') || 'Active') : (t('common.inactive') || 'Inactive'),
-          products_count: category.products_count || 0,
-          created_at: new Date(category.created_at).toLocaleDateString()
-        });
+      // Use comprehensive export utility
+      await exportCategoriesToExcel(selectedCategories, {
+        includeHierarchy: true,
+        includeProducts: true,
+        filename: `FECS_Categories_Selected_${selectedCategories.length}_Items`,
+        t: t
       });
+
+      message.destroy();
       
-      // Style the header row
-      worksheet.getRow(1).font = { bold: true };
-      worksheet.getRow(1).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE6F3FF' }
-      };
+    } catch (error) {
+      message.destroy();
+      console.error('Categories export error:', error);
+      message.error('Failed to export selected categories. Please try again.');
+    }
+  };
+
+  // Export all categories with comprehensive data
+  const handleExportAll = async () => {
+    try {
+      if (!categories || categories.length === 0) {
+        message.warning('No categories to export');
+        return;
+      }
+
+      message.loading('Preparing complete categories export...', 0);
       
-      // Generate buffer and download
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const link = document.createElement('a');
-      const url = URL.createObjectURL(blob);
-      link.setAttribute('href', url);
-      link.setAttribute('download', `categories_export_${new Date().toISOString().split('T')[0]}.xlsx`);
-      link.style.visibility = 'hidden';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+      // Use comprehensive export utility for all categories
+      await exportCategoriesToExcel(categories, {
+        includeHierarchy: true,
+        includeProducts: true,
+        filename: `FECS_Categories_Complete_${categories.length}_Categories`,
+        t: t
+      });
+
+      message.destroy();
       
-      message.success(t('categories.exported_successfully', { count: selectedRowKeys.length }) || `Successfully exported ${selectedRowKeys.length} categories`);
-    }).catch(error => {
-      console.error('Failed to load ExcelJS library:', error);
-      message.error(t('categories.export_failed') || 'Failed to export categories');
-    });
+    } catch (error) {
+      message.destroy();
+      console.error('Complete categories export error:', error);
+      message.error('Failed to export all categories. Please try again.');
+    }
   };
 
   const clearSelection = () => {
@@ -1080,12 +1082,13 @@ const Categories = () => {
           <Col xs={24} sm={12} md={8} lg={6} xl={4}>
             <Select
               placeholder="Filter by Status"
-              value={showInactive ? 'all' : 'active'}
-              onChange={(value) => setShowInactive(value === 'all')}
+              value={statusFilter}
+              onChange={setStatusFilter}
               style={{ width: '100%' }}
               size={{ xs: 'small', md: 'large' }}
               options={[
                 { value: 'active', label: 'Active Only' },
+                { value: 'inactive', label: 'Inactive Only' },
                 { value: 'all', label: 'All Categories' }
               ]}
             />
@@ -1111,10 +1114,37 @@ const Categories = () => {
               >
                 <span className="hide-on-mobile">{t('categories.add_category')}</span>
               </Button>
-              <ExportButton
-                {...getCategoriesExportConfig(categories, columns)}
-                showFormats={['excel']}
-              />
+              <Dropdown
+                overlay={
+                  <Menu>
+                    <Menu.Item 
+                      key="export-all" 
+                      onClick={handleExportAll}
+                      icon={<UploadOutlined style={{ color: '#52c41a' }} />}
+                    >
+                      📊 Complete Categories Export ({categories.length})
+                    </Menu.Item>
+                    <Menu.Item 
+                      key="export-selected" 
+                      onClick={handleBulkExport}
+                      disabled={!hasSelected}
+                      icon={<UploadOutlined style={{ color: '#1890ff' }} />}
+                    >
+                      📋 Export Selected ({selectedRowKeys.length})
+                    </Menu.Item>
+                    <Menu.Divider />
+                    
+                  </Menu>
+                }
+                trigger={['click']}
+              >
+                <Button
+                  icon={<UploadOutlined />}
+                  size={{ xs: 'small', md: 'large' }}
+                >
+                  Export
+                </Button>
+              </Dropdown>
               <Dropdown
                 overlay={
                   <Menu>
@@ -1141,7 +1171,7 @@ const Categories = () => {
         </Row>
 
         {/* Show filter status */}
-        {showInactive && (
+        {statusFilter !== 'active' && (
           <Alert
             message="Showing all categories (including inactive)"
             description="Inactive categories are displayed with a red status indicator and their products are hidden from branches."

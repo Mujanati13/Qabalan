@@ -231,8 +231,30 @@ router.get('/admin/tickets', authenticate, async (req, res) => {
       priority, 
       category, 
       assigned_admin_id, 
-      search 
+      search,
+      createdAfter,
+      createdBefore,
+      date_from,
+      date_to
     } = req.query;
+
+    // Support both parameter naming conventions
+    const startDate = createdAfter || date_from;
+    const endDate = createdBefore || date_to;
+
+    // Convert date_from/date_to (YYYY-MM-DD) to proper datetime format for database
+    let processedStartDate = startDate;
+    let processedEndDate = endDate;
+
+    if (startDate && !startDate.includes('T')) {
+      // If it's just a date (YYYY-MM-DD), add time to start of day
+      processedStartDate = `${startDate}T00:00:00.000Z`;
+    }
+
+    if (endDate && !endDate.includes('T')) {
+      // If it's just a date (YYYY-MM-DD), add time to end of day
+      processedEndDate = `${endDate}T23:59:59.999Z`;
+    }
 
     const result = await supportService.getAdminTickets({
       page: parseInt(page),
@@ -241,7 +263,9 @@ router.get('/admin/tickets', authenticate, async (req, res) => {
       priority,
       category,
       assigned_admin_id,
-      search
+      search,
+      createdAfter: processedStartDate,
+      createdBefore: processedEndDate
     });
 
     res.json({

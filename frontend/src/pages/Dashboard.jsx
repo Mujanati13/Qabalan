@@ -36,6 +36,7 @@ import {
   EditOutlined,
   CheckOutlined,
   CloseOutlined,
+  PoweroffOutlined,
 } from "@ant-design/icons";
 import { Line, Column, Pie } from "@ant-design/charts";
 import { useLanguage } from "../contexts/LanguageContext";
@@ -44,6 +45,7 @@ import { useAuth } from "../hooks/useAuth";
 import { useFormatters } from "../utils/formatters";
 import dashboardService from "../services/dashboardService";
 import ordersService from "../services/ordersService";
+import productsService from "../services/productsService";
 import QuickNotificationFAB from "../components/common/QuickNotificationFAB";
 import NotificationsDashboardWidget from "../components/notifications/NotificationsDashboardWidget";
 import NotificationQuickActions from "../components/notifications/NotificationQuickActions";
@@ -52,12 +54,13 @@ import dayjs from "dayjs";
 import * as ExcelJS from 'exceljs';
 import { debounce } from 'lodash';
 import io from 'socket.io-client';
+import { exportOrdersToExcel, exportDashboardToExcel } from '../utils/comprehensiveExportUtils';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 const { Option } = Select;
 
-const Dashboard = () => {
+const DashboardContent = () => {
   const { currentLanguage } = useLanguage();
   const { user } = useAuth();
   const { 
@@ -96,6 +99,9 @@ const Dashboard = () => {
         exportPDF: "Export to PDF",
         exportSuccess: "Export completed successfully",
         exportError: "Export failed",
+        exportCompleteDashboard: "Complete Dashboard Analytics",
+        exportRecentOrders: "Export Recent Orders",
+        exportHotOrders: "Export Hot Orders",
         clear: "Clear",
         clearFilters: "Clear Filters",
         viewAll: "View All",
@@ -238,6 +244,9 @@ const Dashboard = () => {
         exportPDF: "تصدير إلى PDF",
         exportSuccess: "تم التصدير بنجاح",
         exportError: "فشل التصدير",
+        exportCompleteDashboard: "تحليلات لوحة التحكم الكاملة",
+        exportRecentOrders: "تصدير الطلبات الأخيرة",
+        exportHotOrders: "تصدير الطلبات العاجلة",
         clear: "مسح",
         clearFilters: "مسح المرشحات",
         viewAll: "عرض الكل",
@@ -398,6 +407,9 @@ const Dashboard = () => {
   const [recentNotifications, setRecentNotifications] = useState([]);
   const [shippingAnalytics, setShippingAnalytics] = useState(null);
   const [newOrderAnimation, setNewOrderAnimation] = useState(null);
+  
+  // Global product toggle state
+  const [globalToggleLoading, setGlobalToggleLoading] = useState(false);
 
   // Audio for notifications
   const audioRef = useRef(null);
@@ -1019,142 +1031,190 @@ const Dashboard = () => {
     return periodMap[periodValue] || periodValue;
   };
 
+  // Global product toggle handler
+  const handleGlobalProductToggle = (action) => {
+    const actionText = action === 'enable' ? 'enable' : 'disable';
+    const actionTextAr = action === 'enable' ? 'تفعيل' : 'إلغاء تفعيل';
+    
+    Modal.confirm({
+      title: `${actionText.charAt(0).toUpperCase() + actionText.slice(1)} All Products`,
+      content: `Are you sure you want to ${actionText} ALL products in the system? This action will affect all products across the application and client web.`,
+      okText: `Yes, ${actionText} all`,
+      cancelText: 'Cancel',
+      okType: action === 'disable' ? 'danger' : 'primary',
+      onOk: async () => {
+        try {
+          setGlobalToggleLoading(true);
+          
+          const result = await productsService.bulkToggleAll(action, `Bulk ${actionText} triggered from dashboard by ${user?.name || user?.email || 'admin'}`);
+          
+          message.success({
+            content: `Successfully ${actionText}d ${result.data.affected_products} products`,
+            duration: 5,
+            style: { marginTop: '20vh' }
+          });
+          
+          // Optionally refresh dashboard data if needed
+          // refreshData();
+          
+        } catch (error) {
+          console.error(`Global ${actionText} error:`, error);
+          message.error({
+            content: error.message || `Failed to ${actionText} products`,
+            duration: 5,
+            style: { marginTop: '20vh' }
+          });
+        } finally {
+          setGlobalToggleLoading(false);
+        }
+      }
+    });
+  };
+
   // Export functions
+  // Enhanced Dashboard Export with comprehensive analytics data
   const exportToExcel = async () => {
     try {
       message.loading({ content: t("common.loading"), key: "export" });
       
-      // Create workbook
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'FECS Admin Dashboard';
-      workbook.created = new Date();
-      workbook.modified = new Date();
-      
-      // Create worksheet
-      const worksheet = workbook.addWorksheet(t("dashboard.title"));
-      
-      // Define consistent styling
-      const titleStyle = {
-        font: { bold: true, size: 16, color: { argb: 'FF1890FF' } },
-        alignment: { horizontal: 'center' },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } }
+      // Prepare comprehensive dashboard data
+      const dashboardData = {
+        stats: {
+          ...stats,
+          // Add growth calculations
+          ordersGrowth: stats.ordersGrowth || 0,
+          revenueGrowth: stats.revenueGrowth || 0,
+          customersGrowth: stats.customersGrowth || 0,
+          aovGrowth: stats.aovGrowth || 0,
+          // Add previous period data for comparison
+          previousOrders: stats.previousOrders || 0,
+          previousRevenue: stats.previousRevenue || 0,
+          previousCustomers: stats.previousCustomers || 0,
+          previousAOV: stats.previousAOV || 0,
+          pendingOrders: stats.pendingOrders || pendingOrdersCount || 0
+        },
+        orderFlow,
+        salesData,
+        topProducts,
+        recentOrders,
+        hotOrders,
+        customerStats,
+        inventoryAlerts,
+        recentNotifications,
+        shippingAnalytics,
+        period: period,
+        dateRange: dateRange && dateRange.length === 2 ? [
+          dateRange[0].format('YYYY-MM-DD'),
+          dateRange[1].format('YYYY-MM-DD')
+        ] : null
       };
-      
-      const headerStyle = {
-        font: { bold: true, size: 12 },
-        alignment: { horizontal: 'center' },
-        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE6F7FF' } }
-      };
-      
-      // Report Header
-      worksheet.mergeCells('A1:G1');
-      const titleCell = worksheet.getCell('A1');
-      titleCell.value = `📊 ${t("dashboard.title")} - ${t("dashboard.reportGenerated")}`;
-      titleCell.style = titleStyle;
-      
-      // Report metadata
-      worksheet.mergeCells('A2:G2');
-      worksheet.getCell('A2').value = `Generated: ${new Date().toLocaleString()}`;
-      worksheet.getCell('A2').style = { alignment: { horizontal: 'center' } };
-      
-      let currentRow = 4;
-      
-      // Dashboard Statistics
-      worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
-      worksheet.getCell(`A${currentRow}`).value = '📊 Dashboard Statistics';
-      worksheet.getCell(`A${currentRow}`).style = headerStyle;
-      currentRow += 2;
-      
-      // Stats data
-      const statsData = [
-        ['Total Orders', stats.totalOrders || 0],
-        ['Total Revenue', formatCurrency(stats.totalRevenue || 0)],
-        ['Total Customers', stats.totalCustomers || 0],
-        ['Average Order Value', formatCurrency(stats.averageOrderValue || 0)],
-        ['Pending Orders', stats.pendingOrders || 0]
-      ];
-      
-      statsData.forEach(([label, value]) => {
-        worksheet.getCell(`A${currentRow}`).value = label;
-        worksheet.getCell(`B${currentRow}`).value = value;
-        currentRow++;
+
+      // Use comprehensive export utility
+      await exportDashboardToExcel(dashboardData, {
+        filename: `FECS_Dashboard_Complete_Analytics_${period}`,
+        t: t
       });
-      
-      currentRow += 2;
-      
-      // Recent Orders
-      if (recentOrders.length > 0) {
-        worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
-        worksheet.getCell(`A${currentRow}`).value = '📋 Recent Orders';
-        worksheet.getCell(`A${currentRow}`).style = headerStyle;
-        currentRow += 2;
-        
-        // Orders table headers
-        const orderHeaders = ['Order Number', 'Customer', 'Amount', 'Status', 'Date'];
-        orderHeaders.forEach((header, index) => {
-          const cell = worksheet.getCell(currentRow, index + 1);
-          cell.value = header;
-          cell.style = { font: { bold: true }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } } };
-        });
-        currentRow++;
-        
-        // Orders data
-        recentOrders.forEach(order => {
-          worksheet.getCell(currentRow, 1).value = order.order_number;
-          worksheet.getCell(currentRow, 2).value = order.customer_name;
-          worksheet.getCell(currentRow, 3).value = formatCurrency(order.total_amount);
-          worksheet.getCell(currentRow, 4).value = order.order_status;
-          worksheet.getCell(currentRow, 5).value = formatDate(order.created_at);
-          currentRow++;
-        });
-        
-        currentRow += 2;
-      }
-      
-      // Top Products
-      if (topProducts.length > 0) {
-        worksheet.mergeCells(`A${currentRow}:G${currentRow}`);
-        worksheet.getCell(`A${currentRow}`).value = '🏆 Top Products';
-        worksheet.getCell(`A${currentRow}`).style = headerStyle;
-        currentRow += 2;
-        
-        // Products table headers
-        const productHeaders = ['Product Name', 'Units Sold', 'Revenue'];
-        productHeaders.forEach((header, index) => {
-          const cell = worksheet.getCell(currentRow, index + 1);
-          cell.value = header;
-          cell.style = { font: { bold: true }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0F8FF' } } };
-        });
-        currentRow++;
-        
-        // Products data
-        topProducts.forEach(product => {
-          worksheet.getCell(currentRow, 1).value = product.name;
-          worksheet.getCell(currentRow, 2).value = product.total_sold;
-          worksheet.getCell(currentRow, 3).value = formatCurrency(product.total_revenue);
-          currentRow++;
-        });
-      }
-      
-      // Auto-size columns
-      worksheet.columns.forEach(column => {
-        column.width = 20;
-      });
-      
-      // Generate and download file
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `FECS-Dashboard-Report-${dayjs().format('YYYY-MM-DD-HH-mm')}.xlsx`;
-      link.click();
-      URL.revokeObjectURL(url);
-      
+
       message.success({ content: t("dashboard.exportSuccess"), key: "export" });
     } catch (error) {
-      console.error('Export error:', error);
+      console.error('Dashboard export error:', error);
       message.error({ content: t("dashboard.exportError"), key: "export" });
+    }
+  };
+
+  // Export Recent Orders with complete details
+  const exportRecentOrders = async () => {
+    try {
+      if (!recentOrders || recentOrders.length === 0) {
+        message.warning('No recent orders to export');
+        return;
+      }
+
+      message.loading('Preparing recent orders export...', 0);
+
+      // Fetch complete order details for recent orders
+      const ordersWithDetails = await Promise.all(
+        recentOrders.map(async (order) => {
+          try {
+            const detailResponse = await ordersService.getOrder(order.id);
+            const orderDetails = detailResponse.data?.order || order;
+            
+            return {
+              ...order,
+              ...orderDetails,
+              items: detailResponse.data?.items || order.items || [],
+              status_history: detailResponse.data?.status_history || order.status_history || []
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for order ${order.id}:`, error);
+            return order;
+          }
+        })
+      );
+
+      // Use comprehensive orders export
+      await exportOrdersToExcel(ordersWithDetails, {
+        includeItems: true,
+        includeStatusHistory: true,
+        filename: `FECS_Dashboard_Recent_Orders_${recentOrders.length}_Orders`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Recent orders export error:', error);
+      message.error('Failed to export recent orders. Please try again.');
+    }
+  };
+
+  // Export Hot Orders with priority details
+  const exportHotOrders = async () => {
+    try {
+      if (!hotOrders || hotOrders.length === 0) {
+        message.warning('No hot orders to export');
+        return;
+      }
+
+      message.loading('Preparing hot orders export...', 0);
+
+      // Fetch complete order details for hot orders
+      const ordersWithDetails = await Promise.all(
+        hotOrders.map(async (order) => {
+          try {
+            const detailResponse = await ordersService.getOrder(order.id);
+            const orderDetails = detailResponse.data?.order || order;
+            
+            return {
+              ...order,
+              ...orderDetails,
+              items: detailResponse.data?.items || order.items || [],
+              status_history: detailResponse.data?.status_history || order.status_history || [],
+              priority: 'HIGH', // Mark as high priority
+              urgent: true
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for hot order ${order.id}:`, error);
+            return { ...order, priority: 'HIGH', urgent: true };
+          }
+        })
+      );
+
+      // Use comprehensive orders export
+      await exportOrdersToExcel(ordersWithDetails, {
+        includeItems: true,
+        includeStatusHistory: true,
+        filename: `FECS_Dashboard_Hot_Orders_URGENT_${hotOrders.length}_Orders`,
+        t: t
+      });
+
+      message.destroy();
+      
+    } catch (error) {
+      message.destroy();
+      console.error('Hot orders export error:', error);
+      message.error('Failed to export hot orders. Please try again.');
     }
   };
 
@@ -1295,21 +1355,46 @@ const Dashboard = () => {
 
   const exportMenuItems = [
     {
-      key: 'excel',
+      key: 'dashboard-complete',
       label: (
         <span>
           <FileExcelOutlined style={{ marginRight: 8, color: '#52c41a' }} />
-          {t("dashboard.exportExcel")}
+          📊 Complete Dashboard Analytics (Excel)
         </span>
       ),
       onClick: exportToExcel,
+    },
+    {
+      key: 'recent-orders',
+      label: (
+        <span>
+          <FileExcelOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+          📋 Recent Orders ({recentOrders?.length || 0} orders)
+        </span>
+      ),
+      onClick: exportRecentOrders,
+      disabled: !recentOrders || recentOrders.length === 0,
+    },
+    {
+      key: 'hot-orders',
+      label: (
+        <span>
+          <FileExcelOutlined style={{ marginRight: 8, color: '#ff4d4f' }} />
+          🔥 Hot Orders ({hotOrders?.length || 0} urgent)
+        </span>
+      ),
+      onClick: exportHotOrders,
+      disabled: !hotOrders || hotOrders.length === 0,
+    },
+    {
+      type: 'divider',
     },
     {
       key: 'pdf',
       label: (
         <span>
           <FilePdfOutlined style={{ marginRight: 8, color: '#ff4d4f' }} />
-          {t("dashboard.exportPDF")}
+          {t("dashboard.exportPDF")} (Legacy)
         </span>
       ),
       onClick: exportToPDF,
@@ -1369,6 +1454,222 @@ const Dashboard = () => {
     },
   };
 
+  // Helper component for displaying order items preview in table
+  const OrderItemsPreview = ({ items, formatPrice }) => {
+    if (!items || items.length === 0) {
+      return <span style={{ color: '#999', fontSize: '12px' }}>No items</span>;
+    }
+    
+    const maxDisplay = 2; // Show first 2 items
+    const displayItems = items.slice(0, maxDisplay);
+    const remainingCount = items.length - maxDisplay;
+    
+    return (
+      <div style={{ fontSize: '11px', lineHeight: '1.2' }}>
+        {displayItems.map((item, index) => {
+          // Get product name from various possible fields
+          const productName = item?.product_name || 
+                             item?.product_title_en || 
+                             item?.product_title_ar || 
+                             item?.name || 
+                             item?.title_en || 
+                             item?.title_ar ||
+                             'Unknown Product';
+          
+          const quantity = Number(item?.quantity || 1);
+          const unitPrice = Number(item?.unit_price || item?.price || 0);
+          const totalPrice = Number(item?.total_price || (unitPrice * quantity));
+          
+          // Check for discount
+          const calculatedTotal = unitPrice * quantity;
+          const hasDiscount = Math.abs(calculatedTotal - totalPrice) > 0.01;
+          const discountAmount = calculatedTotal - totalPrice;
+          
+          // Get variant info
+          const variantInfo = item?.variant_name && item?.variant_value ? 
+            ` (${item.variant_name}: ${item.variant_value})` : '';
+          
+          return (
+            <div key={index} style={{ marginBottom: '3px', color: '#666' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: 'bold' }}>{quantity}x</span>{' '}
+                  <span title={productName + variantInfo}>
+                    {productName.length > 20 ? productName.substring(0, 17) + '...' : productName}
+                  </span>
+                  {variantInfo && (
+                    <span style={{ color: '#999', fontSize: '10px' }}>
+                      {variantInfo.length > 15 ? variantInfo.substring(0, 12) + '...' : variantInfo}
+                    </span>
+                  )}
+                </div>
+                <div style={{ textAlign: 'right', minWidth: '60px' }}>
+                  {hasDiscount && discountAmount > 0 && (
+                    <div style={{ 
+                      fontSize: '9px', 
+                      color: '#ff7875', 
+                      textDecoration: 'line-through' 
+                    }}>
+                      {formatPrice(calculatedTotal)}
+                    </div>
+                  )}
+                  <div style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                    {formatPrice(totalPrice)}
+                  </div>
+                  {hasDiscount && discountAmount > 0 && (
+                    <div style={{ fontSize: '9px', color: '#fa8c16' }}>
+                      -{formatPrice(discountAmount)}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {remainingCount > 0 && (
+          <div style={{ color: '#999', fontSize: '10px', marginTop: '2px', textAlign: 'center' }}>
+            +{remainingCount} more item{remainingCount > 1 ? 's' : ''}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // OrderItemCard Component for detailed view
+  const OrderItemCard = ({ item, formatPrice }) => {
+    // Get product name from various possible fields
+    const productName = item?.product_name || 
+                       item?.product_title_en || 
+                       item?.product_title_ar || 
+                       'Unknown Product';
+    
+    // Get unit price and calculate values
+    const unitPrice = Number(item?.unit_price || item?.price || 0);
+    const quantity = Number(item?.quantity || 0);
+    const totalPrice = Number(item?.total_price || (unitPrice * quantity));
+    
+    // Get product image with fallback
+    const productImage = item?.product_image || item?.main_image || '/api/placeholder/80/80';
+    
+    // Get variant information
+    const variantName = item?.variant_name;
+    const variantValue = item?.variant_value;
+    const productSku = item?.product_sku || item?.sku;
+    
+    // Calculate discount if there's a difference between calculated and actual total
+    const calculatedTotal = unitPrice * quantity;
+    const discount = calculatedTotal - totalPrice;
+    const hasDiscount = discount > 0.01; // More than 1 cent difference
+    
+    // Get discount information
+    const itemDiscount = Number(item?.discount_amount || item?.discount || 0);
+    const discountPercent = item?.discount_percent || (unitPrice > 0 ? Math.round((itemDiscount / unitPrice) * 100) : 0);
+    
+    return (
+      <Card 
+        size="small" 
+        style={{ 
+          marginBottom: '12px',
+          borderLeft: '3px solid #1890ff',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+        }}
+        bodyStyle={{ padding: '16px' }}
+      >
+        <Row gutter={16} align="middle">
+          {/* Product Image */}
+          <Col span={4}>
+            <div style={{ textAlign: 'center' }}>
+              <img 
+                src={productImage} 
+                alt={productName}
+                style={{ 
+                  width: '60px', 
+                  height: '60px', 
+                  objectFit: 'cover', 
+                  borderRadius: '8px',
+                  border: '1px solid #f0f0f0'
+                }}
+                onError={(e) => {
+                  e.target.src = '/api/placeholder/60/60';
+                }}
+              />
+            </div>
+          </Col>
+          
+          {/* Product Details */}
+          <Col span={12}>
+            <div>
+              <Text strong style={{ fontSize: '15px', color: '#262626' }}>
+                {productName}
+              </Text>
+              
+              {/* Product SKU */}
+              {productSku && (
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: '2px' }}>
+                  <Text type="secondary">SKU: {productSku}</Text>
+                </div>
+              )}
+              
+              {/* Variant Information */}
+              {(variantName || variantValue) && (
+                <div style={{ fontSize: '12px', color: '#595959', marginTop: '4px' }}>
+                  <Tag size="small" color="blue">
+                    {variantName && variantValue ? `${variantName}: ${variantValue}` : 
+                     variantName || variantValue}
+                  </Tag>
+                </div>
+              )}
+              
+              {/* Price Information */}
+              <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+                <Space split={<span style={{ color: '#d9d9d9' }}>•</span>}>
+                  <span>Unit Price: {formatPrice(unitPrice)}</span>
+                  <span>Qty: <strong>{quantity}</strong></span>
+                </Space>
+              </div>
+              
+              {/* Discount Information */}
+              {(hasDiscount || itemDiscount > 0) && (
+                <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                  <Tag color="orange" size="small">
+                    {discountPercent > 0 ? `${discountPercent}% OFF` : 'DISCOUNT'}
+                    {itemDiscount > 0 && ` (-${formatPrice(itemDiscount)})`}
+                  </Tag>
+                </div>
+              )}
+            </div>
+          </Col>
+          
+          {/* Quantity and Total */}
+          <Col span={8} style={{ textAlign: 'right' }}>
+            <div>
+              {/* Original Price (if discounted) */}
+              {hasDiscount && (
+                <div style={{ fontSize: '12px', color: '#8c8c8c', textDecoration: 'line-through' }}>
+                  {formatPrice(calculatedTotal)}
+                </div>
+              )}
+              
+              {/* Total Price */}
+              <div>
+                <Text strong style={{ color: '#52c41a', fontSize: '16px' }}>
+                  {formatPrice(totalPrice)}
+                </Text>
+              </div>
+              
+              {/* Savings */}
+              {hasDiscount && (
+                <div style={{ fontSize: '11px', color: '#ff7875' }}>
+                  Save {formatPrice(discount)}
+                </div>
+              )}
+            </div>
+          </Col>
+        </Row>
+      </Card>
+    );
+  };
+
   // Table columns
   const orderColumns = [
     {
@@ -1422,6 +1723,19 @@ const Dashboard = () => {
       dataIndex: "created_at",
       key: "created_at",
       render: (date) => formatDate(date, "short"),
+    },
+    {
+      title: 'Items',
+      key: 'items',
+      width: 280,
+      render: (_, record) => {
+        const items = record.items || record.order_items || record.orderItems || [];
+        return (
+          <div style={{ maxWidth: '260px' }}>
+            <OrderItemsPreview items={items} formatPrice={formatCurrency} />
+          </div>
+        );
+      },
     },
     {
       title: t("dashboard.actions"),
@@ -1611,7 +1925,47 @@ const Dashboard = () => {
             <Text type="secondary">{t("dashboard.subtitle")}</Text>
           </Col>
           <Col>
-            <Space>
+            <Space wrap>
+              {/* Global Product Toggle */}
+              <Dropdown
+                menu={{
+                  items: [
+                    {
+                      key: 'enable-all',
+                      label: (
+                        <span style={{ color: '#52c41a' }}>
+                          <PoweroffOutlined style={{ marginRight: 8 }} />
+                          🟢 Enable All Products
+                        </span>
+                      ),
+                      onClick: () => handleGlobalProductToggle('enable'),
+                    },
+                    {
+                      key: 'disable-all',
+                      label: (
+                        <span style={{ color: '#ff4d4f' }}>
+                          <PoweroffOutlined style={{ marginRight: 8 }} />
+                          🔴 Disable All Products
+                        </span>
+                      ),
+                      onClick: () => handleGlobalProductToggle('disable'),
+                    },
+                  ],
+                }}
+                placement="bottomLeft"
+              >
+                <Button 
+                  icon={<PoweroffOutlined />}
+                  loading={globalToggleLoading}
+                  style={{
+                    borderColor: globalToggleLoading ? '#1890ff' : '#d9d9d9',
+                    backgroundColor: globalToggleLoading ? '#f6ffed' : 'white'
+                  }}
+                >
+                  Products Control ▼
+                </Button>
+              </Dropdown>
+              
               <Select
                 value={period}
                 onChange={handlePeriodChange}
@@ -1670,12 +2024,11 @@ const Dashboard = () => {
       </div>
 
 
-        {/* Hot Orders Section - Priority Section */}
+      {/* Hot Orders Section */}
       {hotOrders.length > 0 && (
         <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
           <Col span={24}>
             <Card
-              className="hot-orders-card"
               title={
                 <Space>
                   <span style={{ color: '#ff4d4f', fontSize: '18px', fontWeight: 'bold' }}>
@@ -1713,23 +2066,156 @@ const Dashboard = () => {
                 background: 'linear-gradient(135deg, #fff5f5 0%, #ffffff 100%)'
               }}
               bodyStyle={{ padding: '12px' }}
+              className="hot-orders-card"
             >
               <Table
                 dataSource={hotOrders}
-                columns={orderColumns}
+                columns={[
+                  {
+                    title: t("dashboard.orderId"),
+                    dataIndex: "order_number",
+                    key: "order_number",
+                    render: (text, record) => (
+                      <Button 
+                        type="link" 
+                        style={{ padding: 0, height: 'auto', fontWeight: 'bold', color: '#ff4d4f' }}
+                        onClick={() => handleViewOrderDetails(record)}
+                      >
+                        {text}
+                      </Button>
+                    ),
+                  },
+                  {
+                    title: t("dashboard.customer"),
+                    dataIndex: "customer_name",
+                    key: "customer_name",
+                  },
+                  {
+                    title: t("dashboard.amount"),
+                    dataIndex: "total_amount",
+                    key: "total_amount",
+                    render: (amount) => <Text strong style={{ color: '#ff4d4f' }}>{formatCurrency(amount)}</Text>,
+                  },
+                  {
+                    title: t("dashboard.status"),
+                    dataIndex: "order_status",
+                    key: "order_status",
+                    render: (status) => (
+                      <Tag color="warning">
+                        {t(`dashboard.status_${status}`) || status}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: t("dashboard.actions"),
+                    key: "actions",
+                    render: (_, record) => (
+                      <Space size="small">
+                        <Tooltip title="View Details">
+                          <Button 
+                            type="text" 
+                            icon={<EyeOutlined />} 
+                            size="small"
+                            onClick={() => handleViewOrderDetails(record)}
+                          />
+                        </Tooltip>
+                        {record.order_status === 'pending' && (
+                          <Tooltip title="Confirm Order">
+                            <Button 
+                              type="text" 
+                              icon={<CheckOutlined />} 
+                              size="small"
+                              style={{ color: '#52c41a' }}
+                              onClick={() => handleOrderAction(record.id, 'confirm')}
+                            />
+                          </Tooltip>
+                        )}
+                      </Space>
+                    ),
+                  },
+                ]}
                 pagination={false}
                 size="small"
                 scroll={{ x: 600 }}
                 rowKey="id"
-                onRow={(record) => ({
-                  onClick: () => handleViewOrderDetails(record),
-                  style: { cursor: 'pointer' },
-                  className: newOrderAnimation === record.id ? 'new-order-row' : ''
-                })}
-                rowClassName={(record) => 
-                  `dashboard-order-row ${newOrderAnimation === record.id ? 'new-order-row' : ''}`
-                }
               />
+            </Card>
+          </Col>
+        </Row>
+      )}
+
+      {/* Shipping Analytics Section */}
+      {shippingAnalytics && (
+        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+          <Col span={24}>
+            <Card
+              title={`🚚 ${t("dashboard.shippingAnalytics")}`}
+              extra={
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={loadShippingAnalytics}
+                >
+                  {t("common.refresh")}
+                </Button>
+              }
+            >
+              <Row gutter={16}>
+                <Col xs={24} sm={6}>
+                  <Statistic
+                    title={t("dashboard.avgDistance")}
+                    value={shippingAnalytics.distance_statistics?.avg_distance || 0}
+                    suffix="km"
+                    precision={1}
+                    prefix="🛣️"
+                  />
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Statistic
+                    title={t("dashboard.avgShippingCost")}
+                    value={shippingAnalytics.distance_statistics?.avg_shipping_cost || 0}
+                    suffix="JOD"
+                    precision={2}
+                    prefix="💰"
+                  />
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Statistic
+                    title={t("dashboard.freeShippingRate")}
+                    value={shippingAnalytics.free_shipping_analysis?.free_shipping_percentage || 0}
+                    suffix="%"
+                    precision={1}
+                    prefix="🎁"
+                  />
+                </Col>
+                <Col xs={24} sm={6}>
+                  <Statistic
+                    title={t("dashboard.totalCalculations")}
+                    value={shippingAnalytics.calculation_summary?.total_calculations || 0}
+                    prefix="📊"
+                  />
+                </Col>
+              </Row>
+              
+              {shippingAnalytics.zone_usage && (
+                <div style={{ marginTop: 16 }}>
+                  <Typography.Title level={5}>{t("dashboard.popularZones")}</Typography.Title>
+                  <Row gutter={8}>
+                    {shippingAnalytics.zone_usage
+                      .slice(0, 3)
+                      .map((zone, index) => (
+                        <Col key={zone.zone_name_en}>
+                          <Tag
+                            color={["blue", "green", "orange"][index]}
+                            style={{ marginBottom: 4 }}
+                          >
+                            {zone.zone_name_en}: {zone.usage_count} {t("dashboard.ordersText")}
+                          </Tag>
+                        </Col>
+                      ))}
+                  </Row>
+                </div>
+              )}
             </Card>
           </Col>
         </Row>
@@ -1826,96 +2312,6 @@ const Dashboard = () => {
           </Card>
         </Col>
       </Row>
-
-    
-
-      {/* Shipping Analytics */}
-      {shippingAnalytics && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <Card
-              title={`🚚 ${t("dashboard.shippingAnalytics")}`}
-              extra={
-                <Button
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  onClick={loadShippingAnalytics}
-                >
-                  {t("common.refresh")}
-                </Button>
-              }
-            >
-              <Row gutter={16}>
-                <Col xs={24} sm={6}>
-                  <Statistic
-                    title={t("dashboard.avgDistance")}
-                    value={
-                      shippingAnalytics.distance_statistics?.avg_distance || 0
-                    }
-                    suffix="km"
-                    precision={1}
-                    prefix="🛣️"
-                  />
-                </Col>
-                <Col xs={24} sm={6}>
-                  <Statistic
-                    title={t("dashboard.avgShippingCost")}
-                    value={
-                      shippingAnalytics.distance_statistics
-                        ?.avg_shipping_cost || 0
-                    }
-                    suffix="JOD"
-                    precision={2}
-                    prefix="💰"
-                  />
-                </Col>
-                <Col xs={24} sm={6}>
-                  <Statistic
-                    title={t("dashboard.freeShippingRate")}
-                    value={
-                      shippingAnalytics.free_shipping_analysis
-                        ?.free_shipping_percentage || 0
-                    }
-                    suffix="%"
-                    precision={1}
-                    prefix="🎁"
-                  />
-                </Col>
-                <Col xs={24} sm={6}>
-                  <Statistic
-                    title={t("dashboard.totalCalculations")}
-                    value={
-                      shippingAnalytics.calculation_summary
-                        ?.total_calculations || 0
-                    }
-                    prefix="📊"
-                  />
-                </Col>
-              </Row>
-
-              {shippingAnalytics.zone_usage && (
-                <div style={{ marginTop: 16 }}>
-                  <Title level={5}>{t("dashboard.popularZones")}</Title>
-                  <Row gutter={8}>
-                    {shippingAnalytics.zone_usage
-                      .slice(0, 3)
-                      .map((zone, index) => (
-                        <Col key={zone.zone_name_en}>
-                          <Tag
-                            color={["blue", "green", "orange"][index]}
-                            style={{ marginBottom: 4 }}
-                          >
-                            {zone.zone_name_en}: {zone.usage_count} {t("dashboard.ordersText")}
-                          </Tag>
-                        </Col>
-                      ))}
-                  </Row>
-                </div>
-              )}
-            </Card>
-          </Col>
-        </Row>
-      )}
 
       {/* Charts Row */}
       <Row gutter={[16]} style={{ marginBottom: 24 }}>
@@ -2144,71 +2540,209 @@ const Dashboard = () => {
             </Row>
             
             <Card size="small" title="Delivery Address" style={{ marginTop: 16 }}>
-              <p>{selectedOrder.delivery_address || 'No delivery address specified'}</p>
-              {selectedOrder.shipping_cost && (
-                <p><strong>Shipping Cost:</strong> {formatCurrency(selectedOrder.shipping_cost)}</p>
-              )}
+              {(() => {
+                console.log('🏠 Order data for address analysis:', selectedOrder);
+                
+                // Get delivery address from the API structure
+                const deliveryAddr = selectedOrder.delivery_address;
+                
+                if (!deliveryAddr) {
+                  return (
+                    <div style={{ color: '#999', fontStyle: 'italic' }}>
+                      <p>No delivery address available</p>
+                      <p style={{ fontSize: '12px' }}>
+                        This might be a pickup order or address data is missing
+                      </p>
+                    </div>
+                  );
+                }
+                
+                // Build complete address from the delivery_address object
+                const addressParts = [];
+                
+                // Add full name if different from customer name
+                if (deliveryAddr.full_name && deliveryAddr.full_name !== selectedOrder.customer_name) {
+                  addressParts.push(`Attn: ${deliveryAddr.full_name}`);
+                }
+                
+                // Add address line (building, floor details)
+                if (deliveryAddr.address_line) {
+                  addressParts.push(deliveryAddr.address_line);
+                }
+                
+                // Build location hierarchy
+                const locationParts = [];
+                if (deliveryAddr.area || deliveryAddr.area_ar) {
+                  locationParts.push(deliveryAddr.area || deliveryAddr.area_ar);
+                }
+                if (deliveryAddr.city || deliveryAddr.city_ar) {
+                  locationParts.push(deliveryAddr.city || deliveryAddr.city_ar);
+                }
+                if (deliveryAddr.governorate || deliveryAddr.governorate_ar) {
+                  locationParts.push(deliveryAddr.governorate || deliveryAddr.governorate_ar);
+                }
+                
+                if (locationParts.length > 0) {
+                  addressParts.push(locationParts.join(', '));
+                }
+                
+                const fullAddress = addressParts.join('\n');
+                const hasGPS = deliveryAddr.latitude && deliveryAddr.longitude;
+                
+                console.log('🏠 Built address:', fullAddress);
+                console.log('🏠 GPS coordinates:', hasGPS ? `${deliveryAddr.latitude}, ${deliveryAddr.longitude}` : 'None');
+                
+                return (
+                  <div>
+                    <div style={{ marginBottom: '12px' }}>
+                      <strong>Address:</strong>
+                      {fullAddress ? (
+                        <div style={{ whiteSpace: 'pre-line', marginTop: '8px', padding: '8px', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                          {fullAddress}
+                        </div>
+                      ) : (
+                        <span style={{ color: '#999', marginLeft: '8px' }}>No address specified</span>
+                      )}
+                    </div>
+                    
+                    {/* Contact Information */}
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
+                      {deliveryAddr.full_name && (
+                        <div><strong>Contact:</strong> {deliveryAddr.full_name}</div>
+                      )}
+                      {selectedOrder.customer_phone && (
+                        <div><strong>Phone:</strong> {selectedOrder.customer_phone}</div>
+                      )}
+                    </div>
+                    
+                    {/* GPS Coordinates */}
+                    {hasGPS && (
+                      <div style={{ fontSize: '12px', color: '#666', marginBottom: '12px' }}>
+                        <strong>GPS Coordinates:</strong> {deliveryAddr.latitude}, {deliveryAddr.longitude}
+                        <a 
+                          href={`https://maps.google.com/?q=${deliveryAddr.latitude},${deliveryAddr.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ marginLeft: '8px', color: '#1890ff' }}
+                        >
+                          📍 View on Map
+                        </a>
+                      </div>
+                    )}
+                    
+                    {/* Delivery Information */}
+                    <div style={{ marginTop: '12px' }}>
+                      {selectedOrder.delivery_fee !== undefined && (
+                        <p style={{ margin: '4px 0' }}>
+                          <strong>Delivery Fee:</strong> {formatCurrency(selectedOrder.delivery_fee)}
+                        </p>
+                      )}
+                      
+                      {selectedOrder.order_type && (
+                        <p style={{ margin: '4px 0' }}>
+                          <strong>Order Type:</strong> {
+                            selectedOrder.order_type === 'delivery' ? '🚚 Delivery' : 
+                            selectedOrder.order_type === 'pickup' ? '🏪 Pickup' : 
+                            selectedOrder.order_type
+                          }
+                        </p>
+                      )}
+                      
+                      {selectedOrder.estimated_delivery_time && (
+                        <p style={{ margin: '4px 0' }}>
+                          <strong>Estimated Delivery:</strong> {formatDate(selectedOrder.estimated_delivery_time)}
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* Debug Panel - show delivery address structure */}
+                    {process.env.NODE_ENV === 'development' && (
+                      <details style={{ fontSize: '10px', marginTop: '16px' }}>
+                        <summary style={{ cursor: 'pointer', color: '#666' }}>
+                          Debug - Delivery Address Object
+                        </summary>
+                        <div style={{ 
+                          marginTop: '8px', 
+                          padding: '8px', 
+                          backgroundColor: '#f5f5f5', 
+                          borderRadius: '4px',
+                          fontFamily: 'monospace'
+                        }}>
+                          <pre style={{ margin: 0, fontSize: '10px' }}>
+                            {JSON.stringify(deliveryAddr, null, 2)}
+                          </pre>
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
             </Card>
             
             <Card size="small" title="Order Items" style={{ marginTop: 16 }}>
               {selectedOrder.items && selectedOrder.items.length > 0 ? (
-                <Table
-                  dataSource={selectedOrder.items}
-                  pagination={false}
-                  size="small"
-                  columns={[
-                    {
-                      title: 'Product',
-                      dataIndex: 'product_title_en',
-                      key: 'product_title_en',
-                      render: (text, record) => {
-                        // Try multiple possible field names for product name
-                        const productName = text || 
-                                           record.product_title_ar || 
-                                           record.product_name || 
-                                           record.name || 
-                                           record.title_en || 
-                                           record.title_ar ||
-                                           'Unknown Product';
-                        
-                        return (
-                          <div>
-                            <div style={{ fontWeight: 'bold' }}>{productName}</div>
-                            {record.product_sku && (
-                              <div style={{ fontSize: '12px', color: '#666' }}>
-                                SKU: {record.product_sku}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      }
-                    },
-                    {
-                      title: 'Quantity',
-                      dataIndex: 'quantity',
-                      key: 'quantity',
-                      width: 100,
-                      render: (qty) => qty || 1
-                    },
-                    {
-                      title: 'Unit Price',
-                      dataIndex: 'unit_price',
-                      key: 'unit_price',
-                      width: 120,
-                      render: (price) => price ? formatCurrency(price) : 'N/A',
-                    },
-                    {
-                      title: 'Total',
-                      dataIndex: 'total_price',
-                      key: 'total_price',
-                      width: 120,
-                      render: (total) => total ? formatCurrency(total) : 'N/A',
-                    },
-                  ]}
-                />
+                <div style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                  {selectedOrder.items.map((item, index) => (
+                    <OrderItemCard 
+                      key={index} 
+                      item={item} 
+                      formatPrice={formatCurrency} 
+                    />
+                  ))}
+                  
+                  {/* Order Items Summary */}
+                  <div style={{ 
+                    marginTop: '16px', 
+                    padding: '12px', 
+                    backgroundColor: '#fafafa', 
+                    borderRadius: '6px',
+                    borderTop: '2px solid #1890ff'
+                  }}>
+                    <Row justify="space-between" align="middle">
+                      <Col>
+                        <Text strong style={{ fontSize: '14px' }}>
+                          Total Items: {selectedOrder.items.length}
+                        </Text>
+                      </Col>
+                      <Col>
+                        <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
+                          Order Total: {formatCurrency(selectedOrder.total_amount)}
+                        </Text>
+                      </Col>
+                    </Row>
+                    
+                    {/* Calculate total discount */}
+                    {(() => {
+                      const totalDiscount = selectedOrder.items.reduce((acc, item) => {
+                        const unitPrice = Number(item?.unit_price || item?.price || 0);
+                        const quantity = Number(item?.quantity || 0);
+                        const totalPrice = Number(item?.total_price || (unitPrice * quantity));
+                        const calculatedTotal = unitPrice * quantity;
+                        const discount = calculatedTotal - totalPrice;
+                        return acc + (discount > 0.01 ? discount : 0);
+                      }, 0);
+                      
+                      return totalDiscount > 0.01 && (
+                        <Row justify="space-between" style={{ marginTop: '8px' }}>
+                          <Col>
+                            <Text style={{ color: '#fa8c16', fontSize: '13px' }}>
+                              Total Savings:
+                            </Text>
+                          </Col>
+                          <Col>
+                            <Text strong style={{ color: '#fa8c16', fontSize: '14px' }}>
+                              -{formatCurrency(totalDiscount)}
+                            </Text>
+                          </Col>
+                        </Row>
+                      );
+                    })()}
+                  </div>
+                </div>
               ) : (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
-                  <p>No items found for this order</p>
+                <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
+                  <ShoppingCartOutlined style={{ fontSize: '48px', color: '#d9d9d9', marginBottom: '16px' }} />
+                  <p style={{ fontSize: '16px', marginBottom: '8px' }}>No items found for this order</p>
                   <p style={{ fontSize: '12px' }}>This might be due to missing data or order synchronization issues</p>
                 </div>
               )}
@@ -2220,4 +2754,4 @@ const Dashboard = () => {
   );
 };
 
-export default Dashboard;
+export default DashboardContent;

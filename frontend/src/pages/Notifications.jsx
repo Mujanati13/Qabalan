@@ -15,7 +15,8 @@ import {
   Progress,
   Empty,
   Spin,
-  Select
+  Select,
+  Dropdown
 } from 'antd'
 import {
   SendOutlined,
@@ -27,13 +28,16 @@ import {
   EyeOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  ClockCircleOutlined
+  ClockCircleOutlined,
+  DownloadOutlined,
+  DownOutlined,
+  ExportOutlined
 } from '@ant-design/icons'
 import { useLanguage } from '../contexts/LanguageContext'
 import notificationsService from '../services/notificationsService'
 import EnhancedNotificationModal from '../components/common/EnhancedNotificationModal'
-import ExportButton from '../components/common/ExportButton'
 import { useExportConfig } from '../hooks/useExportConfig'
+import { exportNotificationsToExcel } from '../utils/comprehensiveExportUtils'
 import dayjs from 'dayjs'
 
 const { Title, Text } = Typography
@@ -171,6 +175,35 @@ const Notifications = () => {
       message.error(error.message || 'Failed to load tokens')
     } finally {
       setTokensLoading(false)
+    }
+  }
+
+  // Comprehensive export functions
+  const handleExportAll = async () => {
+    try {
+      await exportNotificationsToExcel(notifications, [], 'all')
+    } catch (error) {
+      message.error(error.message || 'Failed to export notifications')
+    }
+  }
+
+  const handleExportSent = async () => {
+    try {
+      const sentNotifications = notifications.filter(notification => 
+        notification.status === 'sent' || notification.sent_count > 0
+      )
+      await exportNotificationsToExcel(sentNotifications, [], 'sent')
+    } catch (error) {
+      message.error(error.message || 'Failed to export sent notifications')
+    }
+  }
+
+  const handleExportByType = async (type) => {
+    try {
+      const typeNotifications = notifications.filter(notification => notification.type === type)
+      await exportNotificationsToExcel(typeNotifications, [], type)
+    } catch (error) {
+      message.error(error.message || `Failed to export ${type} notifications`)
     }
   }
 
@@ -591,10 +624,117 @@ const Notifications = () => {
                     <Button icon={<ReloadOutlined />} onClick={() => loadNotifications()}>
                       {language === 'ar' ? 'تحديث' : 'Refresh'}
                     </Button>
-                    <ExportButton
-                      {...getNotificationsExportConfig(notifications, notificationsColumns)}
-                      showFormats={['csv', 'excel']}
-                    />
+                    <Dropdown
+                      menu={{
+                        items: [
+                          {
+                            key: 'complete',
+                            icon: <DownloadOutlined />,
+                            label: (
+                              <span>
+                                {language === 'ar' ? 'تصدير شامل' : 'Complete Export'} 
+                                <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                  ({notifications.length} {language === 'ar' ? 'إشعار' : 'notifications'})
+                                </span>
+                              </span>
+                            ),
+                            onClick: handleExportAll,
+                          },
+                          {
+                            key: 'sent',
+                            icon: <CheckCircleOutlined />,
+                            label: (
+                              <span>
+                                {language === 'ar' ? 'الإشعارات المرسلة' : 'Sent Notifications'}
+                                <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                  ({notifications.filter(n => n.status === 'sent' || n.sent_count > 0).length} {language === 'ar' ? 'إشعار' : 'notifications'})
+                                </span>
+                              </span>
+                            ),
+                            onClick: handleExportSent,
+                          },
+                          {
+                            type: 'divider',
+                          },
+                          {
+                            key: 'by-type',
+                            icon: <BellOutlined />,
+                            label: language === 'ar' ? 'حسب النوع' : 'By Type',
+                            children: [
+                              {
+                                key: 'general',
+                                label: (
+                                  <span>
+                                    {language === 'ar' ? 'عام' : 'General'}
+                                    <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                      ({notifications.filter(n => n.type === 'general').length})
+                                    </span>
+                                  </span>
+                                ),
+                                onClick: () => handleExportByType('general'),
+                              },
+                              {
+                                key: 'order',
+                                label: (
+                                  <span>
+                                    {language === 'ar' ? 'طلب' : 'Order'}
+                                    <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                      ({notifications.filter(n => n.type === 'order').length})
+                                    </span>
+                                  </span>
+                                ),
+                                onClick: () => handleExportByType('order'),
+                              },
+                              {
+                                key: 'promotion',
+                                label: (
+                                  <span>
+                                    {language === 'ar' ? 'عرض ترويجي' : 'Promotion'}
+                                    <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                      ({notifications.filter(n => n.type === 'promotion').length})
+                                    </span>
+                                  </span>
+                                ),
+                                onClick: () => handleExportByType('promotion'),
+                              },
+                              {
+                                key: 'system',
+                                label: (
+                                  <span>
+                                    {language === 'ar' ? 'نظام' : 'System'}
+                                    <span style={{ color: '#888', fontSize: '12px', marginLeft: '8px' }}>
+                                      ({notifications.filter(n => n.type === 'system').length})
+                                    </span>
+                                  </span>
+                                ),
+                                onClick: () => handleExportByType('system'),
+                              },
+                            ],
+                          },
+                          {
+                            type: 'divider',
+                          },
+                          {
+                            key: 'legacy',
+                            icon: <ExportOutlined />,
+                            label: (
+                              <span style={{ color: '#888' }}>
+                                {language === 'ar' ? 'تصدير أساسي (قديم)' : 'Basic Export (Legacy)'}
+                              </span>
+                            ),
+                            onClick: () => {
+                              const config = getNotificationsExportConfig(notifications, notificationsColumns)
+                              config.exportToExcel && config.exportToExcel()
+                            },
+                          },
+                        ],
+                      }}
+                      trigger={['click']}
+                    >
+                      <Button icon={<DownloadOutlined />}>
+                        {language === 'ar' ? 'تصدير' : 'Export'} <DownOutlined />
+                      </Button>
+                    </Dropdown>
                   </Space>
                 </div>
 

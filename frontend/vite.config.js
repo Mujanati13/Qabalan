@@ -19,6 +19,9 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     port: 3006,
+     allowedHosts: [
+      'qablan.albech.me'
+    ],
     host: '0.0.0.0', // Allow external connections
     open: false,     // Don't try to open browser
     strictPort: true, // Exit if port is already in use

@@ -348,14 +348,14 @@ const AdminLayout = ({ children }) => {
     // CONFIGURATION SECTION (Only for admins)
     const configChildren = [];
 
-    // Settings - Only for admins
-    if (user?.user_type === "admin") {
-      configChildren.push({
-        key: "/settings",
-        icon: <ToolOutlined />,
-        label: <Link to="/settings">{t("nav.settings")}</Link>,
-      });
-    }
+    // // Settings - Only for admins
+    // if (user?.user_type === "admin") {
+    //   configChildren.push({
+    //     key: "/settings",
+    //     icon: <ToolOutlined />,
+    //     label: <Link to="/settings">{t("nav.settings")}</Link>,
+    //   });
+    // }
 
     // Web Client Configuration - Only for admins
     if (user?.user_type === "admin") {

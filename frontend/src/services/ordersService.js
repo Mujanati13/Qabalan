@@ -198,6 +198,40 @@ const ordersService = {
     }
   },
 
+  // Update payment method
+  updatePaymentMethod: async (id, paymentMethod) => {
+    try {
+      const response = await api.put(`/orders/${id}/payment-method`, { 
+        payment_method: paymentMethod 
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update payment method');
+    }
+  },
+
+  // Update payment status
+  updatePaymentStatus: async (id, paymentStatus) => {
+    try {
+      const response = await api.put(`/orders/${id}/payment-status`, { 
+        payment_status: paymentStatus 
+      });
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update payment status');
+    }
+  },
+
+  // Generate payment link for order
+  generatePaymentLink: async (id) => {
+    try {
+      const response = await api.post(`/orders/${id}/payment-link`);
+      return response.data;
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to generate payment link');
+    }
+  },
+
   // Alias for backward compatibility
   create: function(orderData) {
     return this.createOrder(orderData);

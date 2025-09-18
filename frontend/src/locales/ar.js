@@ -275,6 +275,8 @@ export const ar = {
     saveError: 'فشل في حفظ المنتج',
     statusUpdated: 'تم تحديث حالة المنتج بنجاح',
     statusUpdateError: 'فشل في تحديث حالة المنتج',
+    sort_order: 'ترتيب العرض',
+    sort_order_updated: 'تم تحديث ترتيب العرض بنجاح',
     english: 'الإنجليزية',
     arabic: 'العربية',
     
@@ -319,7 +321,13 @@ export const ar = {
     variantAddError: 'فشل في إضافة المتغيرات',
     variantDeletedSuccess: 'تم حذف المتغير بنجاح',
     variantDeleteError: 'فشل في حذف المتغير',
-    deleteVariantConfirm: 'هل أنت متأكد من حذف هذا المتغير؟'
+    deleteVariantConfirm: 'هل أنت متأكد من حذف هذا المتغير؟',
+    variantStatusUpdated: 'تم تحديث حالة المتغير بنجاح',
+    variantStatusUpdateError: 'فشل في تحديث حالة المتغير',
+    editVariant: 'تعديل المتغير',
+    updateVariant: 'تحديث المتغير',
+    variantUpdatedSuccess: 'تم تحديث المتغير بنجاح',
+    variantUpdateError: 'فشل في تحديث المتغير'
   },
 
   // Categories
@@ -585,6 +593,7 @@ export const ar = {
     details: 'تفاصيل الطلب',
     items: 'عناصر',
     items_count: 'العناصر',
+    itemsCount: 'العناصر',
     
     // Order Types
     delivery: 'توصيل',
@@ -637,6 +646,7 @@ export const ar = {
     yesterday: 'أمس',
     this_week: 'هذا الأسبوع',
     this_month: 'هذا الشهر',
+    all_time: 'كل الأوقات',
     
     // Statistics
     total_orders: 'مجموع الطلبات',
@@ -653,6 +663,13 @@ export const ar = {
     subtotal: 'المجموع الفرعي',
     delivery_fee: 'رسوم التوصيل',
     deliveryFee: 'رسوم التوصيل',
+    orderDateTime: 'تاريخ ووقت الطلب',
+    customerName: 'اسم العميل',
+    phoneNumber: 'الهاتف',
+    email: 'البريد الإلكتروني',
+    location: 'الموقع/العنوان',
+    discount: 'الخصم',
+    totalAmount: 'المبلغ الإجمالي',
     clickToEditDeliveryFee: 'انقر لتعديل رسوم التوصيل',
     resetDeliveryFee: 'إعادة تعيين للرسوم المحسوبة',
     tax_amount: 'مبلغ الضريبة',
@@ -1304,6 +1321,9 @@ export const ar = {
     isActive: 'نشط',
     isActiveHelp: 'ما إذا كان كود الخصم هذا نشطًا حاليًا',
     
+    autoApplyEligible: 'تطبيق تلقائي في الموبايل',
+    autoApplyEligibleTooltip: 'السماح بالكشف التلقائي واقتراح كود الخصم هذا في تطبيق الموبايل',
+    
     // Table Columns
     codeColumn: 'الكود',
     titleColumn: 'العنوان',
@@ -1727,6 +1747,14 @@ export const ar = {
     selectLocationFirst: 'اختر الموقع على الخريطة أولاً',
     selectLocationForDeliveryFee: 'اختر الموقع على الخريطة لحساب رسوم التوصيل بدقة',
     manualEntryNote: 'يمكنك الاستمرار في إدخال معلومات العنوان يدوياً في تبويب تفاصيل العنوان.',
+    
+    // Search functionality
+    searchLocation: 'البحث عن موقع',
+    searchPlaceholder: 'أدخل عنوان أو اسم مكان',
+    searchForPlaces: 'البحث عن الأماكن',
+    selectFromResults: 'اختيار من نتائج البحث',
+    noResultsFound: 'لم يتم العثور على نتائج',
+    searchError: 'خطأ في البحث عن الموقع',
     
     // Navigation
     previous: 'السابق',

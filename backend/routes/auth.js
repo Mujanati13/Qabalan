@@ -905,4 +905,73 @@ router.post('/login-with-sms', async (req, res, next) => {
   }
 });
 
+/**
+ * @route   POST /api/auth/check-user-exists
+ * @desc    Check if user exists by phone number
+ * @access  Public
+ */
+router.post('/check-user-exists', async (req, res, next) => {
+  try {
+    const { phone } = req.body;
+
+    if (!phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required',
+        message_ar: 'رقم الهاتف مطلوب'
+      });
+    }
+
+    // Format phone number
+    let formattedPhone = phone;
+    if (phone.startsWith('+962')) {
+      formattedPhone = phone.replace('+962', '962');
+    } else if (phone.startsWith('00962')) {
+      formattedPhone = phone.replace('00962', '962');
+    } else if (phone.startsWith('0') && phone.length === 10) {
+      formattedPhone = '962' + phone.substring(1);
+    } else if (!phone.startsWith('962') && phone.length === 9) {
+      formattedPhone = '962' + phone;
+    }
+
+    // Check if user exists
+    const [user] = await executeQuery(
+      'SELECT id, first_name, last_name, phone, is_verified, phone_verified_at FROM users WHERE phone = ? AND is_active = 1',
+      [formattedPhone]
+    );
+
+    if (user) {
+      res.json({
+        success: true,
+        message: 'User exists',
+        message_ar: 'المستخدم موجود',
+        data: {
+          exists: true,
+          user: {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            phone: user.phone,
+            is_verified: user.is_verified,
+            phone_verified_at: user.phone_verified_at
+          }
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        message: 'User does not exist',
+        message_ar: 'المستخدم غير موجود',
+        data: {
+          exists: false
+        }
+      });
+    }
+
+  } catch (error) {
+    console.error('Check user exists error:', error);
+    next(error);
+  }
+});
+
 module.exports = router;

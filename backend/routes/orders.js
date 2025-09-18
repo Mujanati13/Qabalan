@@ -565,6 +565,7 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
       status,
       payment_status,
       order_type,
+      payment_method,
       branch_id,
       user_id,
       start_date,
@@ -601,6 +602,12 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
     if (order_type) {
       whereConditions.push('o.order_type = ?');
       queryParams.push(order_type);
+    }
+
+    // Payment method filter
+    if (payment_method) {
+      whereConditions.push('o.payment_method = ?');
+      queryParams.push(payment_method);
     }
 
     if (branch_id) {
@@ -2978,6 +2985,209 @@ router.post('/:id/confirm-receipt', authenticate, validateId, async (req, res, n
 
   } catch (error) {
     console.error('❌ Error confirming order receipt:', error);
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/orders/:id/payment-method
+ * @desc    Update order payment method
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/payment-method', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { payment_method } = req.body;
+    
+    if (!payment_method || !['cash', 'card', 'online'].includes(payment_method)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid payment method is required (cash, card, online)',
+        message_ar: 'طريقة الدفع مطلوبة (نقد، بطاقة، أونلاين)'
+      });
+    }
+
+    // Get current order
+    const [currentOrder] = await executeQuery(
+      'SELECT * FROM orders WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!currentOrder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+        message_ar: 'الطلب غير موجود'
+      });
+    }
+
+    // Update payment method
+    await executeQuery(
+      'UPDATE orders SET payment_method = ?, updated_at = NOW() WHERE id = ?',
+      [payment_method, req.params.id]
+    );
+
+    // Log the change
+    await executeQuery(
+      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        req.params.id,
+        currentOrder.order_status,
+        currentOrder.order_status,
+        `Payment method changed from ${currentOrder.payment_method} to ${payment_method}`,
+        req.user.id
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Payment method updated successfully',
+      message_ar: 'تم تحديث طريقة الدفع بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/orders/:id/payment-status
+ * @desc    Update order payment status
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/payment-status', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    const { payment_status } = req.body;
+    
+    if (!payment_status || !['pending', 'paid', 'failed', 'refunded'].includes(payment_status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid payment status is required (pending, paid, failed, refunded)',
+        message_ar: 'حالة الدفع مطلوبة (معلق، مدفوع، فشل، مسترد)'
+      });
+    }
+
+    // Get current order
+    const [currentOrder] = await executeQuery(
+      'SELECT * FROM orders WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!currentOrder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+        message_ar: 'الطلب غير موجود'
+      });
+    }
+
+    // Update payment status
+    await executeQuery(
+      'UPDATE orders SET payment_status = ?, updated_at = NOW() WHERE id = ?',
+      [payment_status, req.params.id]
+    );
+
+    // Log the change
+    await executeQuery(
+      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        req.params.id,
+        currentOrder.order_status,
+        currentOrder.order_status,
+        `Payment status changed from ${currentOrder.payment_status} to ${payment_status}`,
+        req.user.id
+      ]
+    );
+
+    // Emit socket events for real-time updates
+    if (global.socketManager) {
+      global.socketManager.emitToAdmins('orderPaymentUpdated', {
+        orderId: currentOrder.id,
+        customerName: currentOrder.customer_name,
+        oldPaymentStatus: currentOrder.payment_status,
+        newPaymentStatus: payment_status,
+        updatedBy: req.user.username || req.user.email,
+        updatedAt: new Date().toISOString()
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Payment status updated successfully',
+      message_ar: 'تم تحديث حالة الدفع بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/orders/:id/payment-link
+ * @desc    Generate payment link for order
+ * @access  Private (Admin/Staff)
+ */
+router.post('/:id/payment-link', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
+  try {
+    // Get current order
+    const [currentOrder] = await executeQuery(
+      'SELECT * FROM orders WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!currentOrder) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+        message_ar: 'الطلب غير موجود'
+      });
+    }
+
+    if (currentOrder.payment_status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'Order is already paid',
+        message_ar: 'الطلب مدفوع بالفعل'
+      });
+    }
+
+    // Generate the payment link
+    const baseUrl = process.env.FRONTEND_URL || 'https://qablanapi.albech.me';
+    const paymentLink = `${baseUrl}/api/payments/mpgs/payment/view?orders_id=${currentOrder.id}&lang=en`;
+    
+    // You can also create a shorter link using a URL shortener service if needed
+    const shortLink = paymentLink; // For now, use the full link
+
+    // Log the payment link generation
+    await executeQuery(
+      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        req.params.id,
+        currentOrder.order_status,
+        currentOrder.order_status,
+        `Payment link generated: ${shortLink}`,
+        req.user.id
+      ]
+    );
+
+    res.json({
+      success: true,
+      message: 'Payment link generated successfully',
+      message_ar: 'تم إنشاء رابط الدفع بنجاح',
+      data: {
+        payment_link: paymentLink,
+        short_link: shortLink,
+        order_id: currentOrder.id,
+        order_number: currentOrder.order_number,
+        total_amount: currentOrder.total_amount,
+        customer_name: currentOrder.customer_name,
+        customer_phone: currentOrder.customer_phone
+      }
+    });
+
+  } catch (error) {
     next(error);
   }
 });

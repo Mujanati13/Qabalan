@@ -176,6 +176,18 @@ const productsService = {
     }
   },
 
+  // Update product sort order directly
+  async updateSortOrder(productId, sortOrder) {
+    try {
+      const response = await api.put(`/products/${productId}/sort-order`, {
+        sort_order: sortOrder
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to update product sort order')
+    }
+  },
+
   // Get product reviews
   async getProductReviews(productId, params = {}) {
     try {
@@ -309,6 +321,28 @@ const productsService = {
       return response.data
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to delete product variant')
+    }
+  },
+
+  async toggleVariantStatus(productId, variantId) {
+    try {
+      const response = await api.put(`/products/${productId}/variants/${variantId}/toggle-status`)
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to toggle variant status')
+    }
+  },
+
+  // Bulk toggle all products
+  async bulkToggleAll(action, notes = null) {
+    try {
+      const response = await api.post('/products/bulk-toggle-all', {
+        action, // 'enable' or 'disable'
+        notes
+      })
+      return response.data
+    } catch (error) {
+      throw new Error(error.response?.data?.message || 'Failed to toggle all products')
     }
   }
 }

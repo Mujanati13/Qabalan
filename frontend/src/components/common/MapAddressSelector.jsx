@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, Button, Input, Row, Col, Form, message, Spin, Alert } from 'antd';
-import { EnvironmentOutlined, AimOutlined, CheckOutlined } from '@ant-design/icons';
+import { EnvironmentOutlined, AimOutlined, CheckOutlined, SearchOutlined } from '@ant-design/icons';
 
 const MapAddressSelector = ({ 
   onLocationSelect, 
@@ -19,6 +19,9 @@ const MapAddressSelector = ({
   const [mapError, setMapError] = useState(null);
   const [selectedLocation, setSelectedLocation] = useState(initialLocation || null);
   const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [autocomplete, setAutocomplete] = useState(null);
+  const searchInputRef = useRef(null);
 
   // Default location (Amman, Jordan)
   const defaultLocation = { lat: 31.9454, lng: 35.9284 };
@@ -117,6 +120,9 @@ const MapAddressSelector = ({
       if (initialPos) {
         addMarker(initialPos, mapInstance);
       }
+
+      // Initialize autocomplete
+      initializeAutocomplete();
 
       setLoading(false);
     } catch (error) {
@@ -319,6 +325,61 @@ const MapAddressSelector = ({
     );
   };
 
+  const initializeAutocomplete = () => {
+    if (!window.google || !window.google.maps || !searchInputRef.current) return;
+
+    try {
+      const autocompleteInstance = new window.google.maps.places.Autocomplete(
+        searchInputRef.current.input,
+        {
+          types: ['address'],
+          componentRestrictions: { country: 'jo' }, // Restrict to Jordan
+          fields: ['place_id', 'geometry', 'name', 'formatted_address', 'address_components']
+        }
+      );
+
+      autocompleteInstance.addListener('place_changed', () => {
+        const place = autocompleteInstance.getPlace();
+        
+        if (!place.geometry || !place.geometry.location) {
+          message.warning(t ? t('map.placeNotFound') : 'Location not found for this place');
+          return;
+        }
+
+        const location = {
+          lat: Number(place.geometry.location.lat()),
+          lng: Number(place.geometry.location.lng())
+        };
+
+        // Update map and marker
+        updateMapLocation(location);
+        
+        // Set search input to the formatted address
+        setSearchInput(place.formatted_address || place.name || '');
+        
+        // Perform reverse geocoding to get detailed address info
+        performReverseGeocoding(location);
+        
+        message.success(t ? t('map.placeSelected') : 'Location selected successfully');
+      });
+
+      setAutocomplete(autocompleteInstance);
+    } catch (error) {
+      console.error('Error initializing autocomplete:', error);
+    }
+  };
+
+  const handleSearchInputChange = (e) => {
+    setSearchInput(e.target.value);
+  };
+
+  const clearSearch = () => {
+    setSearchInput('');
+    if (searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  };
+
   if (mapError) {
     return (
       <Card 
@@ -389,6 +450,30 @@ const MapAddressSelector = ({
       }
       style={{ marginBottom: 16 }}
     >
+      {/* Search Input */}
+      <div style={{ marginBottom: 16 }}>
+        <Input
+          ref={searchInputRef}
+          placeholder={t ? t('map.searchPlaceholder') : 'Search for places, addresses, or landmarks...'}
+          value={searchInput}
+          onChange={handleSearchInputChange}
+          prefix={<SearchOutlined />}
+          suffix={
+            searchInput && (
+              <Button 
+                type="text" 
+                size="small" 
+                onClick={clearSearch}
+                style={{ padding: 0, height: 'auto', minWidth: 'auto' }}
+              >
+                ×
+              </Button>
+            )
+          }
+          disabled={disabled}
+          style={{ width: '100%' }}
+        />
+      </div>
       <div style={{ position: 'relative' }}>
         <div
           ref={mapRef}

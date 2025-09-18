@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Card,
   Table,
@@ -68,6 +68,7 @@ import customersService from '../services/customersService';
 import NotificationControls from '../components/notifications/NotificationControls';
 import ExportButton from '../components/common/ExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportOrdersToExcel } from '../utils/comprehensiveExportUtils';
 import CreateOrderModal from '../components/common/CreateOrderModal';
 import EnhancedAddressForm from '../components/common/EnhancedAddressForm';
 import api from '../services/api';
@@ -75,55 +76,103 @@ import googleMapsService from '../services/googleMapsService';
 import paymentsService from '../services/paymentsService';
 import moment from 'moment';
 import io from 'socket.io-client';
+import { 
+  addPersistentNotification, 
+  acknowledgePersistentNotification,
+  persistentNotificationSystem 
+} from '../utils/persistentNotificationSound';
+import PersistentNotificationIndicator from '../components/notifications/PersistentNotificationIndicator';
+import NotificationTestPanel from '../components/notifications/NotificationTestPanel';
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 
-// Simple notification sound using HTML5 Audio with system sound
-const playNotificationSound = () => {
+// Enhanced notification sound with better browser compatibility
+const playNotificationSound = async () => {
+  if (!window.notificationAudioContext) {
+    try {
+      window.notificationAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (error) {
+      console.log('AudioContext not supported:', error);
+      return playFallbackSound();
+    }
+  }
+
+  const audioContext = window.notificationAudioContext;
+  
   try {
-    // Create a simple beep using Web Audio API
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    
     // Resume context if suspended (browser autoplay policy)
     if (audioContext.state === 'suspended') {
-      audioContext.resume();
+      await audioContext.resume();
     }
     
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
+    // Create multiple notification beeps for better attention
+    const playBeep = (frequency, startTime, duration = 0.15) => {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(frequency, startTime);
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0, startTime);
+      gainNode.gain.linearRampToValueAtTime(0.1, startTime + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, startTime + duration);
+      
+      oscillator.start(startTime);
+      oscillator.stop(startTime + duration);
+    };
     
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    // Create a pleasant notification sound (two tones)
-    oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-    oscillator.frequency.setValueAtTime(600, audioContext.currentTime + 0.15);
-    oscillator.type = 'sine';
-    
-    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-    gainNode.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 0.05);
-    gainNode.gain.linearRampToValueAtTime(0.05, audioContext.currentTime + 0.15);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.4);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.4);
+    // Play a sequence of beeps
+    const currentTime = audioContext.currentTime;
+    playBeep(800, currentTime, 0.1);
+    playBeep(600, currentTime + 0.15, 0.1);
+    playBeep(800, currentTime + 0.35, 0.15);
     
     console.log('Notification sound played successfully');
     return true;
   } catch (error) {
-    console.log('Could not play notification sound:', error);
-    
-    // Fallback: Use HTML5 Audio with data URI
-    try {
-      const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjiS0u7MeyIELIHM8tiJOQgZZ7fr45dNEwxPq+Xwtl8bBTmR1/LNeSsFJHfH8N+QQAoUXrPq66hVFApGnt7zv2wfBTiS0u7MeyIELYDU7t2TXBsZcabq65xWEQuBluvs5pJDGQNEmtPzt3EhBTmp3e7QgzQJE2KzhN+XVA8PaUgFoW/;');
-      audio.volume = 0.3;
-      audio.play().catch(e => console.log('Fallback audio failed:', e));
-      return true;
-    } catch (fallbackError) {
-      console.log('Fallback audio also failed:', fallbackError);
-      return false;
+    console.log('AudioContext failed:', error);
+    return playFallbackSound();
+  }
+};
+
+// Fallback sound using HTML5 Audio
+const playFallbackSound = () => {
+  try {
+    // Create multiple audio elements for repeated playback
+    if (!window.notificationAudio || window.notificationAudio.ended) {
+      window.notificationAudio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBjiS0u7MeyIELIHM8tiJOQgZZ7fr45dNEwxPq+Xwtl8bBTmR1/LNeSsFJHfH8N+QQAoUXrPq66hVFApGnt7zv2wfBTiS0u7MeyIELYDU7t2TXBsZcabq65xWEQuBluvs5pJDGQNEmtPzt3EhBTmp3e7QgzQJE2KzhN+XVA8PaUgFoW/;');
+      window.notificationAudio.volume = 0.4;
+      window.notificationAudio.preload = 'auto';
     }
+    
+    // Reset and play
+    window.notificationAudio.currentTime = 0;
+    const playPromise = window.notificationAudio.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(e => {
+        console.log('Audio play failed:', e);
+        // Try system notification sound as last resort
+        if (navigator.vibrate) {
+          navigator.vibrate([200, 100, 200]);
+        }
+      });
+    }
+    
+    return true;
+  } catch (fallbackError) {
+    console.log('Fallback audio failed:', fallbackError);
+    
+    // Final fallback: vibration on mobile
+    if (navigator.vibrate) {
+      navigator.vibrate([200, 100, 200]);
+    }
+    
+    return false;
   }
 };
 
@@ -148,19 +197,56 @@ const OrderItemsPreview = ({ items, formatPrice, maxItems = 2 }) => {
         // Get numeric values with fallbacks
         const quantity = Number(item?.quantity || 0);
         const unitPrice = Number(item?.unit_price || item?.price || 0);
+        const totalPrice = Number(item?.total_price || (unitPrice * quantity));
+        
+        // Check for discount
+        const calculatedTotal = unitPrice * quantity;
+        const hasDiscount = Math.abs(calculatedTotal - totalPrice) > 0.01;
+        const discountAmount = calculatedTotal - totalPrice;
+        
+        // Get variant info
+        const variantInfo = item?.variant_name && item?.variant_value ? 
+          ` (${item.variant_name}: ${item.variant_value})` : '';
         
         return (
-          <div key={index} style={{ marginBottom: '2px', color: '#666' }}>
-            <span style={{ fontWeight: 'bold' }}>{quantity}x</span>{' '}
-            <span>{productName}</span>
-            <span style={{ float: 'right', color: '#52c41a' }}>
-              {formatPrice(unitPrice * quantity)}
-            </span>
+          <div key={index} style={{ marginBottom: '3px', color: '#666' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontWeight: 'bold' }}>{quantity}x</span>{' '}
+                <span title={productName + variantInfo}>
+                  {productName.length > 20 ? productName.substring(0, 17) + '...' : productName}
+                </span>
+                {variantInfo && (
+                  <span style={{ color: '#999', fontSize: '10px' }}>
+                    {variantInfo.length > 15 ? variantInfo.substring(0, 12) + '...' : variantInfo}
+                  </span>
+                )}
+              </div>
+              <div style={{ textAlign: 'right', minWidth: '60px' }}>
+                {hasDiscount && discountAmount > 0 && (
+                  <div style={{ 
+                    fontSize: '9px', 
+                    color: '#ff7875', 
+                    textDecoration: 'line-through' 
+                  }}>
+                    {formatPrice(calculatedTotal)}
+                  </div>
+                )}
+                <div style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                  {formatPrice(totalPrice)}
+                </div>
+                {hasDiscount && discountAmount > 0 && (
+                  <div style={{ fontSize: '9px', color: '#fa8c16' }}>
+                    -{formatPrice(discountAmount)}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         );
       })}
       {remainingCount > 0 && (
-        <div style={{ color: '#999', fontSize: '10px', marginTop: '2px' }}>
+        <div style={{ color: '#999', fontSize: '10px', marginTop: '2px', textAlign: 'center' }}>
           +{remainingCount} more item{remainingCount > 1 ? 's' : ''}
         </div>
       )}
@@ -176,39 +262,127 @@ const OrderItemCard = ({ item, formatPrice }) => {
                      item?.product_title_ar || 
                      'Unknown Product';
   
-  // Get unit price from various possible fields with fallback
+  // Get unit price and calculate values
   const unitPrice = Number(item?.unit_price || item?.price || 0);
   const quantity = Number(item?.quantity || 0);
+  const totalPrice = Number(item?.total_price || (unitPrice * quantity));
+  
+  // Get product image with fallback
+  const productImage = item?.product_image || item?.main_image || '/api/placeholder/80/80';
+  
+  // Get variant information
+  const variantName = item?.variant_name;
+  const variantValue = item?.variant_value;
+  const productSku = item?.product_sku || item?.sku;
+  
+  // Calculate discount if there's a difference between calculated and actual total
+  const calculatedTotal = unitPrice * quantity;
+  const discount = calculatedTotal - totalPrice;
+  const hasDiscount = discount > 0.01; // More than 1 cent difference
+  
+  // Get discount information
+  const itemDiscount = Number(item?.discount_amount || item?.discount || 0);
+  const discountPercent = item?.discount_percent || (unitPrice > 0 ? Math.round((itemDiscount / unitPrice) * 100) : 0);
   
   return (
     <Card 
       size="small" 
       style={{ 
-        marginBottom: '8px',
-        borderLeft: '3px solid #1890ff'
+        marginBottom: '12px',
+        borderLeft: '3px solid #1890ff',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
       }}
-      bodyStyle={{ padding: '12px' }}
+      bodyStyle={{ padding: '16px' }}
     >
       <Row gutter={16} align="middle">
-        <Col span={16}>
+        {/* Product Image */}
+        <Col span={4}>
+          <div style={{ textAlign: 'center' }}>
+            <img 
+              src={productImage} 
+              alt={productName}
+              style={{ 
+                width: '60px', 
+                height: '60px', 
+                objectFit: 'cover', 
+                borderRadius: '8px',
+                border: '1px solid #f0f0f0'
+              }}
+              onError={(e) => {
+                e.target.src = '/api/placeholder/60/60';
+              }}
+            />
+          </div>
+        </Col>
+        
+        {/* Product Details */}
+        <Col span={12}>
           <div>
-            <Text strong style={{ fontSize: '14px' }}>
+            <Text strong style={{ fontSize: '15px', color: '#262626' }}>
               {productName}
             </Text>
-            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-              Unit Price: {formatPrice(unitPrice)}
+            
+            {/* Product SKU */}
+            {productSku && (
+              <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: '2px' }}>
+                <Text type="secondary">SKU: {productSku}</Text>
+              </div>
+            )}
+            
+            {/* Variant Information */}
+            {(variantName || variantValue) && (
+              <div style={{ fontSize: '12px', color: '#595959', marginTop: '4px' }}>
+                <Tag size="small" color="blue">
+                  {variantName && variantValue ? `${variantName}: ${variantValue}` : 
+                   variantName || variantValue}
+                </Tag>
+              </div>
+            )}
+            
+            {/* Price Information */}
+            <div style={{ fontSize: '12px', color: '#666', marginTop: '6px' }}>
+              <Space split={<span style={{ color: '#d9d9d9' }}>•</span>}>
+                <span>Unit Price: {formatPrice(unitPrice)}</span>
+                <span>Qty: <strong>{quantity}</strong></span>
+              </Space>
             </div>
+            
+            {/* Discount Information */}
+            {(hasDiscount || itemDiscount > 0) && (
+              <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                <Tag color="orange" size="small">
+                  {discountPercent > 0 ? `${discountPercent}% OFF` : 'DISCOUNT'}
+                  {itemDiscount > 0 && ` (-${formatPrice(itemDiscount)})`}
+                </Tag>
+              </div>
+            )}
           </div>
         </Col>
-        <Col span={4} style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '14px' }}>
-            <Text strong>Qty: {quantity}</Text>
+        
+        {/* Quantity and Total */}
+        <Col span={8} style={{ textAlign: 'right' }}>
+          <div>
+            {/* Original Price (if discounted) */}
+            {hasDiscount && (
+              <div style={{ fontSize: '12px', color: '#8c8c8c', textDecoration: 'line-through' }}>
+                {formatPrice(calculatedTotal)}
+              </div>
+            )}
+            
+            {/* Total Price */}
+            <div>
+              <Text strong style={{ color: '#52c41a', fontSize: '16px' }}>
+                {formatPrice(totalPrice)}
+              </Text>
+            </div>
+            
+            {/* Savings */}
+            {hasDiscount && (
+              <div style={{ fontSize: '11px', color: '#ff7875' }}>
+                Save {formatPrice(discount)}
+              </div>
+            )}
           </div>
-        </Col>
-        <Col span={4} style={{ textAlign: 'right' }}>
-          <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
-            {formatPrice(unitPrice * quantity)}
-          </Text>
         </Col>
       </Row>
     </Card>
@@ -291,6 +465,13 @@ const Orders = () => {
   const [bulkActionLoading, setBulkActionLoading] = useState(false);
   const [paymentLoadingId, setPaymentLoadingId] = useState(null); // Track loading for pay button
 
+  // Payment update states
+  const [paymentUpdateVisible, setPaymentUpdateVisible] = useState(false);
+  const [paymentUpdateLoading, setPaymentUpdateLoading] = useState(false);
+  const [paymentLinkVisible, setPaymentLinkVisible] = useState(false);
+  const [generatedPaymentLink, setGeneratedPaymentLink] = useState('');
+  const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+
   // Initiate MPGS Hosted Checkout for an order
   const initiateCardPayment = async (order) => {
     if (!order || paymentLoadingId) return;
@@ -335,13 +516,93 @@ const Orders = () => {
     }
   };
 
+  // Apply client-side filtering to orders
+  const filteredOrders = useMemo(() => {
+    if (!Array.isArray(orders)) return [];
+    
+    return orders.filter(order => {
+      // Payment method filter
+      if (filters.payment_method && filters.payment_method !== 'all') {
+        if (order.payment_method !== filters.payment_method) return false;
+      }
+      
+      // Status filter
+      if (filters.status && filters.status !== 'all') {
+        if (order.status !== filters.status) return false;
+      }
+      
+      // Order type filter
+      if (filters.order_type && filters.order_type !== 'all') {
+        if (order.order_type !== filters.order_type) return false;
+      }
+      
+      // Date range filter
+      if (filters.date_range && filters.date_range !== 'all') {
+        const orderDate = new Date(order.created_at);
+        const today = new Date();
+        const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        
+        switch (filters.date_range) {
+          case 'today':
+            if (orderDate < startOfToday) return false;
+            break;
+          case 'yesterday':
+            const yesterday = new Date(startOfToday);
+            yesterday.setDate(yesterday.getDate() - 1);
+            if (orderDate < yesterday || orderDate >= startOfToday) return false;
+            break;
+          case 'week':
+            const weekAgo = new Date(startOfToday);
+            weekAgo.setDate(weekAgo.getDate() - 7);
+            if (orderDate < weekAgo) return false;
+            break;
+          case 'month':
+            const monthAgo = new Date(startOfToday);
+            monthAgo.setMonth(monthAgo.getMonth() - 1);
+            if (orderDate < monthAgo) return false;
+            break;
+          case 'custom':
+            if (filters.custom_date_range) {
+              const [startDate, endDate] = filters.custom_date_range;
+              if (startDate && orderDate < new Date(startDate)) return false;
+              if (endDate && orderDate > new Date(endDate)) return false;
+            }
+            break;
+        }
+      }
+      
+      // Search filter
+      if (filters.search && filters.search.trim()) {
+        const searchLower = filters.search.toLowerCase();
+        const searchableFields = [
+          order.id?.toString(),
+          order.customer_name,
+          order.customer_phone,
+          order.customer_email,
+          order.notes,
+          order.status,
+          order.payment_method,
+          order.order_type
+        ];
+        
+        const hasMatch = searchableFields.some(field => 
+          field && field.toString().toLowerCase().includes(searchLower)
+        );
+        
+        if (!hasMatch) return false;
+      }
+      
+      return true;
+    });
+  }, [orders, filters]);
+
   // Initialize table sorting with default sorting by created_at (newest first)
   const {
     sortedData: sortedOrders,
     sortConfig,
     getColumnSortProps,
     clearSorting
-  } = useTableSorting(orders, [
+  } = useTableSorting(filteredOrders, [
     { key: 'created_at', direction: 'desc', comparator: (a, b, direction) => {
       const aVal = new Date(a).getTime() || 0;
       const bVal = new Date(b).getTime() || 0;
@@ -349,6 +610,39 @@ const Orders = () => {
       return direction === 'asc' ? result : -result;
     }}
   ]);
+
+  // Initialize persistent notification system
+  useEffect(() => {
+    console.log('🔔 Initializing persistent notification system...');
+    
+    // Restore any notifications from previous session
+    persistentNotificationSystem.restoreNotifications();
+    
+    // Set sound preference
+    const savedSoundEnabled = localStorage.getItem('orderSoundEnabled');
+    const enabled = savedSoundEnabled !== 'false';
+    persistentNotificationSystem.setSoundEnabled(enabled);
+    
+    // Add click listener to initialize audio on first user interaction
+    const handleFirstInteraction = async () => {
+      console.log('👆 First user interaction detected, initializing audio...');
+      await persistentNotificationSystem.initializeUserInteraction();
+      
+      // Remove the listener after first interaction
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('keydown', handleFirstInteraction);
+    };
+    
+    document.addEventListener('click', handleFirstInteraction);
+    document.addEventListener('keydown', handleFirstInteraction);
+    
+    return () => {
+      // Clean up when component unmounts
+      document.removeEventListener('click', handleFirstInteraction);
+      document.removeEventListener('keydown', handleFirstInteraction);
+      persistentNotificationSystem.destroy();
+    };
+  }, []);
 
   // Socket connection setup
   useEffect(() => {
@@ -496,12 +790,24 @@ const Orders = () => {
       socketRef.current.on('newOrderCreated', (orderData) => {
         console.log('🆕 New order received via Socket.io:', orderData);
         
-        // Play notification sound
-        if (soundEnabled) {
-          playNotificationSound();
-        }
+        // Add persistent notification that will keep playing sound until acknowledged
+        const notificationId = `order_${orderData.orderId}_${Date.now()}`;
+        addPersistentNotification(notificationId, {
+          orderId: orderData.orderId,
+          orderNumber: orderData.orderNumber,
+          customerName: orderData.customerName,
+          customerPhone: orderData.customerPhone || '',
+          customerEmail: orderData.customerEmail || '',
+          orderTotal: orderData.orderTotal,
+          orderType: orderData.orderType,
+          paymentMethod: orderData.paymentMethod || 'cash',
+          paymentStatus: orderData.paymentStatus || 'pending',
+          createdAt: orderData.createdAt,
+          itemsCount: orderData.itemsCount || 1,
+          items: orderData.items || []
+        });
         
-        // Show notification
+        // Show visual notification
         message.success({
           content: `🆕 New order received: #${orderData.orderId} from ${orderData.customerName}`,
           duration: 6,
@@ -745,20 +1051,56 @@ const Orders = () => {
         params.search = filters.search.trim();
       }
       
-      // Handle date range
+      // Handle date range - convert predefined ranges to start_date/end_date
       if (filters.date_range && filters.date_range !== 'all') {
+        const today = new Date();
+        const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+        
         if (filters.date_range === 'custom' && filters.custom_date_range) {
           const [startDate, endDate] = filters.custom_date_range;
           if (startDate && endDate) {
-            params.start_date = startDate.format('YYYY-MM-DD');
-            params.end_date = endDate.format('YYYY-MM-DD');
+            // Handle both moment.js objects and plain date objects
+            const startDateStr = startDate.format ? startDate.format('YYYY-MM-DD') : startDate;
+            const endDateStr = endDate.format ? endDate.format('YYYY-MM-DD') : endDate;
+            params.start_date = startDateStr;
+            params.end_date = endDateStr;
           }
         } else {
-          params.date_range = filters.date_range;
+          // Convert predefined date ranges to specific dates
+          switch (filters.date_range) {
+            case 'today':
+              params.start_date = todayStr;
+              params.end_date = todayStr;
+              break;
+            case 'yesterday':
+              const yesterday = new Date(today);
+              yesterday.setDate(yesterday.getDate() - 1);
+              const yesterdayStr = yesterday.toISOString().split('T')[0];
+              params.start_date = yesterdayStr;
+              params.end_date = yesterdayStr;
+              break;
+            case 'week':
+              const weekAgo = new Date(today);
+              weekAgo.setDate(weekAgo.getDate() - 7);
+              params.start_date = weekAgo.toISOString().split('T')[0];
+              params.end_date = todayStr;
+              break;
+            case 'month':
+              const monthAgo = new Date(today);
+              monthAgo.setMonth(monthAgo.getMonth() - 1);
+              params.start_date = monthAgo.toISOString().split('T')[0];
+              params.end_date = todayStr;
+              break;
+            default:
+              // For any other predefined range, don't add date filters
+              break;
+          }
         }
       }
       
-      params.limit = 50;
+      // Set high limit to show more orders, and handle pagination
+      params.limit = 1000; // Significantly increased limit to show more orders
+      params.page = 1; // Always start from page 1 to get the most recent orders
       
       console.log('Fetching orders with params:', params);
       const response = await ordersService.getOrders(params);
@@ -799,37 +1141,64 @@ const Orders = () => {
     try {
       setStatsLoading(true);
       
-      // Use current filters for stats calculation
-      const statsParams = {};
-      
-      if (filters.date_range && filters.date_range !== 'all') {
-        if (filters.date_range === 'custom' && filters.custom_date_range) {
-          const [startDate, endDate] = filters.custom_date_range;
-          if (startDate && endDate) {
-            statsParams.start_date = startDate.format('YYYY-MM-DD');
-            statsParams.end_date = endDate.format('YYYY-MM-DD');
+      // Calculate stats from the filtered orders data instead of calling backend
+      // This ensures the stats reflect the current filter state
+      if (filteredOrders && filteredOrders.length >= 0) {
+        const stats = {
+          total_orders: filteredOrders.length,
+          total_revenue: filteredOrders.reduce((sum, order) => sum + (parseFloat(order.total_amount) || 0), 0),
+          average_order_value: filteredOrders.length > 0 ? 
+            filteredOrders.reduce((sum, order) => sum + (parseFloat(order.total_amount) || 0), 0) / filteredOrders.length : 0,
+          status_stats: []
+        };
+        
+        // Calculate status statistics
+        const statusCounts = {};
+        filteredOrders.forEach(order => {
+          const status = order.order_status || 'unknown';
+          if (!statusCounts[status]) {
+            statusCounts[status] = { count: 0, total_amount: 0 };
           }
-        } else {
-          statsParams.date_range = filters.date_range;
-        }
+          statusCounts[status].count++;
+          statusCounts[status].total_amount += parseFloat(order.total_amount) || 0;
+        });
+        
+        // Convert to array format
+        stats.status_stats = Object.entries(statusCounts).map(([status, data]) => ({
+          order_status: status,
+          count: data.count,
+          total_amount: data.total_amount
+        }));
+        
+        // Calculate payment method statistics
+        const paymentCounts = {};
+        filteredOrders.forEach(order => {
+          const method = order.payment_method || 'unknown';
+          if (!paymentCounts[method]) {
+            paymentCounts[method] = { count: 0, total_amount: 0 };
+          }
+          paymentCounts[method].count++;
+          paymentCounts[method].total_amount += parseFloat(order.total_amount) || 0;
+        });
+        
+        stats.payment_stats = Object.entries(paymentCounts).map(([method, data]) => ({
+          payment_method: method,
+          count: data.count,
+          total_amount: data.total_amount
+        }));
+        
+        console.log('✅ Calculated stats from filtered orders:', stats);
+        setOrderStats(stats);
       } else {
-        statsParams.date_range = 'today'; // Default to today if no filter
+        // Fallback to empty stats if no filtered orders
+        setOrderStats({
+          total_orders: 0,
+          total_revenue: 0,
+          average_order_value: 0,
+          status_stats: [],
+          payment_stats: []
+        });
       }
-      
-      // Apply other filters to stats
-      if (filters.status && filters.status !== 'all') {
-        statsParams.status = filters.status;
-      }
-      if (filters.order_type && filters.order_type !== 'all') {
-        statsParams.order_type = filters.order_type;
-      }
-      if (filters.payment_method && filters.payment_method !== 'all') {
-        statsParams.payment_method = filters.payment_method;
-      }
-      
-      console.log('Fetching stats with params:', statsParams);
-      const response = await ordersService.getOrderStats(statsParams);
-      setOrderStats(response.data || {});
     } catch (error) {
       console.error('Failed to fetch order stats:', error);
     } finally {
@@ -839,12 +1208,22 @@ const Orders = () => {
 
   const fetchOrderCounts = async () => {
     try {
-      console.log('🔢 Fetching order counts...');
-      const response = await ordersService.getOrderCounts();
-      console.log('📊 Order counts response:', response.data);
-      setOrderCounts(response.data || {});
+      console.log('🔢 Calculating order counts from filtered orders...');
+      
+      // Calculate counts from the filtered orders data
+      const counts = {};
+      
+      if (filteredOrders && filteredOrders.length >= 0) {
+        filteredOrders.forEach(order => {
+          const status = order.order_status || 'unknown';
+          counts[status] = (counts[status] || 0) + 1;
+        });
+      }
+      
+      console.log('📊 Calculated order counts:', counts);
+      setOrderCounts(counts);
     } catch (error) {
-      console.error('Failed to fetch order counts:', error);
+      console.error('Failed to calculate order counts:', error);
     }
   };
 
@@ -1245,6 +1624,17 @@ const Orders = () => {
       setStatusUpdateLoading(true);
       await ordersService.updateOrderStatus(selectedOrder.id, selectedStatus, statusNotes);
       
+      // Acknowledge persistent notifications when order is processed
+      if (['processing', 'ready', 'dispatched', 'delivered', 'completed', 'cancelled'].includes(selectedStatus)) {
+        const storedNotifications = persistentNotificationSystem.getStoredNotifications();
+        Object.entries(storedNotifications).forEach(([notificationId, data]) => {
+          if (data.orderId === selectedOrder.id) {
+            acknowledgePersistentNotification(notificationId);
+            console.log(`✅ Acknowledged notification for order ${selectedOrder.id} - status changed to ${selectedStatus}`);
+          }
+        });
+      }
+      
       message.success(t('orders.status_updated_successfully'));
       setStatusUpdateVisible(false);
       setSelectedStatus('');
@@ -1295,6 +1685,76 @@ const Orders = () => {
       updatePendingCount();
     } catch (error) {
       message.error(error.message || t('orders.status_update_failed'));
+    }
+  };
+
+  // Update payment method
+  const handlePaymentMethodUpdate = async (order, paymentMethod) => {
+    try {
+      setPaymentUpdateLoading(true);
+      await ordersService.updatePaymentMethod(order.id, paymentMethod);
+      message.success(t('orders.payment_method_updated') || 'Payment method updated successfully');
+      fetchOrders();
+    } catch (error) {
+      message.error(error.message || t('orders.payment_method_update_failed') || 'Failed to update payment method');
+    } finally {
+      setPaymentUpdateLoading(false);
+    }
+  };
+
+  // Update payment status
+  const handlePaymentStatusUpdate = async (order, paymentStatus) => {
+    try {
+      setPaymentUpdateLoading(true);
+      await ordersService.updatePaymentStatus(order.id, paymentStatus);
+      message.success(t('orders.payment_status_updated') || 'Payment status updated successfully');
+      fetchOrders();
+    } catch (error) {
+      message.error(error.message || t('orders.payment_status_update_failed') || 'Failed to update payment status');
+    } finally {
+      setPaymentUpdateLoading(false);
+    }
+  };
+
+  // Generate and copy payment link
+  const handleGeneratePaymentLink = async (order) => {
+    try {
+      setPaymentLinkLoading(true);
+      const response = await ordersService.generatePaymentLink(order.id);
+      const paymentLink = response.data.payment_link;
+      setGeneratedPaymentLink(paymentLink);
+      
+      // Copy to clipboard
+      await navigator.clipboard.writeText(paymentLink);
+      
+      message.success({
+        content: (
+          <div>
+            <strong>{t('orders.payment_link_generated') || 'Payment link generated and copied!'}</strong>
+            <br />
+            <small style={{ color: '#666' }}>
+              {t('orders.link_copied_to_clipboard') || 'Link copied to clipboard'}
+            </small>
+          </div>
+        ),
+        duration: 5
+      });
+      
+      setPaymentLinkVisible(true);
+    } catch (error) {
+      message.error(error.message || t('orders.payment_link_generation_failed') || 'Failed to generate payment link');
+    } finally {
+      setPaymentLinkLoading(false);
+    }
+  };
+
+  // Copy payment link to clipboard
+  const handleCopyPaymentLink = async () => {
+    try {
+      await navigator.clipboard.writeText(generatedPaymentLink);
+      message.success(t('orders.link_copied') || 'Link copied to clipboard');
+    } catch (error) {
+      message.error(t('orders.copy_failed') || 'Failed to copy link');
     }
   };
 
@@ -2260,6 +2720,15 @@ const Orders = () => {
       setDetailsVisible(true);
       setDetailsLoading(true);
       
+      // Acknowledge any persistent notifications for this order
+      const storedNotifications = persistentNotificationSystem.getStoredNotifications();
+      Object.entries(storedNotifications).forEach(([notificationId, data]) => {
+        if (data.orderId === order.id) {
+          acknowledgePersistentNotification(notificationId);
+          console.log(`✅ Acknowledged notification for order ${order.id}`);
+        }
+      });
+      
       // Set basic order data immediately with fallbacks
       const safeOrder = {
         id: order?.id || 'N/A',
@@ -2485,168 +2954,117 @@ const Orders = () => {
     });
   };
 
-  const handleBulkExport = () => {
-    if (!hasSelected) return;
-    
-    const selectedOrders = orders.filter(order => selectedRowKeys.includes(order.id));
-    
-    // Create comprehensive CSV data with organized structure
-    const csvData = selectedOrders.map(order => {
-      // Format order date and time separately
-      const orderDate = new Date(order.created_at);
-      const formattedDate = orderDate.toLocaleDateString('en-GB'); // DD/MM/YYYY format
-      const formattedTime = orderDate.toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: false // 24-hour format for better sorting
-      });
-      
-      // Calculate age in hours for operational use
-      const now = new Date();
-      const diffMs = now - orderDate;
-      const diffHours = Math.floor(diffMs / 3600000);
-      const diffDays = Math.floor(diffHours / 24);
-      const orderAge = diffDays > 0 ? `${diffDays}d ${diffHours % 24}h` : `${diffHours}h`;
-      
-      // Format delivery address with detailed breakdown
-      let addressLine1 = '-';
-      let addressLine2 = '-';
-      let city = '-';
-      let governorate = '-';
-      let fullAddress = '-';
-      
-      if (order.order_type === 'delivery' && order.delivery_address) {
-        const addr = order.delivery_address;
-        addressLine1 = addr.address_line || '-';
-        addressLine2 = addr.address_line_2 || '-';
-        city = addr.city || '-';
-        governorate = addr.governorate || '-';
-        fullAddress = `${addr.address_line || ''}, ${addr.city || ''}, ${addr.governorate || ''}`.replace(/^,\s*|,\s*$/g, '');
-      }
-      
-      // Format payment status and method
-      const paymentStatusText = order.payment_status ? 
-        (t(`orders.payment_status_${order.payment_status}`) || order.payment_status) : 
-        'Pending';
-      
-      const paymentMethodText = order.payment_method ? 
-        (t(`orders.payment_${order.payment_method}`) || order.payment_method) : 
-        'Unknown';
-      
-      // Calculate totals with proper formatting
-      const subtotal = Number(order.subtotal || 0);
-      const deliveryFee = Number(order.delivery_fee || 0);
-      const taxAmount = Number(order.tax_amount || 0);
-      const discountAmount = Number(order.discount_amount || 0);
-      const totalAmount = Number(order.total_amount || 0);
-      
-      return {
-        // Basic Order Information
-        'Order ID': order.id,
-        'Order Number': order.order_number || `ORD-${order.id}`,
-        'Order Status': t(`orders.status_${order.order_status}`) || order.order_status,
-        'Order Type': t(`orders.${order.order_type}`) || order.order_type,
-        
-        // Date and Time (Separate columns for better filtering)
-        'Order Date': formattedDate,
-        'Order Time': formattedTime,
-        'Order Age': orderAge,
-        'Created Timestamp': order.created_at,
-        
-        // Customer Information (Separate columns)
-        'Customer Name': order.customer_name || 'Unknown',
-        'Customer Phone': order.customer_phone || '-',
-        'Customer Email': order.customer_email || '-',
-        
-        // Financial Breakdown (Separate columns for analysis)
-        'Subtotal (USD)': subtotal.toFixed(2),
-        'Delivery Fee (USD)': deliveryFee.toFixed(2),
-        'Tax Amount (USD)': taxAmount.toFixed(2),
-        'Discount Amount (USD)': discountAmount.toFixed(2),
-        'Total Amount (USD)': totalAmount.toFixed(2),
-        
-        // Payment Information
-        'Payment Method': paymentMethodText,
-        'Payment Status': paymentStatusText,
-        'Points Used': order.points_used || 0,
-        'Points Earned': order.points_earned || 0,
-        
-        // Order Content Details
-        'Items Count': order.items_count || 0,
-        'Special Instructions': order.special_instructions || '-',
-        'Promo Code': order.promo_code || '-',
-        
-        // Address Information (Detailed breakdown)
-        'Address Line 1': addressLine1,
-        'Address Line 2': addressLine2,
-        'City': city,
-        'Governorate': governorate,
-        'Full Address': fullAddress,
-        
-        // Delivery Information
-        'Estimated Delivery': order.estimated_delivery_time ? 
-          new Date(order.estimated_delivery_time).toLocaleString() : '-',
-        'Delivered At': order.delivered_at ? 
-          new Date(order.delivered_at).toLocaleString() : '-',
-        
-        // Cancellation Information
-        'Cancelled At': order.cancelled_at ? 
-          new Date(order.cancelled_at).toLocaleString() : '-',
-        'Cancellation Reason': order.cancellation_reason || '-',
-        
-        // Branch Information
-        'Branch Name': order.branch_title_en || order.branch_title_ar || 'Unknown Branch',
-        'Branch ID': order.branch_id || '-',
-        
-        // Timestamps
-        'Last Updated': order.updated_at ? 
-          new Date(order.updated_at).toLocaleString() : '-'
-      };
-    });
-    
-    if (csvData.length === 0) {
-      message.warning('No data to export');
+  // Enhanced Orders Export with complete data and proper Excel formatting
+  const handleBulkExport = async () => {
+    if (!hasSelected) {
+      message.warning('Please select orders to export');
       return;
     }
     
-    // Create organized CSV content with proper headers
-    const headers = Object.keys(csvData[0]);
-    const csvContent = [
-      // Add comprehensive header information
-      'FECS Restaurant - Detailed Orders Export',
-      `Export Date: ${new Date().toLocaleString()}`,
-      `Total Orders: ${selectedRowKeys.length}`,
-      `Filters Applied: ${JSON.stringify(filters)}`,
-      '', // Empty line for separation
-      // Column headers
-      headers.join(','),
-      // Data rows with proper CSV escaping
-      ...csvData.map(row => 
-        headers.map(header => {
-          const value = row[header];
-          // Properly escape CSV values
-          if (value === null || value === undefined) return '';
-          const stringValue = String(value);
-          if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-            return `"${stringValue.replace(/"/g, '""')}"`;
+    try {
+      const selectedOrders = orders.filter(order => selectedRowKeys.includes(order.id));
+      
+      // Fetch complete order details including items and status history
+      const ordersWithDetails = await Promise.all(
+        selectedOrders.map(async (order) => {
+          try {
+            // Get detailed order information
+            const detailResponse = await ordersService.getOrder(order.id);
+            const orderDetails = detailResponse.data?.order || order;
+            
+            // Merge with existing order data to ensure we have all fields
+            return {
+              ...order,
+              ...orderDetails,
+              items: detailResponse.data?.items || order.items || [],
+              status_history: detailResponse.data?.status_history || order.status_history || []
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for order ${order.id}:`, error);
+            // Return the original order if details fetch fails
+            return order;
           }
-          return stringValue;
-        }).join(',')
-      )
-    ].join('\n');
-    
-    // Create and download the file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `FECS_Orders_Export_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    message.success(t('orders.exported_successfully', { count: selectedRowKeys.length }));
+        })
+      );
+
+      // Use the comprehensive export utility
+      await exportOrders
+      ToExcel(ordersWithDetails, {
+        includeItems: true,
+        includeStatusHistory: true,
+        filename: `FECS_Orders_Export_${selectedRowKeys.length}_Orders`,
+        t: t // Pass translation function
+      });
+
+      // Clear selection after successful export
+      setSelectedRowKeys([]);
+      
+    } catch (error) {
+      console.error('Export error:', error);
+      message.error('Failed to export orders. Please try again.');
+    }
+  };
+
+  // Export all orders (filtered)
+  const handleExportAll = async () => {
+    try {
+      if (!orders || orders.length === 0) {
+        message.warning('No orders to export');
+        return;
+      }
+
+      const exportConfirm = Modal.confirm({
+        title: 'Export All Orders',
+        content: `Are you sure you want to export all ${orders.length} orders? This may take a few moments.`,
+        okText: 'Export',
+        okType: 'primary',
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            // Show loading message
+            const loadingMessage = message.loading('Preparing export... This may take a few moments.', 0);
+
+            // Fetch complete order details for all orders
+            const ordersWithDetails = await Promise.all(
+              orders.map(async (order) => {
+                try {
+                  const detailResponse = await ordersService.getOrder(order.id);
+                  const orderDetails = detailResponse.data?.order || order;
+                  
+                  return {
+                    ...order,
+                    ...orderDetails,
+                    items: detailResponse.data?.items || order.items || [],
+                    status_history: detailResponse.data?.status_history || order.status_history || []
+                  };
+                } catch (error) {
+                  console.warn(`Failed to fetch details for order ${order.id}:`, error);
+                  return order;
+                }
+              })
+            );
+
+            // Use the comprehensive export utility
+            await exportOrdersToExcel(ordersWithDetails, {
+              includeItems: true,
+              includeStatusHistory: true,
+              filename: `FECS_All_Orders_Export_${orders.length}_Orders`,
+              t: t
+            });
+
+            loadingMessage();
+            
+          } catch (error) {
+            console.error('Export all orders error:', error);
+            message.error('Failed to export all orders. Please try again.');
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('Export all orders error:', error);
+      message.error('Failed to export orders. Please try again.');
+    }
   };
 
   const clearSelection = () => {
@@ -2722,95 +3140,197 @@ const Orders = () => {
 
   const columns = [
     {
-      title: t('orders.order_number'),
+      title: 'Num',
       dataIndex: 'order_number',
       key: 'order_number',
-      width: 60,
+      width: 70,
+      fixed: 'left',
       ...getColumnSortProps('order_number', 'string'),
       render: (orderNumber, record) => (
-        <Text strong style={{ color: '#1890ff', fontSize: '12px' }}>
+        <Button
+          type="link"
+          style={{ 
+            color: '#1890ff', 
+            fontSize: '12px', 
+            fontWeight: 'bold',
+            padding: 0,
+            height: 'auto'
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleViewDetails(record);
+          }}
+        >
           #{record.id}
-        </Text>
+        </Button>
       )
     },
     {
-      title: t('orders.customer'),
-      key: 'customer_name',
-      dataIndex: 'customer_name',
-      width: 200,
-      ...getColumnSortProps('customer_name', 'string'),
-      render: (_, record) => (
+      title: t('orders.orderDateTime'),
+      key: 'created_at',
+      dataIndex: 'created_at',
+      width: 130,
+      ...getColumnSortProps('created_at', 'date'),
+      render: (date) => (
         <div>
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'flex-start',
-            marginBottom: '4px'
-          }}>
-            <div style={{ fontWeight: 'bold', fontSize: '13px', flex: 1 }}>
-              {record.customer_name}
-            </div>
-            <div style={{ 
-              fontSize: '10px', 
-              color: '#999', 
-              textAlign: 'right',
-              marginLeft: '8px',
-              lineHeight: '1.2'
-            }}>
-              {(() => {
-                const now = new Date();
-                const orderDate = new Date(record.created_at);
-                const diffMs = now - orderDate;
-                const diffMins = Math.floor(diffMs / 60000);
-                const diffHours = Math.floor(diffMins / 60);
-                const diffDays = Math.floor(diffHours / 24);
-                
-                if (diffMins < 60) return `${diffMins}m`;
-                if (diffHours < 24) return `${diffHours}h`;
-                return `${diffDays}d`;
-              })()}
-            </div>
+          <div style={{ fontSize: '12px', fontWeight: 'bold' }}>
+            {new Date(date).toLocaleDateString()}
           </div>
           <div style={{ fontSize: '11px', color: '#666' }}>
-            <PhoneOutlined style={{ marginRight: 4 }} />
-            {record.customer_phone}
-          </div>
-          {record.customer_email && (
-            <div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
-              <MailOutlined style={{ marginRight: 4 }} />
-              {record.customer_email}
-            </div>
-          )}
-          <div style={{ 
-            fontSize: '10px', 
-            color: '#888', 
-            marginTop: '3px',
-            borderTop: '1px solid #f0f0f0',
-            paddingTop: '3px'
-          }}>
-            <ClockCircleOutlined style={{ marginRight: 4 }} />
-            {new Date(record.created_at).toLocaleDateString()} {new Date(record.created_at).toLocaleTimeString([], { 
+            {new Date(date).toLocaleTimeString([], { 
               hour: '2-digit', 
               minute: '2-digit',
               hour12: true 
             })}
           </div>
-          {record.order_type === 'delivery' && record.delivery_address && (
-            <div style={{ fontSize: '11px', color: '#666', marginTop: '4px', padding: '4px', backgroundColor: '#f5f5f5', borderRadius: '3px' }}>
-              <EnvironmentOutlined style={{ marginRight: 4 }} />
-              <div style={{ fontWeight: 'bold' }}>{record.delivery_address.full_name}</div>
-              <div>{record.delivery_address.address_line}</div>
-              <div>{record.delivery_address.city}, {record.delivery_address.governorate}</div>
-            </div>
-          )}
+          <div style={{ fontSize: '10px', color: '#999', marginTop: '2px' }}>
+            {(() => {
+              const now = new Date();
+              const orderDate = new Date(date);
+              const diffMs = now - orderDate;
+              const diffMins = Math.floor(diffMs / 60000);
+              const diffHours = Math.floor(diffMins / 60);
+              const diffDays = Math.floor(diffHours / 24);
+              
+              if (diffMins < 60) return `${diffMins}m ago`;
+              if (diffHours < 24) return `${diffHours}h ago`;
+              return `${diffDays}d ago`;
+            })()}
+          </div>
         </div>
       )
+    },
+    {
+      title: t('orders.customerName'),
+      key: 'customer_name',
+      dataIndex: 'customer_name',
+      width: 110,
+      ...getColumnSortProps('customer_name', 'string'),
+      render: (name) => (
+        <div style={{ fontWeight: 'bold', fontSize: '13px' }}>
+          {name}
+        </div>
+      )
+    },
+    {
+      title: t('orders.phoneNumber'),
+      key: 'customer_phone',
+      dataIndex: 'customer_phone',
+      width: 110,
+      render: (phone) => (
+        <div style={{ fontSize: '12px' }}>
+          <PhoneOutlined style={{ marginRight: 4, color: '#1890ff' }} />
+          {phone}
+        </div>
+      )
+    },
+    {
+      title: t('orders.email'),
+      key: 'customer_email',
+      dataIndex: 'customer_email',
+      width: 140,
+      render: (email) => email ? (
+        <div style={{ fontSize: '11px' }}>
+          <MailOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+          <Text ellipsis style={{ maxWidth: 120 }} title={email}>
+            {email}
+          </Text>
+        </div>
+      ) : (
+        <Text type="secondary" style={{ fontSize: '11px' }}>No email</Text>
+      )
+    },
+    {
+      title: t('orders.location'),
+      key: 'location',
+      width: 160,
+      render: (_, record) => {
+        if (record.order_type === 'delivery' && record.delivery_address) {
+          const { delivery_address } = record;
+          const hasCoordinates = delivery_address.latitude && delivery_address.longitude;
+          
+          const handleLocationClick = () => {
+            if (hasCoordinates) {
+              // Open exact location in Google Maps
+              const mapsUrl = `https://maps.google.com/?q=${delivery_address.latitude},${delivery_address.longitude}`;
+              window.open(mapsUrl, '_blank');
+            } else {
+              // Fallback to address search
+              const addressText = [
+                delivery_address.address_line,
+                delivery_address.area,
+                delivery_address.city,
+                delivery_address.governorate,
+                'Jordan'
+              ].filter(Boolean).join(', ');
+              const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(addressText)}`;
+              window.open(mapsUrl, '_blank');
+            }
+          };
+          
+          return (
+            <div 
+              style={{ 
+                fontSize: '11px', 
+                cursor: 'pointer',
+                padding: '4px',
+                borderRadius: '4px',
+                transition: 'all 0.2s',
+                textDecoration: 'underline',
+                textDecorationColor: '#1890ff',
+                textDecorationThickness: '1px',
+                color: '#1890ff'
+              }}
+              onClick={handleLocationClick}
+              onMouseEnter={(e) => {
+                e.target.style.backgroundColor = '#f0f8ff';
+                e.target.style.textDecorationThickness = '2px';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.backgroundColor = 'transparent';
+                e.target.style.textDecorationThickness = '1px';
+              }}
+              title={hasCoordinates ? 
+                `Click to open exact location in maps (${delivery_address.latitude}, ${delivery_address.longitude})` : 
+                'Click to search location in maps'
+              }
+            >
+              <EnvironmentOutlined style={{ 
+                marginRight: 4, 
+                color: hasCoordinates ? '#52c41a' : '#fa8c16' 
+              }} />
+              <div style={{ fontWeight: 'bold', marginBottom: '2px', color: 'inherit' }}>
+                {delivery_address.full_name || delivery_address.name}
+              </div>
+              <div style={{ color: 'inherit', opacity: 0.8 }}>
+                {delivery_address.address_line}
+              </div>
+              <div style={{ color: 'inherit', opacity: 0.8 }}>
+                {delivery_address.city}, {delivery_address.governorate}
+              </div>
+              {hasCoordinates && (
+                <div style={{ fontSize: '9px', color: '#52c41a', marginTop: '2px' }}>
+                  📍 GPS Available
+                </div>
+              )}
+            </div>
+          );
+        } else if (record.order_type === 'pickup') {
+          return (
+            <div style={{ fontSize: '11px', color: '#666' }}>
+              <ShoppingCartOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              <Text type="secondary">Pickup Order</Text>
+            </div>
+          );
+        }
+        return <Text type="secondary" style={{ fontSize: '11px' }}>No location</Text>;
+      }
     },
     {
       title: t('orders.status'),
       dataIndex: 'order_status',
       key: 'status',
-      width: 100,
+      width: 140,
       ...getColumnSortProps('order_status', 'string'),
       render: (status, record) => {
         const orderStatus = status || 'pending';
@@ -2844,18 +3364,32 @@ const Orders = () => {
             trigger={['click']}
             placement="bottomLeft"
           >
-            <div 
-              style={{ cursor: 'pointer' }}
+            <Button
+              type="primary"
+              size="middle"
+              style={{ 
+                cursor: 'pointer',
+                minWidth: '120px',
+                height: '36px',
+                fontSize: '13px',
+                backgroundColor: getStatusColor(orderStatus) === 'orange' ? '#fa8c16' :
+                                getStatusColor(orderStatus) === 'blue' ? '#1890ff' :
+                                getStatusColor(orderStatus) === 'purple' ? '#722ed1' :
+                                getStatusColor(orderStatus) === 'cyan' ? '#13c2c2' :
+                                getStatusColor(orderStatus) === 'gold' ? '#faad14' :
+                                getStatusColor(orderStatus) === 'green' ? '#52c41a' :
+                                getStatusColor(orderStatus) === 'red' ? '#ff4d4f' : '#d9d9d9',
+                borderColor: 'transparent',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+                fontWeight: '600',
+                borderRadius: '6px',
+                transition: 'all 0.2s ease'
+              }}
+              icon={getStatusIcon(orderStatus)}
               onClick={(e) => e.stopPropagation()}
             >
-              <Tag 
-                color={getStatusColor(orderStatus)} 
-                icon={getStatusIcon(orderStatus)}
-                style={{ cursor: 'pointer', fontSize: '11px' }}
-              >
-                {t(`orders.status_${orderStatus}`)}
-              </Tag>
-            </div>
+              {t(`orders.status_${orderStatus}`)}
+            </Button>
           </Dropdown>
         );
       }
@@ -2864,56 +3398,137 @@ const Orders = () => {
       title: t('orders.type'),
       dataIndex: 'order_type',
       key: 'order_type',
-      width: 90,
+      width: 100,
       ...getColumnSortProps('order_type', 'string'),
       render: (type) => (
+        <Tag color={type === 'delivery' ? 'blue' : 'green'} style={{ fontSize: '10px' }}>
+          {type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
+          {t(`orders.${type}`)}
+        </Tag>
+      )
+    },
+    {
+      title: t('orders.branch'),
+      key: 'branch_info',
+      width: 120,
+      render: (_, record) => {
+        if (record.order_type === 'pickup') {
+          // Show branch name for pickup orders
+          const branchName = record.branch_title_en || record.branch_title_ar || `Branch #${record.branch_id}`;
+          return (
+            <div style={{ fontSize: '12px' }}>
+              <ShoppingCartOutlined style={{ marginRight: 4, color: '#52c41a' }} />
+              <Text strong style={{ color: '#52c41a' }}>
+                {branchName}
+              </Text>
+            </div>
+          );
+        } else {
+          // For delivery orders, show delivery indicator
+          return (
+            <div style={{ fontSize: '11px', color: '#999' }}>
+              <TruckOutlined style={{ marginRight: 4 }} />
+              <Text type="secondary">Delivery</Text>
+            </div>
+          );
+        }
+      }
+    },
+    {
+      title: t('orders.itemsCount'),
+      key: 'items_count',
+      dataIndex: 'items_count',
+      width: 80,
+      align: 'center',
+      render: (count) => (
+        <Badge 
+          count={count || 0} 
+          style={{ 
+            backgroundColor: '#1890ff',
+            fontSize: '11px'
+          }} 
+          showZero
+        />
+      )
+    },
+    {
+      title: t('orders.deliveryFee'),
+      key: 'delivery_fee',
+      dataIndex: 'delivery_fee',
+      width: 100,
+      align: 'right',
+      ...getColumnSortProps('delivery_fee', 'currency'),
+      render: (fee, record) => (
         <div>
-          <Tag color={type === 'delivery' ? 'blue' : 'green'} style={{ fontSize: '10px', marginBottom: '2px' }}>
-            {type === 'delivery' ? <TruckOutlined /> : <ShoppingCartOutlined />}
-            {t(`orders.${type}`)}
-          </Tag>
+          {record.order_type === 'delivery' ? (
+            <Text style={{ fontSize: '12px', color: '#fa8c16' }}>
+              {formatPrice(fee || 0)}
+            </Text>
+          ) : (
+            <Text type="secondary" style={{ fontSize: '11px' }}>Free</Text>
+          )}
         </div>
       )
     },
     {
-      title: t('orders.total'),
+      title: t('orders.subtotal'),
+      key: 'subtotal',
+      dataIndex: 'subtotal',
+      width: 100,
+      align: 'right',
+      ...getColumnSortProps('subtotal', 'currency'),
+      render: (subtotal) => (
+        <Text style={{ fontSize: '12px', color: '#666' }}>
+          {formatPrice(subtotal)}
+        </Text>
+      )
+    },
+    {
+      title: t('orders.discount'),
+      key: 'discount_amount',
+      dataIndex: 'discount_amount',
+      width: 100,
+      align: 'right',
+      render: (discount) => (
+        <div>
+          {discount && discount > 0 ? (
+            <Text style={{ fontSize: '12px', color: '#52c41a' }}>
+              -{formatPrice(discount)}
+            </Text>
+          ) : (
+            <Text type="secondary" style={{ fontSize: '11px' }}>-</Text>
+          )}
+        </div>
+      )
+    },
+    {
+      title: t('orders.totalAmount'),
       dataIndex: 'total_amount',
-      key: 'total',
-      width: 140,
+      key: 'total_amount',
+      width: 120,
+      align: 'right',
       ...getColumnSortProps('total_amount', 'currency'),
       render: (total, record) => (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
-              {formatPrice(total)}
-            </Text>
-            <Badge 
-              count={record.items_count || 0} 
-              style={{ 
-                backgroundColor: '#1890ff',
-                fontSize: '9px',
-                minWidth: '16px',
-                height: '16px',
-                lineHeight: '16px',
-                padding: '0 4px'
-              }} 
-              title={`${record.items_count || 0} items`}
-            />
+          <Text strong style={{ color: '#52c41a', fontSize: '14px' }}>
+            {formatPrice(total)}
+          </Text>
+          <div style={{ marginTop: '4px' }}>
+            <Tag 
+              color={
+                record.payment_method === 'cash' ? 'orange' : 
+                record.payment_method === 'card' ? 'purple' : 
+                record.payment_method === 'online' ? 'cyan' : 'default'
+              } 
+              style={{ fontSize: '9px' }}
+            >
+              {record.payment_method === 'cash' ? '💵' : 
+               record.payment_method === 'card' ? '💳' : 
+               record.payment_method === 'online' ? '🌐' : '❓'}
+              {record.payment_method ? t(`orders.payment_${record.payment_method}`) : 'Unknown'}
+            </Tag>
           </div>
-          <Tag 
-            color={
-              record.payment_method === 'cash' ? 'orange' : 
-              record.payment_method === 'card' ? 'purple' : 
-              record.payment_method === 'online' ? 'cyan' : 'default'
-            } 
-            style={{ fontSize: '9px', marginTop: '2px' }}
-          >
-            {record.payment_method === 'cash' ? '💵' : 
-             record.payment_method === 'card' ? '💳' : 
-             record.payment_method === 'online' ? '🌐' : '❓'}
-            {record.payment_method ? t(`orders.payment_${record.payment_method}`) : 'Unknown'}
-          </Tag>
-          <div style={{ fontSize: '10px', color: '#888', marginTop: '1px' }}>
+          <div style={{ fontSize: '10px', marginTop: '2px' }}>
             <span style={{ 
               padding: '1px 4px', 
               borderRadius: '2px',
@@ -2926,9 +3541,6 @@ const Orders = () => {
                record.payment_status === 'failed' ? '✗' : '⏳'}
               {record.payment_status ? t(`orders.payment_status_${record.payment_status}`) : 'Pending'}
             </span>
-            <span style={{ marginLeft: '4px', color: '#666' }}>
-              • {record.items_count || 0} {t('orders.items') || 'items'}
-            </span>
           </div>
         </div>
       )
@@ -2936,10 +3548,10 @@ const Orders = () => {
     {
       title: t('common.actions'),
       key: 'actions',
-      width: 140,
+      width: 180,
       fixed: 'right',
       render: (_, record) => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Tooltip title={t('common.view_details')}>
             <Button
               type="primary"
@@ -2951,6 +3563,91 @@ const Orders = () => {
               }}
             />
           </Tooltip>
+          
+          {/* Payment Actions Dropdown */}
+          <Dropdown
+            overlay={
+              <Menu>
+                <Menu.SubMenu key="payment-method" title={t('orders.payment_method') || 'Payment Method'}>
+                  <Menu.Item 
+                    key="cash" 
+                    onClick={() => handlePaymentMethodUpdate(record, 'cash')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    💵 {t('orders.payment_cash') || 'Cash'}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="card" 
+                    onClick={() => handlePaymentMethodUpdate(record, 'card')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    💳 {t('orders.payment_card') || 'Card'}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="online" 
+                    onClick={() => handlePaymentMethodUpdate(record, 'online')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    🌐 {t('orders.payment_online') || 'Online'}
+                  </Menu.Item>
+                </Menu.SubMenu>
+                <Menu.SubMenu key="payment-status" title={t('orders.payment_status') || 'Payment Status'}>
+                  <Menu.Item 
+                    key="pending" 
+                    onClick={() => handlePaymentStatusUpdate(record, 'pending')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    ⏳ {t('orders.payment_status_pending') || 'Pending'}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="paid" 
+                    onClick={() => handlePaymentStatusUpdate(record, 'paid')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    ✅ {t('orders.payment_status_paid') || 'Paid'}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="failed" 
+                    onClick={() => handlePaymentStatusUpdate(record, 'failed')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    ❌ {t('orders.payment_status_failed') || 'Failed'}
+                  </Menu.Item>
+                  <Menu.Item 
+                    key="refunded" 
+                    onClick={() => handlePaymentStatusUpdate(record, 'refunded')}
+                    disabled={paymentUpdateLoading}
+                  >
+                    🔄 {t('orders.payment_status_refunded') || 'Refunded'}
+                  </Menu.Item>
+                </Menu.SubMenu>
+                <Menu.Divider />
+                <Menu.Item 
+                  key="generate-link" 
+                  icon={<CopyOutlined />}
+                  onClick={() => handleGeneratePaymentLink(record)}
+                  disabled={record.payment_status === 'paid' || paymentLinkLoading}
+                >
+                  {t('orders.generate_payment_link') || 'Generate Payment Link'}
+                </Menu.Item>
+              </Menu>
+            }
+            trigger={['click']}
+            placement="bottomLeft"
+            disabled={paymentUpdateLoading || paymentLinkLoading}
+          >
+            <Button
+              type="default"
+              size="small"
+              icon={<DollarOutlined />}
+              onClick={(e) => e.stopPropagation()}
+              loading={paymentUpdateLoading || paymentLinkLoading}
+              style={{ color: '#fa8c16', borderColor: '#fa8c16' }}
+            >
+              {t('orders.payment') || '$'}
+            </Button>
+          </Dropdown>
+
           {record.payment_status !== 'paid' && (
             <Tooltip title={t('orders.pay_with_card') || 'Pay with Card'}>
               <Button
@@ -3017,6 +3714,29 @@ const Orders = () => {
           .ant-table-tbody > tr.ant-table-row:hover {
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
           }
+          
+          /* Persistent notification animations */
+          @keyframes pulse {
+            0% {
+              box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.7);
+            }
+            70% {
+              box-shadow: 0 0 0 10px rgba(255, 77, 79, 0);
+            }
+            100% {
+              box-shadow: 0 0 0 0 rgba(255, 77, 79, 0);
+            }
+          }
+          
+          @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+            20%, 40%, 60%, 80% { transform: translateX(2px); }
+          }
+          
+          .persistent-notification-urgent {
+            animation: shake 0.5s ease-in-out;
+          }
         `}
       </style>
       <div style={{ padding: '24px' }}>
@@ -3037,7 +3757,7 @@ const Orders = () => {
         style={{ marginBottom: 16 }}
         closable
       />
-      
+            
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col span={24}>
           <Card>
@@ -3053,10 +3773,46 @@ const Orders = () => {
                       >
                         {t('orders.add_order')}
                       </Button>
-                      <ExportButton
-                        {...getOrdersExportConfig(orders, columns)}
-                        showFormats={['csv', 'excel', 'pdf']}
-                      />
+                      <Dropdown
+                        overlay={
+                          <Menu>
+                            <Menu.Item
+                              key="export-all"
+                              icon={<ExportOutlined />}
+                              onClick={handleExportAll}
+                              disabled={!orders || orders.length === 0}
+                            >
+                              Export All Orders ({orders?.length || 0})
+                            </Menu.Item>
+                            <Menu.Item
+                              key="export-selected"
+                              icon={<ExportOutlined />}
+                              onClick={handleBulkExport}
+                              disabled={!hasSelected}
+                            >
+                              Export Selected ({selectedRowKeys.length})
+                            </Menu.Item>
+                            <Menu.Divider />
+                            {/* <Menu.Item
+                              key="legacy-export"
+                              icon={<FileTextOutlined />}
+                              disabled={!orders || orders.length === 0}
+                            >
+                              <ExportButton
+                                {...getOrdersExportConfig(orders, columns)}
+                                showFormats={['csv', 'pdf']}
+                                size="small"
+                                type="text"
+                              />
+                            </Menu.Item> */}
+                          </Menu>
+                        }
+                        trigger={['click']}
+                      >
+                        <Button icon={<ExportOutlined />}>
+                          Export <DownOutlined />
+                        </Button>
+                      </Dropdown>
                       <Dropdown
                         overlay={
                           <Menu>
@@ -3090,6 +3846,15 @@ const Orders = () => {
                         </Button>
                       </Dropdown>
                       <NotificationControls />
+                      <PersistentNotificationIndicator 
+                        onOrderClick={(orderData) => {
+                          // Find the order in the current list and show details
+                          const order = orders.find(o => o.id === orderData.orderId);
+                          if (order) {
+                            handleViewDetails(order);
+                          }
+                        }}
+                      />
                     </Space>
                   </Col>
                 </Row>
@@ -3297,7 +4062,7 @@ const Orders = () => {
               <Option value="yesterday">{t('orders.yesterday')}</Option>
               <Option value="week">{t('orders.this_week')}</Option>
               <Option value="month">{t('orders.this_month')}</Option>
-              <Option value="custom">{t('orders.custom_range')}</Option>
+              <Option value="all">{t('orders.all_time')}</Option>
             </Select>
           </Col>
           {filters.date_range === 'custom' && (
@@ -3374,8 +4139,8 @@ const Orders = () => {
             <span>
               <EyeOutlined style={{ marginRight: 8 }} />
               {language === 'ar' 
-                ? 'انقر على أي طلب لعرض التفاصيل، أو استخدم أزرار الإجراءات للمهام السريعة'
-                : 'Click on any order to view details, or use action buttons for quick tasks'
+                ? 'انقر على رقم الطلب لعرض التفاصيل، أو استخدم أزرار الإجراءات والحالة للمهام السريعة'
+                : 'Click on order number to view details, or use action and status buttons for quick tasks'
               }
             </span>
           }
@@ -3392,20 +4157,8 @@ const Orders = () => {
           rowKey="id"
           loading={loading}
           size='small'
-          scroll={{ x: 1050 }}
+          scroll={{ x: 1600 }} // Increased for new columns
           onChange={() => {}} // Disable default sorting
-          onRow={(record) => ({
-            onClick: () => {
-              handleViewDetails(record);
-            },
-            style: { cursor: 'pointer' },
-            onMouseEnter: (e) => {
-              e.currentTarget.style.backgroundColor = '#f5f5f5';
-            },
-            onMouseLeave: (e) => {
-              e.currentTarget.style.backgroundColor = '';
-            }
-          })}
           pagination={{
             current: currentPage,
             pageSize: pageSize,
@@ -3603,21 +4356,88 @@ const Orders = () => {
               </Descriptions.Item>
             </Descriptions>
 
-            <Divider>{t('orders.order_items')}</Divider>
+            <Divider>
+              <Space>
+                <ShoppingCartOutlined />
+                <span>{t('orders.order_items')}</span>
+                {selectedOrder.items && selectedOrder.items.length > 0 && (
+                  <Badge count={selectedOrder.items.length} style={{ backgroundColor: '#52c41a' }} />
+                )}
+              </Space>
+            </Divider>
             
             {selectedOrder.items && selectedOrder.items.length > 0 ? (
-              <div style={{ marginBottom: '16px' }}>
-                {selectedOrder.items.map((item, index) => (
-                  <OrderItemCard 
-                    key={index} 
-                    item={item} 
-                    formatPrice={formatPrice}
-                  />
-                ))}
-              </div>
+              <>
+                {/* Items Summary */}
+                <Card size="small" style={{ marginBottom: '16px', backgroundColor: '#f8f9fa' }}>
+                  <Row gutter={16}>
+                    <Col span={6}>
+                      <Statistic 
+                        title="Total Items" 
+                        value={selectedOrder.items.length}
+                        prefix={<ShoppingCartOutlined />}
+                        valueStyle={{ fontSize: '16px' }}
+                      />
+                    </Col>
+                    <Col span={6}>
+                      <Statistic 
+                        title="Total Quantity" 
+                        value={selectedOrder.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)}
+                        valueStyle={{ fontSize: '16px' }}
+                      />
+                    </Col>
+                    <Col span={6}>
+                      <Statistic 
+                        title="Items Subtotal" 
+                        value={formatPrice(selectedOrder.items.reduce((sum, item) => sum + Number(item.total_price || 0), 0))}
+                        valueStyle={{ fontSize: '16px', color: '#52c41a' }}
+                      />
+                    </Col>
+                    <Col span={6}>
+                      {(() => {
+                        const totalDiscount = selectedOrder.items.reduce((sum, item) => {
+                          const unitPrice = Number(item.unit_price || 0);
+                          const quantity = Number(item.quantity || 0);
+                          const totalPrice = Number(item.total_price || 0);
+                          const itemDiscount = Number(item.discount_amount || 0);
+                          return sum + Math.max((unitPrice * quantity) - totalPrice, itemDiscount);
+                        }, 0);
+                        
+                        return totalDiscount > 0 ? (
+                          <Statistic 
+                            title="Items Discount" 
+                            value={formatPrice(totalDiscount)}
+                            valueStyle={{ fontSize: '16px', color: '#ff7875' }}
+                            prefix="−"
+                          />
+                        ) : null;
+                      })()}
+                    </Col>
+                  </Row>
+                </Card>
+
+                {/* Individual Items */}
+                <div style={{ marginBottom: '16px' }}>
+                  {selectedOrder.items.map((item, index) => (
+                    <OrderItemCard 
+                      key={item.id || index} 
+                      item={item} 
+                      formatPrice={formatPrice}
+                    />
+                  ))}
+                </div>
+              </>
             ) : (
-              <div style={{ padding: '20px', textAlign: 'center', backgroundColor: '#fafafa', borderRadius: '8px' }}>
-                <Text type="secondary">No items found for this order</Text>
+              <div style={{ padding: '40px', textAlign: 'center', backgroundColor: '#fafafa', borderRadius: '8px' }}>
+                <ShoppingCartOutlined style={{ fontSize: '48px', color: '#d9d9d9', marginBottom: '16px' }} />
+                <div>
+                  <Text type="secondary" style={{ fontSize: '16px' }}>No items found for this order</Text>
+                </div>
+                <div style={{ marginTop: '8px' }}>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>
+                    This order may have been created without items or the items data is missing.
+                  </Text>
+                </div>
               </div>
             )}
 
@@ -5012,13 +5832,75 @@ const Orders = () => {
         }}
         t={t}
       />
+
+      {/* Payment Link Modal */}
+      <Modal
+        title={t('orders.payment_link') || 'Payment Link'}
+        open={paymentLinkVisible}
+        onCancel={() => {
+          setPaymentLinkVisible(false);
+          setGeneratedPaymentLink('');
+        }}
+        width={600}
+        footer={[
+          <Button key="copy" type="primary" icon={<CopyOutlined />} onClick={handleCopyPaymentLink}>
+            {t('orders.copy_link') || 'Copy Link'}
+          </Button>,
+          <Button key="close" onClick={() => {
+            setPaymentLinkVisible(false);
+            setGeneratedPaymentLink('');
+          }}>
+            {t('common.close') || 'Close'}
+          </Button>
+        ]}
+      >
+        <div style={{ padding: '16px 0' }}>
+          <Text strong style={{ display: 'block', marginBottom: '12px' }}>
+            {t('orders.payment_link_instruction') || 'Share this link with the customer to complete payment:'}
+          </Text>
+          
+          <Input.TextArea
+            value={generatedPaymentLink}
+            readOnly
+            rows={3}
+            style={{ 
+              fontFamily: 'monospace', 
+              fontSize: '12px',
+              backgroundColor: '#f5f5f5',
+              border: '1px solid #d9d9d9'
+            }}
+          />
+          
+          <Alert
+            message={t('orders.payment_link_note') || 'Note: This link is valid until the order is paid or cancelled.'}
+            type="info"
+            style={{ marginTop: '12px' }}
+            showIcon
+          />
+        </div>
+      </Modal>
     </div>
     </>
   );
 };
 
 // Shipping Calculation Display Component
-const ShippingCalculationDisplay = ({ shippingCalculation, loading = false }) => {
+const ShippingCalculationDisplay = ({ shippingCalculation, loading = false, formatPrice }) => {
+  // Fallback formatPrice function if not provided
+  const defaultFormatPrice = (price) => {
+    const numPrice = Number(price);
+    if (!isFinite(numPrice) || isNaN(numPrice)) {
+      return '$0.00';
+    }
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(numPrice);
+  };
+
+  const priceFormatter = formatPrice || defaultFormatPrice;
   if (loading) {
     return (
       <div style={{ 
@@ -5056,7 +5938,7 @@ const ShippingCalculationDisplay = ({ shippingCalculation, loading = false }) =>
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
         <Text strong style={{ color: free_shipping_applied ? '#52c41a' : '#1890ff', fontSize: '14px' }}>
-          🚚 Shipping: {formatPrice(delivery_fee)}
+          🚚 Shipping: {priceFormatter(delivery_fee)}
           {free_shipping_applied && (
             <Tag color="green" size="small" style={{ marginLeft: '8px' }}>
               FREE SHIPPING!

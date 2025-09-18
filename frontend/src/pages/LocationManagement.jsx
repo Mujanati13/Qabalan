@@ -20,7 +20,8 @@ import {
   InputNumber,
   Alert,
   Statistic,
-  Badge
+  Badge,
+  Dropdown
 } from 'antd';
 import {
   PlusOutlined,
@@ -32,11 +33,18 @@ import {
   HomeOutlined,
   BankOutlined,
   ReloadOutlined,
-  MoreOutlined
+  MoreOutlined,
+  DownloadOutlined,
+  DownOutlined,
+  ExportOutlined,
+  CheckCircleOutlined,
+  BarChartOutlined,
+  GlobalOutlined
 } from '@ant-design/icons';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useTableSorting } from '../hooks/useTableSorting.jsx';
 import locationsService from '../services/locationsService';
+import { exportLocationsToExcel } from '../utils/comprehensiveExportUtils';
 import moment from 'moment';
 
 const { Title, Text } = Typography;
@@ -436,6 +444,99 @@ const LocationManagement = () => {
     }));
   };
 
+  // Export handlers
+  const handleExportAll = async () => {
+    try {
+      // Combine all locations data
+      const allLocations = [
+        ...cities.map(city => ({ ...city, type: 'city' })),
+        ...areas.map(area => ({ ...area, type: 'area' }))
+      ];
+      
+      await exportLocationsToExcel(allLocations, {
+        filename: 'FECS_All_Locations_Export',
+        includeHierarchy: true,
+        includeStatistics: true,
+        includeDeliveryInfo: true,
+        t
+      });
+    } catch (error) {
+      console.error('Export all locations failed:', error);
+      message.error('Failed to export all locations');
+    }
+  };
+
+  const handleExportActive = async () => {
+    try {
+      const activeLocations = [
+        ...cities.filter(city => city.is_active).map(city => ({ ...city, type: 'city' })),
+        ...areas.filter(area => area.is_active).map(area => ({ ...area, type: 'area' }))
+      ];
+      
+      await exportLocationsToExcel(activeLocations, {
+        filename: 'FECS_Active_Locations_Export',
+        includeHierarchy: true,
+        includeStatistics: true,
+        includeDeliveryInfo: true,
+        t
+      });
+    } catch (error) {
+      console.error('Export active locations failed:', error);
+      message.error('Failed to export active locations');
+    }
+  };
+
+  const handleExportByCities = async () => {
+    try {
+      await exportLocationsToExcel(cities.map(city => ({ ...city, type: 'city' })), {
+        filename: 'FECS_Cities_Only_Export',
+        includeHierarchy: false,
+        includeStatistics: true,
+        includeDeliveryInfo: true,
+        t
+      });
+    } catch (error) {
+      console.error('Export cities failed:', error);
+      message.error('Failed to export cities');
+    }
+  };
+
+  const handleExportByAreas = async () => {
+    try {
+      await exportLocationsToExcel(areas.map(area => ({ ...area, type: 'area' })), {
+        filename: 'FECS_Areas_Only_Export',
+        includeHierarchy: false,
+        includeStatistics: true,
+        includeDeliveryInfo: true,
+        t
+      });
+    } catch (error) {
+      console.error('Export areas failed:', error);
+      message.error('Failed to export areas');
+    }
+  };
+
+  const handleExportDeliveryAnalysis = async () => {
+    try {
+      // Filter locations with delivery service
+      const deliveryLocations = [
+        ...cities.filter(city => city.delivery_available).map(city => ({ ...city, type: 'city' })),
+        ...areas.filter(area => area.delivery_available).map(area => ({ ...area, type: 'area' }))
+      ];
+      
+      await exportLocationsToExcel(deliveryLocations, {
+        filename: 'FECS_Delivery_Coverage_Analysis',
+        includeHierarchy: true,
+        includeStatistics: true,
+        includeDeliveryInfo: true,
+        t
+      });
+    } catch (error) {
+      console.error('Export delivery analysis failed:', error);
+      message.error('Failed to export delivery analysis');
+    }
+  };
+
   // City columns
   const cityColumns = [
     {
@@ -723,6 +824,128 @@ const LocationManagement = () => {
             <EnvironmentOutlined style={{ marginRight: 8 }} />
             {t('locations.title')}
           </Title>
+        </Col>
+        <Col>
+          <Space>
+            <Dropdown
+              overlay={
+                <div style={{ 
+                  background: '#fff', 
+                  border: '1px solid #d9d9d9', 
+                  borderRadius: 6, 
+                  padding: 8, 
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                  minWidth: 280
+                }}>
+                  <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', marginBottom: 8 }}>
+                    <Text strong style={{ color: '#1890ff' }}>
+                      <ExportOutlined style={{ marginRight: 6 }} />
+                      Location Export Options
+                    </Text>
+                  </div>
+                  
+                  <Button 
+                    type="text" 
+                    icon={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                    onClick={handleExportAll}
+                    style={{ 
+                      width: '100%', 
+                      textAlign: 'left', 
+                      marginBottom: 4,
+                      height: 36
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>Complete Export</span>
+                      <Badge count={cities.length + areas.length} style={{ backgroundColor: '#52c41a' }} />
+                    </div>
+                  </Button>
+
+                  <Button 
+                    type="text" 
+                    icon={<GlobalOutlined style={{ color: '#1890ff' }} />}
+                    onClick={handleExportActive}
+                    style={{ 
+                      width: '100%', 
+                      textAlign: 'left', 
+                      marginBottom: 4,
+                      height: 36
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>Active Locations Only</span>
+                      <Badge 
+                        count={cities.filter(c => c.is_active).length + areas.filter(a => a.is_active).length} 
+                        style={{ backgroundColor: '#1890ff' }} 
+                      />
+                    </div>
+                  </Button>
+
+                  <Button 
+                    type="text" 
+                    icon={<HomeOutlined style={{ color: '#722ed1' }} />}
+                    onClick={handleExportByCities}
+                    style={{ 
+                      width: '100%', 
+                      textAlign: 'left', 
+                      marginBottom: 4,
+                      height: 36
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>Cities Only</span>
+                      <Badge count={cities.length} style={{ backgroundColor: '#722ed1' }} />
+                    </div>
+                  </Button>
+
+                  <Button 
+                    type="text" 
+                    icon={<BankOutlined style={{ color: '#fa8c16' }} />}
+                    onClick={handleExportByAreas}
+                    style={{ 
+                      width: '100%', 
+                      textAlign: 'left', 
+                      marginBottom: 4,
+                      height: 36
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>Areas Only</span>
+                      <Badge count={areas.length} style={{ backgroundColor: '#fa8c16' }} />
+                    </div>
+                  </Button>
+
+                  <Button 
+                    type="text" 
+                    icon={<BarChartOutlined style={{ color: '#13c2c2' }} />}
+                    onClick={handleExportDeliveryAnalysis}
+                    style={{ 
+                      width: '100%', 
+                      textAlign: 'left',
+                      height: 36
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                      <span>Delivery Coverage Analysis</span>
+                      <Badge 
+                        count={
+                          cities.filter(c => c.delivery_available).length + 
+                          areas.filter(a => a.delivery_available).length
+                        } 
+                        style={{ backgroundColor: '#13c2c2' }} 
+                      />
+                    </div>
+                  </Button>
+                </div>
+              }
+              placement="bottomRight"
+              trigger={['click']}
+            >
+              <Button type="primary" icon={<DownloadOutlined />}>
+                Export Data <DownOutlined />
+              </Button>
+            </Dropdown>
+          </Space>
         </Col>
       </Row>
 

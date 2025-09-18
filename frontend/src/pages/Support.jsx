@@ -32,8 +32,8 @@ import {
   Checkbox
 } from 'antd';
 import {
-  PlusOutlined,
-  SearchOutlined,
+  FileTextOutlined ,
+  DownOutlined  ,
   EyeOutlined,
   MessageOutlined,
   UserOutlined,
@@ -66,6 +66,7 @@ import io from 'socket.io-client';
 import ExportButton from '../components/common/ExportButton';
 import EnhancedExportButton from '../components/common/EnhancedExportButton';
 import { useExportConfig } from '../hooks/useExportConfig';
+import { exportSupportTicketsToExcel } from '../utils/comprehensiveExportUtils';
 
 const { TabPane } = Tabs;
 const { TextArea } = Input;
@@ -626,9 +627,10 @@ const Support = () => {
     }
   };
 
+  // Enhanced Support Tickets Export with complete data
   const handleExportWithFilters = async () => {
     try {
-      message.loading('Preparing export data...', 0);
+      message.loading('Preparing support tickets export...', 0);
       const allTickets = await fetchAllFilteredTickets();
       message.destroy();
       
@@ -637,9 +639,6 @@ const Support = () => {
         return;
       }
 
-      // Get export config with all filtered data
-      const exportConfig = getSupportTicketsExportConfig(allTickets, ticketColumns);
-      
       // Add filter info to filename
       const filterSuffix = [];
       if (filters.status) filterSuffix.push(`status-${filters.status}`);
@@ -647,19 +646,64 @@ const Support = () => {
       if (filters.category) filterSuffix.push(`category-${filters.category}`);
       if (filters.date_from || filters.date_to) filterSuffix.push('date-filtered');
       
-      const enhancedConfig = {
-        ...exportConfig,
-        filename: filterSuffix.length > 0 
-          ? `${exportConfig.filename}-${filterSuffix.join('-')}` 
-          : exportConfig.filename,
-        title: `${exportConfig.title} - ${allTickets.length} tickets`
-      };
+      const filename = filterSuffix.length > 0 
+        ? `FECS_Support_Tickets_${filterSuffix.join('_')}`
+        : `FECS_Support_Tickets_All`;
 
-      return enhancedConfig;
+      // Use comprehensive export utility
+      await exportSupportTicketsToExcel(allTickets, {
+        includeConversations: true,
+        filename: filename,
+        t: t
+      });
+
     } catch (error) {
       message.destroy();
-      message.error('Failed to prepare export data');
-      throw error;
+      console.error('Support tickets export error:', error);
+      message.error('Failed to export support tickets');
+    }
+  };
+
+  // Export all support tickets
+  const handleExportAll = async () => {
+    try {
+      if (!tickets || tickets.length === 0) {
+        message.warning('No support tickets to export');
+        return;
+      }
+
+      const exportConfirm = Modal.confirm({
+        title: 'Export All Support Tickets',
+        content: `Are you sure you want to export all support tickets? This may take a few moments.`,
+        okText: 'Export',
+        okType: 'primary',
+        cancelText: 'Cancel',
+        onOk: async () => {
+          try {
+            const loadingMessage = message.loading('Preparing complete export... This may take a few moments.', 0);
+
+            // Fetch all tickets with conversations
+            const allTickets = await fetchAllFilteredTickets();
+            
+            // Use comprehensive export utility
+            await exportSupportTicketsToExcel(allTickets, {
+              includeConversations: true,
+              filename: `FECS_All_Support_Tickets_${allTickets.length}_Tickets`,
+              t: t
+            });
+
+            loadingMessage();
+            
+          } catch (error) {
+            console.error('Export all support tickets error:', error);
+            message.error('Failed to export all support tickets. Please try again.');
+          }
+        }
+      });
+      
+    } catch (error) {
+      console.error('Export all support tickets error:', error);
+      message.error('Failed to export support tickets. Please try again.');
     }
   };
 
@@ -1452,16 +1496,35 @@ const Support = () => {
               <Col xs={24} md={12} lg={16}>
                 <div style={{ textAlign: 'right' }}>
                   <Space>
-                    <EnhancedExportButton
-                      onDataFetch={fetchAllFilteredTickets}
-                      columns={ticketColumns}
-                      baseFilename="support-tickets"
-                      title="Support Tickets"
-                      currentFilters={filters}
-                      totalCount={pagination.total}
-                      customPDFConfig={getSupportTicketsExportConfig([], ticketColumns).customPDFConfig}
-                      showFormats={['csv', 'excel', 'pdf']}
-                    />
+                    <Dropdown
+                      overlay={
+                        <Menu>
+                          <Menu.Item
+                            key="export-all"
+                            icon={<DownloadOutlined />}
+                            onClick={handleExportAll}
+                            disabled={!tickets || tickets.length === 0}
+                          >
+                            Export All Tickets ({tickets?.length || 0})
+                          </Menu.Item>
+                          <Menu.Item
+                            key="export-filtered"
+                            icon={<DownloadOutlined />}
+                            onClick={handleExportWithFilters}
+                            disabled={!tickets || tickets.length === 0}
+                          >
+                            Export Filtered Tickets ({pagination.total || 0})
+                          </Menu.Item>
+                          <Menu.Divider />
+                         
+                        </Menu>
+                      }
+                      trigger={['click']}
+                    >
+                      <Button icon={<DownloadOutlined />}>
+                        Export <DownOutlined />
+                      </Button>
+                    </Dropdown>
                     <Button 
                       icon={<ReloadOutlined />} 
                       onClick={fetchTickets}

@@ -172,9 +172,9 @@ router.post('/zones', authenticate, authorize('admin'), async (req, res, next) =
         free_shipping_threshold, sort_order
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      name_ar, name_en, description_ar, description_en,
+      name_ar, name_en, description_ar || null, description_en || null,
       min_distance_km, max_distance_km, base_price, price_per_km || 0,
-      free_shipping_threshold, sort_order
+      free_shipping_threshold || null, sort_order
     ]);
 
     const [newZone] = await executeQuery(
