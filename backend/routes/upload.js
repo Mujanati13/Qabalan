@@ -77,4 +77,39 @@ router.post('/images', authenticate, authorize('admin', 'staff'), uploadMultiple
   }
 });
 
+/**
+ * @route   POST /api/upload/profile
+ * @desc    Upload profile picture for authenticated users
+ * @access  Private (Authenticated Users)
+ */
+router.post('/profile', authenticate, uploadSingle('file', 'profiles'), (req, res) => {
+  try {
+    if (!req.uploadedImage) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image provided',
+        message_ar: 'لم يتم توفير صورة'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Profile picture uploaded successfully',
+      message_ar: 'تم رفع صورة الملف الشخصي بنجاح',
+      data: {
+        filename: req.uploadedImage.filename,
+        url: req.uploadedImage.url,
+        thumbnailUrl: req.uploadedImage.thumbnailUrl
+      }
+    });
+  } catch (error) {
+    console.error('Profile upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Upload failed',
+      message_ar: 'فشل في رفع الصورة'
+    });
+  }
+});
+
 module.exports = router;

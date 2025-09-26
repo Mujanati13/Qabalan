@@ -1163,9 +1163,10 @@ class DatabaseSetup {
 
       // Create sample orders with realistic data
       const currentYear = new Date().getFullYear();
+      const shortYear = currentYear.toString().slice(-2);
       const sampleOrders = [
         {
-          order_number: `ORD-${currentYear}-000001`,
+          order_number: `ORD-${shortYear}-001`,
           user_id: customerIds[0] || 1,
           branch_id: branchesResult[0]?.id || 1,
           delivery_address_id: addressIds[0] || null,
@@ -1186,7 +1187,7 @@ class DatabaseSetup {
           special_instructions: 'Please ensure fresh bread is warm'
         },
         {
-          order_number: `ORD-${currentYear}-000002`,
+          order_number: `ORD-${shortYear}-002`,
           user_id: customerIds[1] || 1,
           branch_id: branchesResult[0]?.id || 1,
           delivery_address_id: addressIds[1] || null,
@@ -1207,7 +1208,7 @@ class DatabaseSetup {
           special_instructions: 'Birthday cake - please include candles'
         },
         {
-          order_number: `ORD-${currentYear}-000003`,
+          order_number: `ORD-${shortYear}-003`,
           user_id: customerIds[2] || 1,
           branch_id: branchesResult[1]?.id || 1,
           delivery_address_id: null,
@@ -1228,7 +1229,7 @@ class DatabaseSetup {
           special_instructions: null
         },
         {
-          order_number: `ORD-${currentYear}-000004`,
+          order_number: `ORD-${shortYear}-004`,
           user_id: customerIds[0] || 1,
           branch_id: branchesResult[0]?.id || 1,
           delivery_address_id: addressIds[0] || null,
@@ -1250,7 +1251,7 @@ class DatabaseSetup {
           delivered_at: new Date(Date.now() - 24 * 60 * 60 * 1000) // Yesterday
         },
         {
-          order_number: `ORD-${currentYear}-000005`,
+          order_number: `ORD-${shortYear}-005`,
           user_id: customerIds[1] || 1,
           branch_id: branchesResult[1]?.id || 1,
           delivery_address_id: addressIds[1] || null,

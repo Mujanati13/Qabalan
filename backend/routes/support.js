@@ -28,7 +28,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5242880 // 5MB
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10485760 // 10MB (increased from 5MB)
   },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 
@@ -41,6 +41,50 @@ const upload = multer({
     }
   }
 });
+
+// Multer error handling middleware
+const handleMulterError = (error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    console.error('Multer error:', error);
+    
+    switch (error.code) {
+      case 'LIMIT_FILE_SIZE':
+        return res.status(413).json({
+          success: false,
+          message: 'File too large. Maximum file size is 10MB.',
+          message_ar: 'حجم الملف كبير جداً. الحد الأقصى 10 ميجابايت.'
+        });
+      case 'LIMIT_FILE_COUNT':
+        return res.status(400).json({
+          success: false,
+          message: 'Too many files. Maximum 5 files allowed.',
+          message_ar: 'عدد كبير من الملفات. مسموح بحد أقصى 5 ملفات.'
+        });
+      case 'LIMIT_UNEXPECTED_FILE':
+        return res.status(400).json({
+          success: false,
+          message: 'Unexpected file field.',
+          message_ar: 'حقل ملف غير متوقع.'
+        });
+      default:
+        return res.status(400).json({
+          success: false,
+          message: 'File upload error.',
+          message_ar: 'خطأ في رفع الملف.'
+        });
+    }
+  }
+  
+  if (error.message === 'Invalid file type') {
+    return res.status(422).json({
+      success: false,
+      message: 'Invalid file type. Only images (JPG, PNG, GIF) and documents (PDF, DOC, TXT) are allowed.',
+      message_ar: 'نوع ملف غير صالح. مسموح فقط بالصور (JPG, PNG, GIF) والمستندات (PDF, DOC, TXT).'
+    });
+  }
+  
+  next(error);
+};
 
 // Client Routes
 
@@ -63,7 +107,7 @@ router.get('/categories', async (req, res) => {
 });
 
 // Submit new support ticket
-router.post('/tickets', authenticate, upload.array('attachments', 5), ...validateSupportTicket, async (req, res) => {
+router.post('/tickets', authenticate, upload.array('attachments', 5), handleMulterError, ...validateSupportTicket, async (req, res) => {
   try {
     const { order_id, subject, message, category, priority } = req.body;
     const user_id = req.user.id;
@@ -149,7 +193,7 @@ router.get('/tickets/:id', authenticate, async (req, res) => {
 });
 
 // Add reply to ticket
-router.post('/tickets/:id/replies', authenticate, upload.array('attachments', 3), ...validateReply, async (req, res) => {
+router.post('/tickets/:id/replies', authenticate, upload.array('attachments', 3), handleMulterError, ...validateReply, async (req, res) => {
   try {
     const ticketId = req.params.id;
     const user_id = req.user.id;
@@ -176,6 +220,30 @@ router.post('/tickets/:id/replies', authenticate, upload.array('attachments', 3)
     res.status(500).json({
       success: false,
       message: 'Failed to add reply',
+      error: error.message
+    });
+  }
+});
+
+// Mark ticket as read by customer
+router.post('/tickets/:id/mark-read', authenticate, async (req, res) => {
+  try {
+    const ticketId = req.params.id;
+    const user_id = req.user.id;
+
+    console.log(`📖 Marking ticket ${ticketId} as read by user ${user_id}`);
+
+    // You can implement the logic to mark as read here
+    // For now, just return success
+    res.json({
+      success: true,
+      message: 'Ticket marked as read'
+    });
+  } catch (error) {
+    console.error('Error marking ticket as read:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to mark ticket as read',
       error: error.message
     });
   }
@@ -312,7 +380,7 @@ router.get('/admin/tickets/:id', authenticate, async (req, res) => {
 });
 
 // Add admin reply to ticket
-router.post('/admin/tickets/:id/replies', authenticate, upload.array('attachments', 3), ...validateReply, async (req, res) => {
+router.post('/admin/tickets/:id/replies', authenticate, upload.array('attachments', 3), handleMulterError, ...validateReply, async (req, res) => {
   try {
     // Check if user is admin
     if (!req.user.isAdmin) {

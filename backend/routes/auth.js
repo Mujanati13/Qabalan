@@ -7,7 +7,8 @@ const { authenticate } = require('../middleware/auth');
 const { 
   validateUserRegistration, 
   validateUserLogin, 
-  validatePasswordChange 
+  validatePasswordChange,
+  validateSMSRegistration
 } = require('../middleware/validation');
 const { sendEmail } = require('../utils/email');
 const { sendSMS } = require('../utils/sms');
@@ -565,6 +566,12 @@ router.post('/send-sms-verification', async (req, res, next) => {
   try {
     const { phone, language = 'en' } = req.body;
 
+    console.log('[SMS][DEBUG][SEND] Incoming request', {
+      ip: req.ip,
+      rawPhone: phone,
+      language
+    });
+
     if (!phone) {
       return res.status(400).json({
         success: false,
@@ -585,6 +592,10 @@ router.post('/send-sms-verification', async (req, res, next) => {
       formattedPhone = '962' + phone;
     }
 
+    console.log('[SMS][DEBUG][SEND] Normalized phone number', {
+      formattedPhone
+    });
+
     // Validate Jordan phone number format
     if (!/^962[0-9]{9}$/.test(formattedPhone)) {
       return res.status(400).json({
@@ -596,6 +607,11 @@ router.post('/send-sms-verification', async (req, res, next) => {
 
     // Generate verification code
     const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    console.log('[SMS][DEBUG][SEND] Generated verification code', {
+      formattedPhone,
+      maskedCode: `${verificationCode.slice(0, 1)}****${verificationCode.slice(-1)}`
+    });
 
     // Store verification code in database
     await executeQuery(
@@ -611,6 +627,12 @@ router.post('/send-sms-verification', async (req, res, next) => {
     // Send SMS
     const { sendVerificationSMS } = require('../utils/sms');
     const smsResult = await sendVerificationSMS(formattedPhone, verificationCode, language);
+
+    console.log('[SMS][DEBUG][SEND] SMS provider result', {
+      success: smsResult.success,
+      phone: smsResult.phone,
+      error: smsResult.error
+    });
 
     if (!smsResult.success) {
       console.error('SMS sending failed:', smsResult.error);
@@ -635,7 +657,10 @@ router.post('/send-sms-verification', async (req, res, next) => {
     });
 
   } catch (error) {
-    console.error('SMS verification error:', error);
+    console.error('[SMS][DEBUG][SEND] SMS verification error', {
+      message: error.message,
+      stack: error.stack
+    });
     next(error);
   }
 });
@@ -714,9 +739,17 @@ router.post('/verify-sms', async (req, res, next) => {
  * @desc    Register user with SMS verification
  * @access  Public
  */
-router.post('/register-with-sms', validateUserRegistration, async (req, res, next) => {
+router.post('/register-with-sms', validateSMSRegistration, async (req, res, next) => {
   try {
-    const { first_name, last_name, email, phone, password, sms_code, language = 'en' } = req.body;
+  const { first_name, last_name, email, phone, password, sms_code, language = 'en' } = req.body;
+
+    console.log('[SMS][DEBUG][REGISTER] Incoming payload', {
+      ip: req.ip,
+      email,
+      language,
+      rawPhone: phone,
+      providedCode: sms_code ? `${sms_code.slice(0, 1)}****${sms_code.slice(-1)}` : undefined
+    });
 
     // Format phone number
     let formattedPhone = phone;
@@ -730,6 +763,8 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
       formattedPhone = '962' + phone;
     }
 
+    console.log('[SMS][DEBUG][REGISTER] Normalized phone', { formattedPhone });
+
     // Verify SMS code first
     const [verification] = await executeQuery(
       `SELECT * FROM verification_codes 
@@ -737,6 +772,12 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
        AND expires_at > NOW() AND used_at IS NULL`,
       [formattedPhone, sms_code]
     );
+
+    console.log('[SMS][DEBUG][REGISTER] Verification lookup result', {
+      found: Boolean(verification),
+      verificationId: verification?.id,
+      phone: formattedPhone
+    });
 
     if (!verification) {
       return res.status(400).json({
@@ -752,6 +793,11 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
       [formattedPhone]
     );
 
+    console.log('[SMS][DEBUG][REGISTER] Existing user check', {
+      phone: formattedPhone,
+      existingUserId: existingUser?.id
+    });
+
     if (existingUser) {
       return res.status(409).json({
         success: false,
@@ -759,6 +805,10 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
         message_ar: 'رقم الهاتف مسجل مسبقاً'
       });
     }
+
+    const normalizedEmail = email && email.trim() ? email.trim() : null;
+    const fallbackEmail = `${formattedPhone}@sms.qabalan.local`;
+    const userEmail = normalizedEmail || fallbackEmail;
 
     // Hash password
     const saltRounds = 12;
@@ -768,10 +818,15 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
     const result = await executeQuery(
       `INSERT INTO users (first_name, last_name, email, phone, password_hash, is_verified, phone_verified_at, language) 
        VALUES (?, ?, ?, ?, ?, 1, NOW(), ?)`,
-      [first_name, last_name, email, formattedPhone, hashedPassword, language]
+      [first_name, last_name, userEmail, formattedPhone, hashedPassword, language]
     );
 
     const userId = result.insertId;
+
+    console.log('[SMS][DEBUG][REGISTER] User inserted', {
+      userId,
+      phone: formattedPhone
+    });
 
     // Mark verification code as used
     await executeQuery(
@@ -785,7 +840,10 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
       [userId]
     );
 
-    console.log(`[SMS] User registered with phone verification: ${formattedPhone}`);
+    console.log('[SMS][DEBUG][REGISTER] Registration complete', {
+      userId,
+      phone: formattedPhone
+    });
 
     res.status(201).json({
       success: true,
@@ -797,7 +855,10 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
     });
 
   } catch (error) {
-    console.error('SMS registration error:', error);
+    console.error('[SMS][DEBUG][REGISTER] Registration error', {
+      message: error.message,
+      stack: error.stack
+    });
     next(error);
   }
 });
@@ -810,6 +871,12 @@ router.post('/register-with-sms', validateUserRegistration, async (req, res, nex
 router.post('/login-with-sms', async (req, res, next) => {
   try {
     const { phone, sms_code } = req.body;
+
+    console.log('[SMS][DEBUG][LOGIN] Incoming request', {
+      ip: req.ip,
+      rawPhone: phone,
+      providedCode: sms_code ? `${sms_code.slice(0, 1)}****${sms_code.slice(-1)}` : undefined
+    });
 
     if (!phone || !sms_code) {
       return res.status(400).json({
@@ -831,6 +898,8 @@ router.post('/login-with-sms', async (req, res, next) => {
       formattedPhone = '962' + phone;
     }
 
+    console.log('[SMS][DEBUG][LOGIN] Normalized phone', { formattedPhone });
+
     // Verify SMS code
     const [verification] = await executeQuery(
       `SELECT * FROM verification_codes 
@@ -838,6 +907,12 @@ router.post('/login-with-sms', async (req, res, next) => {
        AND expires_at > NOW() AND used_at IS NULL`,
       [formattedPhone, sms_code]
     );
+
+    console.log('[SMS][DEBUG][LOGIN] Verification record', {
+      found: Boolean(verification),
+      verificationId: verification?.id,
+      phone: formattedPhone
+    });
 
     if (!verification) {
       return res.status(400).json({
@@ -852,6 +927,12 @@ router.post('/login-with-sms', async (req, res, next) => {
       'SELECT * FROM users WHERE phone = ? AND is_active = 1',
       [formattedPhone]
     );
+
+    console.log('[SMS][DEBUG][LOGIN] User lookup', {
+      phone: formattedPhone,
+      userId: user?.id,
+      isActive: user?.is_active
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -870,6 +951,11 @@ router.post('/login-with-sms', async (req, res, next) => {
     // Generate tokens
     const tokens = generateTokenPair(user);
 
+    console.log('[SMS][DEBUG][LOGIN] Generated token pair', {
+      userId: user.id,
+      phone: formattedPhone
+    });
+
     // Store refresh token
     const hashedRefreshToken = crypto.createHash('sha256').update(tokens.refreshToken).digest('hex');
     await executeQuery(
@@ -887,7 +973,10 @@ router.post('/login-with-sms', async (req, res, next) => {
     // Remove sensitive data
     delete user.password_hash;
 
-    console.log(`[SMS] User logged in via SMS: ${formattedPhone}`);
+    console.log('[SMS][DEBUG][LOGIN] Login successful', {
+      userId: user.id,
+      phone: formattedPhone
+    });
 
     res.json({
       success: true,
@@ -900,7 +989,10 @@ router.post('/login-with-sms', async (req, res, next) => {
     });
 
   } catch (error) {
-    console.error('SMS login error:', error);
+    console.error('[SMS][DEBUG][LOGIN] Login error', {
+      message: error.message,
+      stack: error.stack
+    });
     next(error);
   }
 });

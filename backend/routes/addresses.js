@@ -40,11 +40,45 @@ const validateAreaId = (req, res, next) => {
 // =============================================================================
 
 /**
- * Validate address data
+ * Validate address data - Minimal validation for data integrity
  */
 const validateAddressData = (req, res, next) => {
-  // Remove all backend validation - let mobile app handle validation
-  // Just pass through to the next middleware
+  const { name, phone, latitude, longitude } = req.body;
+  
+  // Very basic validation - only check for absolutely required fields
+  if (!name || name.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Address name is required',
+      message_ar: 'اسم العنوان مطلوب'
+    });
+  }
+
+  if (!phone || phone.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Phone number is required',
+      message_ar: 'رقم الهاتف مطلوب'
+    });
+  }
+
+  // If coordinates are provided, validate they are numbers
+  if (latitude !== undefined && (isNaN(latitude) || latitude < -90 || latitude > 90)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid latitude coordinate',
+      message_ar: 'إحداثي خط العرض غير صحيح'
+    });
+  }
+
+  if (longitude !== undefined && (isNaN(longitude) || longitude < -180 || longitude > 180)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid longitude coordinate',
+      message_ar: 'إحداثي خط الطول غير صحيح'
+    });
+  }
+
   next();
 };
 
@@ -294,10 +328,8 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
       });
     }
 
-    // Validate location hierarchy if any location IDs are provided
-    if (city_id || area_id || street_id) {
-      await validateLocationHierarchy(city_id, area_id, street_id);
-    }
+    // Skip location hierarchy validation for flexible address creation
+    // Users can select any combination of city/area/street without strict validation
 
     // GPS Address Mode Handling - Ensure required fields for database constraints
     let finalCityId = city_id;
@@ -401,7 +433,7 @@ router.post('/', authenticate, validateAddressData, async (req, res, next) => {
  * @desc    Update address
  * @access  Private
  */
-router.put('/:id', authenticate, validateId, async (req, res, next) => {
+router.put('/:id', authenticate, validateId, validateAddressData, async (req, res, next) => {
   try {
     const addressId = req.params.id;
     const {
@@ -448,9 +480,8 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
     const finalAreaId = area_id || currentAddress.area_id;
     const finalStreetId = street_id || currentAddress.street_id;
 
-    if (city_id || area_id || street_id) {
-      await validateLocationHierarchy(finalCityId, finalAreaId, finalStreetId);
-    }
+    // Skip location hierarchy validation for flexible address updates
+    // Allow any combination of city/area/street without validation
 
     // Prepare update data
     const updateFields = [];

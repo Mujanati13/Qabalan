@@ -525,7 +525,7 @@ class SupportService {
     try {
       // Get ticket details for notification
       const [ticket] = await executeQuery(`
-        SELECT id, ticket_number, subject, category, priority, status, user_id, created_at,
+        SELECT st.id, st.ticket_number, st.subject, st.category, st.priority, st.status, st.user_id, st.created_at,
                u.first_name, u.last_name
         FROM support_tickets st
         LEFT JOIN users u ON st.user_id = u.id
@@ -583,10 +583,9 @@ class SupportService {
       console.log(`✅ Database notification created for ${type} on ticket ${ticket.ticket_number}`);
 
       // Emit socket event for real-time admin notifications
-      const socketManager = require('../config/socket');
-      
-      if (type === 'client_reply') {
-        socketManager.emitToAdmins('newSupportReply', {
+      if (global.socketManager) {
+        if (type === 'client_reply') {
+          global.socketManager.emitToAdmins('newSupportReply', {
           ticketId: ticket.id,
           ticketNumber: ticket.ticket_number,
           subject: ticket.subject,
@@ -597,10 +596,13 @@ class SupportService {
           timestamp: new Date().toISOString(),
           type: 'client_reply'
         });
-        console.log(`📡 Socket event 'newSupportReply' emitted for ticket ${ticket.ticket_number}`);
-      } else if (type === 'new_ticket') {
-        // Already handled in createTicket method
-        console.log(`📡 New ticket socket event already handled for ticket ${ticket.ticket_number}`);
+          console.log(`📡 Socket event 'newSupportReply' emitted for ticket ${ticket.ticket_number}`);
+        } else if (type === 'new_ticket') {
+          // Already handled in createTicket method
+          console.log(`📡 New ticket socket event already handled for ticket ${ticket.ticket_number}`);
+        }
+      } else {
+        console.log('⚠️ Socket manager not available for admin notifications');
       }
     } catch (error) {
       console.error('Error sending admin notification:', error);

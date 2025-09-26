@@ -48,6 +48,39 @@ const validateUserRegistration = [
 ];
 
 /**
+ * SMS-based registration validation
+ */
+const validateSMSRegistration = [
+  body('first_name')
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be between 2 and 50 characters'),
+  body('last_name')
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be between 2 and 50 characters'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one lowercase letter, one uppercase letter, and one number'),
+  body('phone')
+    .trim()
+    .notEmpty()
+    .withMessage('Phone number is required'),
+  body('sms_code')
+    .trim()
+    .isLength({ min: 4, max: 10 })
+    .withMessage('Verification code is required'),
+  body('email')
+    .optional({ nullable: true })
+    .isEmail()
+    .withMessage('Valid email is required when provided')
+    .normalizeEmail(),
+  handleValidationErrors
+];
+
+/**
  * User login validation
  */
 const validateUserLogin = [
@@ -352,6 +385,7 @@ module.exports = {
   validateOrderCreation,
   validateAddressCreation,
   validatePromoCode,
+  validateSMSRegistration,
   validateId,
   validatePagination
 };

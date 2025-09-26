@@ -14,6 +14,8 @@ const createUploadDirs = async () => {
     path.join(__dirname, '../uploads/banners'),
     path.join(__dirname, '../uploads/offers'),
     path.join(__dirname, '../uploads/offers/thumbnails'),
+    path.join(__dirname, '../uploads/profiles'),
+    path.join(__dirname, '../uploads/profiles/thumbnails'),
     path.join(__dirname, '../uploads/temp')
   ];
 
@@ -62,38 +64,70 @@ const processImage = async (buffer, filename, type = 'product') => {
   const uploadsDir = path.join(__dirname, '../uploads', type);
   const thumbnailsDir = path.join(__dirname, '../uploads', type, 'thumbnails');
   
-  // Generate unique filename
-  const ext = '.webp'; // Convert all images to WebP
+  // Use JPEG for better React Native compatibility (especially for profiles)
+  const ext = type === 'profiles' ? '.jpg' : '.webp';
   const uniqueFilename = `${uuidv4()}-${Date.now()}${ext}`;
   
   const mainImagePath = path.join(uploadsDir, uniqueFilename);
   const thumbnailPath = path.join(thumbnailsDir, uniqueFilename);
 
   try {
-    // Process main image (max 1200x1200, 80% quality)
-    await sharp(buffer)
-      .resize(1200, 1200, {
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: 80 })
-      .toFile(mainImagePath);
+    if (type === 'profiles') {
+      // For profile images, use JPEG format for better compatibility
+      // Process main image (max 800x800, 85% quality)
+      await sharp(buffer)
+        .resize(800, 800, {
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({ quality: 85 })
+        .toFile(mainImagePath);
 
-    // Process thumbnail (300x300, 70% quality)
-    await sharp(buffer)
-      .resize(300, 300, {
-        fit: 'cover',
-        position: 'center'
-      })
-      .webp({ quality: 70 })
-      .toFile(thumbnailPath);
+      // Process thumbnail (200x200, 80% quality)
+      await sharp(buffer)
+        .resize(200, 200, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .jpeg({ quality: 80 })
+        .toFile(thumbnailPath);
+    } else {
+      // For other images, use WebP
+      // Process main image (max 1200x1200, 80% quality)
+      await sharp(buffer)
+        .resize(1200, 1200, {
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .webp({ quality: 80 })
+        .toFile(mainImagePath);
+
+      // Process thumbnail (300x300, 70% quality)
+      await sharp(buffer)
+        .resize(300, 300, {
+          fit: 'cover',
+          position: 'center'
+        })
+        .webp({ quality: 70 })
+        .toFile(thumbnailPath);
+    }
+
+    // Generate full URLs for mobile app compatibility
+    // Use network IP instead of localhost for mobile app access
+    const baseUrl = process.env.API_BASE_URL || 'http://192.168.11.135:3015';
+    const fullUrl = `${baseUrl}/api/uploads/${type}/${uniqueFilename}`;
+    const thumbnailFullUrl = `${baseUrl}/api/uploads/${type}/thumbnails/${uniqueFilename}`;
+    
+    console.log('� Environment API_BASE_URL:', process.env.API_BASE_URL);
+    console.log('🔗 Using base URL:', baseUrl);
+    console.log('�🔗 Generated image URL:', fullUrl);
 
     return {
       filename: uniqueFilename,
       mainPath: mainImagePath,
       thumbnailPath: thumbnailPath,
-      url: `/uploads/${type}/${uniqueFilename}`,
-      thumbnailUrl: `/uploads/${type}/thumbnails/${uniqueFilename}`
+      url: fullUrl,
+      thumbnailUrl: thumbnailFullUrl
     };
   } catch (error) {
     throw new Error(`Image processing failed: ${error.message}`);

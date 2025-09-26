@@ -1092,8 +1092,8 @@ router.put('/:id/change-password', authenticate, validateId, validatePasswordCha
       });
     }
 
-    // Get current user
-    const [user] = await executeQuery('SELECT * FROM users WHERE id = ?', [userId]);
+    // Get current user with password
+    const [user] = await executeQuery('SELECT id, email, password_hash, user_type, created_at FROM users WHERE id = ?', [userId]);
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -1102,8 +1102,24 @@ router.put('/:id/change-password', authenticate, validateId, validatePasswordCha
       });
     }
 
+    console.log('🔐 Password change debug:', {
+      userId,
+      hasPassword: !!user.password_hash,
+      passwordLength: user.password_hash ? user.password_hash.length : 0,
+      userType: user.user_type
+    });
+
+    // Check if user has a password set (users created via SMS might not have one)
+    if (!user.password_hash) {
+      return res.status(400).json({
+        success: false,
+        message: 'No password set for this account. Please set a password first or contact support.',
+        message_ar: 'لم يتم تعيين كلمة مرور لهذا الحساب. يرجى تعيين كلمة مرور أولاً أو الاتصال بالدعم.'
+      });
+    }
+
     // Verify current password
-    const passwordMatch = await bcrypt.compare(current_password, user.password);
+    const passwordMatch = await bcrypt.compare(current_password, user.password_hash);
     if (!passwordMatch) {
       return res.status(400).json({
         success: false,
@@ -1117,13 +1133,93 @@ router.put('/:id/change-password', authenticate, validateId, validatePasswordCha
 
     // Update password
     await executeQuery(`
-      UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?
+      UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?
     `, [hashedPassword, userId]);
 
     res.json({
       success: true,
       message: 'Password changed successfully',
       message_ar: 'تم تغيير كلمة المرور بنجاح'
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/users/:id/set-password
+ * @desc    Set password for users who don't have one (SMS users)
+ * @access  Private
+ */
+router.put('/:id/set-password', authenticate, validateId, async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const { new_password, confirm_password } = req.body;
+
+    // Check permissions: users can only set their own password
+    if (req.user.id != userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied',
+        message_ar: 'ممنوع الوصول'
+      });
+    }
+
+    // Validate password
+    if (!new_password || new_password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 8 characters long',
+        message_ar: 'يجب أن تكون كلمة المرور 8 أحرف على الأقل'
+      });
+    }
+
+    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(new_password)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must contain at least one lowercase letter, one uppercase letter, and one number',
+        message_ar: 'يجب أن تحتوي كلمة المرور على حرف صغير وحرف كبير ورقم واحد على الأقل'
+      });
+    }
+
+    if (new_password !== confirm_password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password confirmation does not match',
+        message_ar: 'تأكيد كلمة المرور غير متطابق'
+      });
+    }
+
+    // Get current user
+    const [user] = await executeQuery('SELECT id, password_hash FROM users WHERE id = ?', [userId]);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        message_ar: 'المستخدم غير موجود'
+      });
+    }
+
+    // Check if user already has a password
+    if (user.password_hash) {
+      return res.status(400).json({
+        success: false,
+        message: 'User already has a password. Use change password instead.',
+        message_ar: 'المستخدم لديه كلمة مرور بالفعل. استخدم تغيير كلمة المرور بدلاً من ذلك.'
+      });
+    }
+
+    // Hash new password
+    const hashedPassword = await bcrypt.hash(new_password, 12);
+
+    // Set password
+    await executeQuery('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?', [hashedPassword, userId]);
+
+    res.json({
+      success: true,
+      message: 'Password set successfully',
+      message_ar: 'تم تعيين كلمة المرور بنجاح'
     });
 
   } catch (error) {
@@ -1294,6 +1390,110 @@ router.delete('/fcm-token', authenticate, async (req, res, next) => {
   } catch (error) {
     console.error('[NOTIF][USERS] Remove token error:', error);
     next(error);
+  }
+});
+
+// =============================================================================
+// ACCOUNT DELETION
+// =============================================================================
+
+/**
+ * @route   POST /api/users/request-account-deletion
+ * @desc    Submit a request to delete user account
+ * @access  Private
+ */
+router.post('/request-account-deletion', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { password, reason } = req.body;
+
+    console.log(`� Account deletion request from user ${userId}`);
+
+    // Validate password
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required',
+        message_ar: 'كلمة المرور مطلوبة'
+      });
+    }
+
+    // Get user's current password for verification
+    const [user] = await executeQuery('SELECT password_hash, email, first_name, last_name FROM users WHERE id = ?', [userId]);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        message_ar: 'المستخدم غير موجود'
+      });
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    if (!isPasswordValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid password',
+        message_ar: 'كلمة مرور غير صحيحة'
+      });
+    }
+
+    // Check if there's already a pending deletion request
+    const [existingRequest] = await executeQuery(`
+      SELECT id, status FROM account_deletion_requests 
+      WHERE user_id = ? AND status IN ('pending', 'approved')
+    `, [userId]);
+
+    if (existingRequest) {
+      if (existingRequest.status === 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: 'You already have a pending account deletion request',
+          message_ar: 'لديك طلب حذف حساب معلق بالفعل'
+        });
+      } else if (existingRequest.status === 'approved') {
+        return res.status(400).json({
+          success: false,
+          message: 'Your account deletion has been approved and will be processed soon',
+          message_ar: 'تم الموافقة على حذف حسابك وسيتم معالجته قريباً'
+        });
+      }
+    }
+
+    // Create deletion request
+    const result = await executeQuery(`
+      INSERT INTO account_deletion_requests (
+        user_id, reason, status, requested_at
+      ) VALUES (?, ?, 'pending', NOW())
+    `, [
+      userId,
+      reason || 'No reason provided'
+    ]);
+
+    console.log(`✅ Account deletion request created with ID ${result.insertId} for user ${userId}`);
+
+    // Optionally notify admins about the deletion request
+    // You can add notification logic here
+
+    res.json({
+      success: true,
+      message: 'Account deletion request submitted successfully. We will review your request and contact you within 24-48 hours.',
+      message_ar: 'تم تقديم طلب حذف الحساب بنجاح. سنراجع طلبك ونتواصل معك خلال 24-48 ساعة.',
+      data: {
+        requestId: result.insertId,
+        status: 'pending'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating account deletion request:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to submit deletion request',
+      message_ar: 'فشل في تقديم طلب الحذف',
+      error: error.message
+    });
   }
 });
 

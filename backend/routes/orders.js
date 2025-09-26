@@ -25,7 +25,8 @@ const router = express.Router();
  */
 const generateOrderNumber = async () => {
   const year = new Date().getFullYear();
-  const prefix = `ORD-${year}-`;
+  const shortYear = year.toString().slice(-2); // Get last 2 digits of year (25 for 2025)
+  const prefix = `ORD-${shortYear}-`;
   
   // Get the last order number for this year
   const [lastOrder] = await executeQuery(
@@ -41,7 +42,7 @@ const generateOrderNumber = async () => {
     nextNumber = lastNumber + 1;
   }
   
-  return `${prefix}${nextNumber.toString().padStart(6, '0')}`;
+  return `${prefix}${nextNumber.toString().padStart(3, '0')}`; // 3-digit padding instead of 6
 };
 
 /**
@@ -643,7 +644,7 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
         o.subtotal, o.delivery_fee, o.tax_amount, o.discount_amount, o.total_amount,
         o.points_used, o.points_earned, o.promo_code_id, o.gift_card_id, o.special_instructions,
         o.estimated_delivery_time, o.delivered_at, o.cancelled_at, o.cancellation_reason,
-        o.created_at, o.updated_at,
+        o.created_at, o.updated_at, o.guest_delivery_address,
         u.first_name, u.last_name, u.email as user_email,
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
         pc.code as promo_code,
@@ -678,6 +679,7 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
       
       // Structure delivery address object if delivery address fields exist
       if (order.address_name || order.city_title_en || order.area_title_en) {
+        // Regular user address from user_addresses table
         transformed.delivery_address = {
           full_name: order.address_name || '',
           address_line: [
@@ -695,6 +697,55 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
           latitude: order.address_latitude || null,
           longitude: order.address_longitude || null
         };
+      } else if (order.guest_delivery_address) {
+        // Guest order address
+        try {
+          if (typeof order.guest_delivery_address === 'string') {
+            // Try to parse as JSON first, if that fails, treat as plain text
+            let guestAddress;
+            try {
+              guestAddress = JSON.parse(order.guest_delivery_address);
+            } catch {
+              // Plain text address
+              guestAddress = order.guest_delivery_address;
+            }
+            
+            if (typeof guestAddress === 'object') {
+              // JSON object with coordinates
+              transformed.delivery_address = {
+                full_name: guestAddress.name || order.customer_name || 'Guest Customer',
+                address_line: guestAddress.address || guestAddress.address_line || 'Guest address',
+                city: guestAddress.city || '',
+                area: guestAddress.area || '',
+                governorate: guestAddress.governorate || guestAddress.city || '',
+                latitude: guestAddress.latitude || null,
+                longitude: guestAddress.longitude || null
+              };
+            } else {
+              // Plain text address
+              transformed.delivery_address = {
+                full_name: order.customer_name || 'Guest Customer',
+                address_line: guestAddress,
+                city: '',
+                area: '',
+                governorate: '',
+                latitude: null,
+                longitude: null
+              };
+            }
+          }
+        } catch (error) {
+          console.warn('Error parsing guest_delivery_address:', error);
+          transformed.delivery_address = {
+            full_name: order.customer_name || 'Guest Customer',
+            address_line: 'Unable to parse guest address',
+            city: '',
+            area: '',
+            governorate: '',
+            latitude: null,
+            longitude: null
+          };
+        }
       } else {
         transformed.delivery_address = null;
       }
@@ -711,6 +762,7 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
       delete transformed.city_title_en;
       delete transformed.area_title_ar;
       delete transformed.area_title_en;
+      delete transformed.guest_delivery_address;
       
       return transformed;
     });
@@ -807,6 +859,7 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
 
     // Structure delivery address object if delivery address fields exist
     if (order.address_name || order.city_title_en || order.area_title_en) {
+      // Regular user address from user_addresses table
       order.delivery_address = {
         full_name: order.address_name || '',
         address_line: [
@@ -839,6 +892,58 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       delete order.area_title_en;
       delete order.street_title_ar;
       delete order.street_title_en;
+    } else if (order.guest_delivery_address) {
+      // Guest order address
+      try {
+        if (typeof order.guest_delivery_address === 'string') {
+          // Try to parse as JSON first, if that fails, treat as plain text
+          let guestAddress;
+          try {
+            guestAddress = JSON.parse(order.guest_delivery_address);
+          } catch {
+            // Plain text address
+            guestAddress = order.guest_delivery_address;
+          }
+          
+          if (typeof guestAddress === 'object') {
+            // JSON object with coordinates
+            order.delivery_address = {
+              full_name: guestAddress.name || order.customer_name || 'Guest Customer',
+              address_line: guestAddress.address || guestAddress.address_line || 'Guest address',
+              city: guestAddress.city || '',
+              area: guestAddress.area || '',
+              governorate: guestAddress.governorate || guestAddress.city || '',
+              latitude: guestAddress.latitude || null,
+              longitude: guestAddress.longitude || null
+            };
+          } else {
+            // Plain text address
+            order.delivery_address = {
+              full_name: order.customer_name || 'Guest Customer',
+              address_line: guestAddress,
+              city: '',
+              area: '',
+              governorate: '',
+              latitude: null,
+              longitude: null
+            };
+          }
+        }
+      } catch (error) {
+        console.warn('Error parsing guest_delivery_address:', error);
+        order.delivery_address = {
+          full_name: order.customer_name || 'Guest Customer',
+          address_line: 'Unable to parse guest address',
+          city: '',
+          area: '',
+          governorate: '',
+          latitude: null,
+          longitude: null
+        };
+      }
+      
+      // Clean up the guest_delivery_address field
+      delete order.guest_delivery_address;
     } else {
       order.delivery_address = null;
     }
@@ -1435,6 +1540,60 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
 
     // Emit socket event for new order
     if (global.socketManager) {
+      // Apply address transformation for socket broadcast (same logic as main orders endpoint)
+      let transformedAddress = null;
+      
+      if (newOrder.guest_delivery_address) {
+        // Guest order address transformation
+        try {
+          if (typeof newOrder.guest_delivery_address === 'string') {
+            // Try to parse as JSON first, if that fails, treat as plain text
+            let guestAddress;
+            try {
+              guestAddress = JSON.parse(newOrder.guest_delivery_address);
+            } catch {
+              // Plain text address
+              guestAddress = newOrder.guest_delivery_address;
+            }
+            
+            if (typeof guestAddress === 'object') {
+              // JSON object with coordinates
+              transformedAddress = {
+                full_name: guestAddress.name || newOrder.customer_name || 'Guest Customer',
+                address_line: guestAddress.address || guestAddress.address_line || 'Guest address',
+                city: guestAddress.city || '',
+                area: guestAddress.area || '',
+                governorate: guestAddress.governorate || guestAddress.city || '',
+                latitude: guestAddress.latitude || null,
+                longitude: guestAddress.longitude || null
+              };
+            } else {
+              // Plain text address
+              transformedAddress = {
+                full_name: newOrder.customer_name || 'Guest Customer',
+                address_line: guestAddress,
+                city: '',
+                area: '',
+                governorate: '',
+                latitude: null,
+                longitude: null
+              };
+            }
+          }
+        } catch (error) {
+          console.warn('Error parsing guest_delivery_address for socket broadcast:', error);
+          transformedAddress = {
+            full_name: newOrder.customer_name || 'Guest Customer',
+            address_line: 'Unable to parse guest address',
+            city: '',
+            area: '',
+            governorate: '',
+            latitude: null,
+            longitude: null
+          };
+        }
+      }
+      
       global.socketManager.broadcastNewOrder({
         orderId: newOrder.id,
         orderNumber: newOrder.order_number,
@@ -1449,6 +1608,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         itemsCount: items.length,
         items: items,
         branchTitle: newOrder.title_en || newOrder.title_ar,
+        delivery_address: transformedAddress, // Add transformed address
         ...newOrder
       });
       
@@ -1820,6 +1980,7 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       // Emit order status update to all admin users
       global.socketManager.emitToAdmins('orderStatusUpdated', {
         orderId: updatedOrder.id,
+        orderNumber: updatedOrder.order_number,
         previousStatus: currentOrder.order_status,
         newStatus: updatedOrder.order_status,
         customerName: updatedOrder.customer_name,
@@ -1831,8 +1992,9 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       // Emit to specific customer if they are connected
       global.socketManager.emitToUser(updatedOrder.user_id, 'orderStatusChanged', {
         orderId: updatedOrder.id,
+        orderNumber: updatedOrder.order_number,
         status: updatedOrder.order_status,
-        customerMessage: `Your order #${updatedOrder.id} status has been updated to: ${updatedOrder.order_status}`,
+        customerMessage: `Your order ${updatedOrder.order_number} status has been updated to: ${updatedOrder.order_status}`,
         updatedAt: new Date().toISOString()
       });
 
@@ -1964,6 +2126,7 @@ router.delete('/:id', authenticate, validateId, async (req, res, next) => {
       // Emit order cancellation to all admin users
       global.socketManager.emitToAdmins('orderCancelled', {
         orderId: currentOrder.id,
+        orderNumber: currentOrder.order_number,
         customerName: currentOrder.customer_name,
         orderTotal: currentOrder.total_amount,
         cancellationReason: reason || 'Cancelled by user',
@@ -1974,7 +2137,8 @@ router.delete('/:id', authenticate, validateId, async (req, res, next) => {
       // Emit to specific customer if they are connected
       global.socketManager.emitToUser(currentOrder.user_id, 'orderCancelled', {
         orderId: currentOrder.id,
-        customerMessage: `Your order #${currentOrder.id} has been cancelled`,
+        orderNumber: currentOrder.order_number,
+        customerMessage: `Your order ${currentOrder.order_number} has been cancelled`,
         reason: reason || 'Cancelled by user',
         cancelledAt: new Date().toISOString()
       });
@@ -3188,6 +3352,152 @@ router.post('/:id/payment-link', authenticate, authorize('admin', 'staff'), vali
     });
 
   } catch (error) {
+    next(error);
+  }
+});
+
+// =============================================================================
+// GUEST ORDER LOOKUP
+// =============================================================================
+
+/**
+ * Lookup guest orders by phone number and order number
+ * This allows guest users to track their order status without authentication
+ */
+router.post('/guest/lookup', async (req, res, next) => {
+  try {
+    const { customer_phone, order_number } = req.body;
+
+    // Validate required fields
+    if (!customer_phone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer phone number is required',
+        message_ar: 'رقم هاتف العميل مطلوب'
+      });
+    }
+
+    if (!order_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'Order number is required', 
+        message_ar: 'رقم الطلب مطلوب'
+      });
+    }
+
+    console.log('🔍 Guest order lookup request:', { customer_phone, order_number });
+
+    // Query guest orders by phone and order number
+    const [order] = await executeQuery(`
+      SELECT 
+        o.id,
+        o.order_number,
+        o.customer_name,
+        o.customer_phone,
+        o.customer_email,
+        o.order_status,
+        o.payment_status,
+        o.order_type,
+        o.payment_method,
+        o.total_amount,
+        o.delivery_fee,
+        o.tax_amount,
+        o.discount_amount,
+        o.subtotal,
+        o.special_instructions,
+        o.guest_delivery_address,
+        o.created_at,
+        o.updated_at,
+        o.estimated_delivery_time,
+        o.delivered_at,
+        o.cancelled_at,
+        o.is_guest,
+        b.title_en as branch_title_en,
+        b.title_ar as branch_title_ar
+      FROM orders o
+      LEFT JOIN branches b ON o.branch_id = b.id
+      WHERE o.customer_phone = ? 
+        AND o.order_number = ? 
+        AND o.is_guest = 1
+    `, [customer_phone, order_number]);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found with provided phone number and order number',
+        message_ar: 'لم يتم العثور على الطلب برقم الهاتف ورقم الطلب المقدم'
+      });
+    }
+
+    // Apply the same address transformation logic as other endpoints
+    if (order.guest_delivery_address) {
+      try {
+        if (typeof order.guest_delivery_address === 'string') {
+          let guestAddress;
+          try {
+            guestAddress = JSON.parse(order.guest_delivery_address);
+          } catch {
+            guestAddress = order.guest_delivery_address;
+          }
+          
+          if (typeof guestAddress === 'object') {
+            order.delivery_address = {
+              full_name: guestAddress.name || order.customer_name || 'Guest Customer',
+              address_line: guestAddress.address || guestAddress.address_line || 'Guest address',
+              city: guestAddress.city || '',
+              area: guestAddress.area || '',
+              governorate: guestAddress.governorate || guestAddress.city || '',
+              latitude: guestAddress.latitude || null,
+              longitude: guestAddress.longitude || null
+            };
+          } else {
+            order.delivery_address = {
+              full_name: order.customer_name || 'Guest Customer',
+              address_line: guestAddress,
+              city: '',
+              area: '',
+              governorate: '',
+              latitude: null,
+              longitude: null
+            };
+          }
+        }
+      } catch (error) {
+        console.warn('Error parsing guest_delivery_address in lookup:', error);
+        order.delivery_address = {
+          full_name: order.customer_name || 'Guest Customer',
+          address_line: 'Unable to parse guest address',
+          city: '',
+          area: '',
+          governorate: '',
+          latitude: null,
+          longitude: null
+        };
+      }
+    } else {
+      order.delivery_address = null;
+    }
+
+    // Remove the raw guest_delivery_address field for cleaner response
+    delete order.guest_delivery_address;
+
+    console.log('✅ Guest order found:', { 
+      order_id: order.id, 
+      order_number: order.order_number,
+      status: order.order_status 
+    });
+
+    res.json({
+      success: true,
+      data: {
+        order,
+        message: 'Order found successfully',
+        message_ar: 'تم العثور على الطلب بنجاح'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error in guest order lookup:', error);
     next(error);
   }
 });
