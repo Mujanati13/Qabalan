@@ -2,20 +2,32 @@ import dayjs from 'dayjs';
 import { useLanguage } from '../contexts/LanguageContext';
 
 // Number formatting utilities
-export const formatCurrency = (amount, currency = 'USD', locale = 'en-US') => {
-  if (amount === null || amount === undefined || isNaN(amount)) {
-    return currency === 'USD' ? '$0.00' : '0.00';
-  }
-  
-  return new Intl.NumberFormat(locale, {
+export const DEFAULT_CURRENCY = 'JOD';
+export const EN_LOCALE = 'en-JO';
+export const AR_LOCALE = 'ar-JO';
+
+const getDefaultCurrencyFormatter = (currency = DEFAULT_CURRENCY, locale = EN_LOCALE) =>
+  new Intl.NumberFormat(locale, {
     style: 'currency',
-    currency: currency,
+    currency,
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount);
+    maximumFractionDigits: 2,
+    currencyDisplay: 'narrowSymbol'
+  });
+
+export const formatCurrency = (
+  amount,
+  currency = DEFAULT_CURRENCY,
+  locale = EN_LOCALE
+) => {
+  if (amount === null || amount === undefined || amount === '' || isNaN(Number(amount))) {
+    return getDefaultCurrencyFormatter(currency, locale).format(0);
+  }
+
+  return getDefaultCurrencyFormatter(currency, locale).format(Number(amount));
 };
 
-export const formatNumber = (number, locale = 'en-US', options = {}) => {
+export const formatNumber = (number, locale = EN_LOCALE, options = {}) => {
   if (number === null || number === undefined || isNaN(number)) {
     return '0';
   }
@@ -27,7 +39,7 @@ export const formatNumber = (number, locale = 'en-US', options = {}) => {
   }).format(number);
 };
 
-export const formatPercentage = (value, locale = 'en-US', decimals = 1) => {
+export const formatPercentage = (value, locale = EN_LOCALE, decimals = 1) => {
   if (value === null || value === undefined || isNaN(value)) {
     return '0%';
   }
@@ -89,8 +101,8 @@ export const formatRelativeTime = (date, locale = 'en') => {
 export const useFormatters = () => {
   const { language } = useLanguage();
   
-  const locale = language === 'ar' ? 'ar-SA' : 'en-US';
-  const currency = 'USD'; // You can make this configurable
+  const locale = language === 'ar' ? AR_LOCALE : EN_LOCALE;
+  const currency = DEFAULT_CURRENCY;
   
   return {
     formatCurrency: (amount) => formatCurrency(amount, currency, locale),
@@ -131,7 +143,7 @@ export const useFormatters = () => {
 };
 
 // Chart data formatters
-export const formatChartData = (data, xField, yField, locale = 'en-US') => {
+export const formatChartData = (data, xField, yField, locale = EN_LOCALE) => {
   return data.map(item => ({
     ...item,
     [xField]: typeof item[xField] === 'string' && dayjs(item[xField]).isValid() 
@@ -144,7 +156,7 @@ export const formatChartData = (data, xField, yField, locale = 'en-US') => {
 };
 
 // Table column formatters
-export const createCurrencyColumn = (title, dataIndex, locale = 'en-US', currency = 'USD') => ({
+export const createCurrencyColumn = (title, dataIndex, locale = EN_LOCALE, currency = DEFAULT_CURRENCY) => ({
   title,
   dataIndex,
   key: dataIndex,

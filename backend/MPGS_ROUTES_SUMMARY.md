@@ -38,8 +38,8 @@ The missing `/mpgs/checkout-session` endpoint has been added to the clean paymen
   "mode": "hostedCheckout",
   "sessionId": "SESSION_123456",
   "orderId": "123",
-  "checkoutUrl": "https://test-gateway.mastercard.com/checkout/version/73/merchant/TESTNITEST2/session/SESSION_123456",
-  "checkoutScript": "https://test-gateway.mastercard.com/checkout/version/73/checkout.js",
+  "checkoutUrl": "https://test-network.mtf.gateway.mastercard.com/checkout/version/73/merchant/TESTNITEST2/session/SESSION_123456",
+  "checkoutScript": "https://test-network.mtf.gateway.mastercard.com/checkout/version/73/checkout.js",
   "merchantId": "TESTNITEST2",
   "successIndicator": "SUCCESS_INDICATOR"
 }
@@ -56,6 +56,19 @@ The missing `/mpgs/checkout-session` endpoint has been added to the clean paymen
 1. **Start your server:** `node app.js` (port 3015)
 2. **Test endpoint:** `POST http://localhost:3015/api/payments/mpgs/checkout-session`
 3. **Test page:** `http://localhost:3015/payment-test-clean.html`
+
+> ℹ️ **Sandbox configuration:**
+>
+> The repository now ships with Mastercard test credentials for quick sanity checks:
+> 
+> - `MPGS_MERCHANT_ID=TESTNITEST2`
+> - `MPGS_API_USERNAME=merchant.TESTNITEST2`
+> - `MPGS_API_PASSWORD=ac63181fe688fe7ce3cf5a1f105a145a`
+> - `MPGS_GATEWAY=https://test-network.mtf.gateway.mastercard.com`
+> - `MPGS_API_VERSION=73`
+> - `MPGS_DEFAULT_CURRENCY=JOD`
+>
+> Override these values via environment variables for other sandboxes or production credentials. Never commit live secrets to source control.
 
 ## 🔐 **Authentication:**
 The `/mpgs/checkout-session` endpoint requires authentication middleware.

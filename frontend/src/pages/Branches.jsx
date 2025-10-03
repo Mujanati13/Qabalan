@@ -629,9 +629,10 @@ const Branches = () => {
           loading={loading}
           pagination={{
             total: filteredBranches.length,
-            pageSize: 10,
+            defaultPageSize: 10,
             showSizeChanger: true,
             showQuickJumper: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total, range) =>
               `${range[0]}-${range[1]} ${t ? t('common.of') : 'of'} ${total} ${t ? t('branches.list') : 'branches'}`,
           }}

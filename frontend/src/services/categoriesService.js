@@ -74,11 +74,17 @@ const categoriesService = {
   },
 
   // Activate/deactivate category
-  toggleCategoryStatus: async (id, isActive) => {
+  toggleCategoryStatus: async (id, isActive, options = {}) => {
     try {
-      const response = await api.post(`/categories/${id}/activate`, { 
+      const payload = { 
         is_active: isActive 
-      })
+      }
+
+      if (options.cascadeProducts !== undefined) {
+        payload.cascade_products = options.cascadeProducts
+      }
+
+      const response = await api.post(`/categories/${id}/activate`, payload)
       return response.data
     } catch (error) {
       throw new Error(error.response?.data?.message || 'Failed to toggle category status')

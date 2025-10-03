@@ -46,11 +46,11 @@ async function testPaymentFlow() {
     console.log('4. Use test card: 5123456789012346, expiry: 01/39, CVV: 100');
     console.log('5. Complete payment to test success callback');
     
-    console.log('\n⚙️  Environment Variables Needed:');
-    console.log('- MPGS_MERCHANT_ID (default: 9555118512EP)');
-    console.log('- MPGS_API_USERNAME');
-    console.log('- MPGS_API_PASSWORD');
-    console.log('- MPGS_GATEWAY (default: https://ap-gateway.mastercard.com)');
+  console.log('\n⚙️  Environment Variables Needed:');
+  console.log('- MPGS_MERCHANT_ID (default: TESTNITEST2)');
+  console.log('- MPGS_API_USERNAME (default: merchant.TESTNITEST2)');
+  console.log('- MPGS_API_PASSWORD (bundled sandbox password available)');
+  console.log('- MPGS_GATEWAY (default: https://test-network.mtf.gateway.mastercard.com)');
     console.log('- MPGS_RETURN_BASE_URL (for success callbacks)');
     
   } catch (error) {

@@ -874,6 +874,7 @@ const OrdersV2 = () => {
               ) : (
                 orders.map((order) => {
                   const isItemSelected = isSelected(order.id);
+                  const isPaymentPaid = ['paid', 'completed'].includes(order.payment_status);
                   return (
                     <StyledTableRow
                       key={order.id}
@@ -997,12 +998,12 @@ const OrdersV2 = () => {
                           />
                           <Box sx={{ mt: 0.5 }}>
                             <Chip
-                              label={`${order.payment_status === 'paid' ? '✓' : 
+                              label={`${isPaymentPaid ? '✓' : 
                                      order.payment_status === 'failed' ? '✗' : '⏳'} ${
-                                     t(`orders.payment_status_${order.payment_status}`) || order.payment_status}`}
+                                     t(`orders.payment_status_${isPaymentPaid ? 'paid' : order.payment_status}`) || order.payment_status}`}
                               size="small"
                               color={
-                                order.payment_status === 'paid' ? 'success' : 
+                                isPaymentPaid ? 'success' : 
                                 order.payment_status === 'failed' ? 'error' : 'warning'
                               }
                             />
@@ -1023,7 +1024,7 @@ const OrdersV2 = () => {
                               <EyeIcon />
                             </IconButton>
                           </Tooltip>
-                          {order.payment_status !== 'paid' && (
+                          {!isPaymentPaid && (
                             <Tooltip title="Pay with Card">
                               <IconButton
                                 size="small"

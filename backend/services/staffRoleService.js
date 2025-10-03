@@ -297,27 +297,53 @@ class StaffRoleService {
   async createStaff(staffData) {
     try {
       const {
-        email, phone, password, first_name, last_name, user_type,
+        email,
+        phone,
+        password,
+        first_name,
+        last_name,
+        user_type,
         employee_id, department, position, manager_id, hire_date,
         employment_type, salary, hourly_rate, work_schedule,
         emergency_contact_name, emergency_contact_phone, notes,
         roles = []
       } = staffData;
 
+      const normalizedEmail = (email || '').toLowerCase().trim();
+      const normalizedFirstName = (first_name || '').trim();
+      const normalizedLastName = (last_name || '').trim();
+      const normalizedUserType = ['admin', 'staff'].includes(user_type) ? user_type : 'staff';
+      const sanitizedPhone = typeof phone === 'string'
+        ? phone.replace(/\s+/g, '').trim() || null
+        : phone || null;
+      const cleanedPassword = typeof password === 'string' ? password.trim() : '';
+
+      if (!normalizedEmail) {
+        throw new Error('Email is required');
+      }
+
+      if (!normalizedFirstName || !normalizedLastName) {
+        throw new Error('First name and last name are required');
+      }
+
+      if (!cleanedPassword || cleanedPassword.length < 8) {
+        throw new Error('Password must be at least 8 characters long');
+      }
+
       // Check for duplicate email
       const [existingEmail] = await executeQuery(
         'SELECT id FROM users WHERE email = ?',
-        [email]
+        [normalizedEmail]
       );
       if (existingEmail) {
         throw new Error('Email already exists');
       }
 
       // Check for duplicate phone if provided
-      if (phone && phone.trim()) {
+      if (sanitizedPhone) {
         const [existingPhone] = await executeQuery(
           'SELECT id FROM users WHERE phone = ?',
-          [phone.trim()]
+          [sanitizedPhone]
         );
         if (existingPhone) {
           throw new Error('Phone number already exists');
@@ -325,14 +351,21 @@ class StaffRoleService {
       }
 
       // Hash password
-      const hashedPassword = await bcrypt.hash(password, 12);
+      const hashedPassword = await bcrypt.hash(cleanedPassword, 12);
 
       // Create user
       const userResult = await executeQuery(`
         INSERT INTO users 
         (email, phone, password_hash, first_name, last_name, user_type, is_verified, is_active)
         VALUES (?, ?, ?, ?, ?, ?, TRUE, TRUE)
-      `, [email, phone || null, hashedPassword, first_name, last_name, user_type]);
+      `, [
+        normalizedEmail,
+        sanitizedPhone,
+        hashedPassword,
+        normalizedFirstName,
+        normalizedLastName,
+        normalizedUserType
+      ]);
 
       const userId = userResult.insertId;
 

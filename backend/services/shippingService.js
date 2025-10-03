@@ -9,6 +9,7 @@ class ShippingService {
     this.earthRadius = 6371; // Earth's radius in kilometers
     this.defaultShippingFee = 5.00;
     this.maxDeliveryDistance = 100; // km
+    this.minEffectiveDistance = 0;
   }
 
   /**
@@ -42,6 +43,22 @@ class ShippingService {
    */
   toRadians(degrees) {
     return degrees * (Math.PI / 180);
+  }
+
+  /**
+   * Clamp delivery distance to operational pricing range
+   * @param {number} distance - Raw calculated distance in kilometers
+   * @returns {number} Distance constrained within service boundaries
+   */
+  clampDistance(distance) {
+    if (typeof distance !== 'number' || Number.isNaN(distance)) {
+      return this.minEffectiveDistance;
+    }
+
+    return Math.min(
+      this.maxDeliveryDistance,
+      Math.max(this.minEffectiveDistance, distance)
+    );
   }
 
   /**
@@ -113,12 +130,13 @@ class ShippingService {
    * @returns {Object} Shipping calculation details
    */
   calculateShippingCost(distance, zone, orderAmount = 0) {
+    const effectiveDistance = parseFloat((distance || 0).toFixed(2));
     const baseCost = parseFloat(zone.base_price) || 0;
     const perKmCost = parseFloat(zone.price_per_km) || 0;
     const freeThreshold = parseFloat(zone.free_shipping_threshold) || 0;
 
     // Calculate distance-based cost
-    const distanceCost = distance * perKmCost;
+    const distanceCost = effectiveDistance * perKmCost;
     let totalCost = baseCost + distanceCost;
 
     // Check for free shipping
@@ -128,7 +146,7 @@ class ShippingService {
     }
 
     return {
-      distance_km: distance,
+      distance_km: effectiveDistance,
       zone_id: zone.id,
       zone_name_en: zone.name_en,
       zone_name_ar: zone.name_ar,
@@ -136,8 +154,10 @@ class ShippingService {
       distance_cost: distanceCost,
       total_cost: parseFloat(totalCost.toFixed(2)),
       free_shipping_applied: freeShippingApplied,
-      free_shipping_threshold: freeThreshold,
-      calculation_method: 'zone_based'
+  free_shipping_threshold: freeThreshold,
+  calculation_method: 'zone_based',
+  distance_basis: `bounded_${this.minEffectiveDistance}-${this.maxDeliveryDistance}_km`,
+      order_amount: parseFloat(orderAmount) || 0
     };
   }
 
@@ -218,19 +238,23 @@ class ShippingService {
         throw new Error('Branch coordinates not configured');
       }
 
-      // Calculate distance
-      const distance = this.calculateDistance(
+      // Calculate raw distance
+      const rawDistance = this.calculateDistance(
         customerLat, customerLon,
         branch.latitude, branch.longitude
       );
 
+      // Clamp distance for pricing calculations
+      const effectiveDistance = this.clampDistance(rawDistance);
+
   // Do not hard-fail on out-of-range distances; compute cost and flag
 
       // Find appropriate shipping zone
-      const zone = await this.findShippingZone(distance, branchId);
+      const zone = await this.findShippingZone(effectiveDistance, branchId);
 
       // Calculate shipping cost
-      const shippingCalculation = this.calculateShippingCost(distance, zone, orderAmount);
+      const shippingCalculation = this.calculateShippingCost(effectiveDistance, zone, orderAmount);
+      const roundedRawDistance = parseFloat(rawDistance.toFixed(2));
 
       // Return complete calculation
       return {
@@ -247,8 +271,10 @@ class ShippingService {
           latitude: customerLat,
           longitude: customerLon
         },
+        raw_distance_km: roundedRawDistance,
+        effective_distance_km: shippingCalculation.distance_km,
         ...shippingCalculation,
-        is_within_range: distance <= this.maxDeliveryDistance,
+        is_within_range: roundedRawDistance <= this.maxDeliveryDistance,
         max_delivery_distance: this.maxDeliveryDistance
       };
     } catch (error) {

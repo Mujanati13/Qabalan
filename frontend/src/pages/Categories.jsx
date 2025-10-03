@@ -471,8 +471,8 @@ const Categories = () => {
   };
 
   // Simple category status update
-  const updateCategoryStatus = async (categoryId, newStatus) => {
-    await categoriesService.toggleCategoryStatus(categoryId, newStatus);
+  const updateCategoryStatus = async (categoryId, newStatus, options = {}) => {
+    return categoriesService.toggleCategoryStatus(categoryId, newStatus, options);
   };
 
   // Update category products branch availability
@@ -535,6 +535,17 @@ const Categories = () => {
               <p>Do you want to {actionText} this category?</p>
               <div style={{ marginTop: 12 }}>
                 <label>
+                  <input
+                    type="checkbox"
+                    id="cascadeProducts"
+                    defaultChecked={!newStatus}
+                    style={{ marginRight: 8 }}
+                  />
+                  Also {newStatus ? 'activate' : 'hide'} all products in this category
+                </label>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <label>
                   <input type="checkbox" id="updateBranches" defaultChecked style={{ marginRight: 8 }} />
                   Also update product availability in branches
                 </label>
@@ -542,8 +553,9 @@ const Categories = () => {
             </div>
           ),
           onOk: () => {
+            const cascadeProducts = document.getElementById('cascadeProducts')?.checked || false;
             const updateBranches = document.getElementById('updateBranches')?.checked || false;
-            resolve({ proceed: true, updateBranches });
+            resolve({ proceed: true, cascadeProducts, updateBranches });
           },
           onCancel: () => resolve({ proceed: false })
         });
@@ -554,9 +566,17 @@ const Categories = () => {
       setLoading(true);
       
       // Update category status
-      await updateCategoryStatus(categoryId, newStatus);
+      const updateResponse = await updateCategoryStatus(categoryId, newStatus, {
+        cascadeProducts: result.cascadeProducts
+      });
       
       let successMessage = `Category ${actionText}d successfully`;
+      if (result.cascadeProducts) {
+        const cascadedCount = updateResponse?.data?.cascadedProducts ?? 0;
+        if (cascadedCount > 0) {
+          successMessage += ` and ${cascadedCount} products ${newStatus ? 'activated' : 'hidden'}`;
+        }
+      }
       
       // Update branches if requested
       if (result.updateBranches) {
@@ -627,6 +647,17 @@ const Categories = () => {
               <p>Do you want to {actionText} {count} selected categories?</p>
               <div style={{ marginTop: 12 }}>
                 <label>
+                  <input
+                    type="checkbox"
+                    id="bulkCascadeProducts"
+                    defaultChecked={!status}
+                    style={{ marginRight: 8 }}
+                  />
+                  Also {status ? 'activate' : 'hide'} products in these categories
+                </label>
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <label>
                   <input type="checkbox" id="bulkUpdateBranches" defaultChecked style={{ marginRight: 8 }} />
                   Also update product availability in branches
                 </label>
@@ -635,7 +666,8 @@ const Categories = () => {
           ),
           onOk: () => {
             const updateBranches = document.getElementById('bulkUpdateBranches')?.checked || false;
-            resolve({ proceed: true, updateBranches });
+            const cascadeProducts = document.getElementById('bulkCascadeProducts')?.checked || false;
+            resolve({ proceed: true, updateBranches, cascadeProducts });
           },
           onCancel: () => resolve({ proceed: false })
         });
@@ -646,9 +678,20 @@ const Categories = () => {
       setBulkActionLoading(true);
       
       // Update all category statuses
-      await Promise.all(selectedRowKeys.map(id => updateCategoryStatus(id, status)));
+      let cascadedProductsTotal = 0;
+      await Promise.all(selectedRowKeys.map(async (id) => {
+        const response = await updateCategoryStatus(id, status, {
+          cascadeProducts: result.cascadeProducts
+        });
+        if (result.cascadeProducts) {
+          cascadedProductsTotal += response?.data?.cascadedProducts ?? 0;
+        }
+      }));
       
       let successMessage = `Successfully ${actionText}d ${count} categories`;
+      if (result.cascadeProducts && cascadedProductsTotal > 0) {
+        successMessage += ` and ${cascadedProductsTotal} products ${status ? 'activated' : 'hidden'}`;
+      }
       
       // Update branches if requested
       if (result.updateBranches) {
@@ -1239,9 +1282,10 @@ const Categories = () => {
           onChange={() => {}} // Disable default sorting
           pagination={{
             total: sortedCategories.length,
-            pageSize: 10,
+            defaultPageSize: 10,
             showSizeChanger: true,
             showQuickJumper: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total, range) => 
               `${range[0]}-${range[1]} ${t('common.of')} ${total} ${t('categories.items')}`,
             responsive: true,

@@ -93,11 +93,12 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   // Helper function to format price
   const formatPrice = (price) => {
     const numPrice = parseFloat(price) || 0;
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-JO', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'JOD',
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2
+      maximumFractionDigits: 2,
+      currencyDisplay: 'narrowSymbol'
     }).format(numPrice);
   };
 

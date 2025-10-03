@@ -9,6 +9,23 @@ async function ensurePaymentSchema() {
   inProgress = (async () => {
     try {
       // Check for payment_success_indicator column
+      const currencyCol = await executeQuery(`SELECT COUNT(*) AS cnt FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name='orders' AND column_name='currency'`);
+      let hasCurrencyColumn = currencyCol[0]?.cnt > 0;
+      if (!hasCurrencyColumn) {
+        console.log('[SCHEMA] Adding orders.currency column');
+        await executeQuery(`ALTER TABLE orders ADD COLUMN currency VARCHAR(3) NOT NULL DEFAULT 'JOD' AFTER total_amount`);
+        hasCurrencyColumn = true;
+      }
+      if (hasCurrencyColumn) {
+        await executeQuery(`UPDATE orders SET currency = 'JOD' WHERE currency IS NULL OR currency = ''`);
+        const currencyIndex = await executeQuery(`SHOW INDEX FROM orders WHERE Key_name='idx_orders_currency'`);
+        if (!currencyIndex.length) {
+          console.log('[SCHEMA] Creating idx_orders_currency');
+          await executeQuery(`CREATE INDEX idx_orders_currency ON orders(currency)`);
+        }
+      }
+
+      // Check for payment_success_indicator column
       const checkCol = await executeQuery(`SELECT COUNT(*) AS cnt FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name='orders' AND column_name='payment_success_indicator'`);
       if (!checkCol[0].cnt) {
         console.log('[SCHEMA] Adding orders.payment_success_indicator column');

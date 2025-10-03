@@ -44,7 +44,7 @@ const PaymentTest = () => {
       <PaymentCard
         orderId={orderId}
         amount="10.00"
-        currency="USD"
+        currency="JOD"
         onPaymentSuccess={handlePaymentSuccess}
         onPaymentError={handlePaymentError}
       />
@@ -72,7 +72,7 @@ const PaymentTest = () => {
           <li>MPGS_API_USERNAME=merchant.TESTNITEST2</li>
           <li>MPGS_API_PASSWORD=your_password</li>
           <li>MPGS_MERCHANT_NAME=Test Merchant</li>
-          <li>MPGS_DEFAULT_CURRENCY=USD</li>
+          <li>MPGS_DEFAULT_CURRENCY=JOD</li>
           <li>MPGS_RETURN_BASE_URL=http://localhost:3000</li>
         </ul>
       </div>

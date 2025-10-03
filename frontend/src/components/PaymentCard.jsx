@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const PaymentCard = ({ orderId, amount, currency = 'USD', onPaymentSuccess, onPaymentError }) => {
+const PaymentCard = ({ orderId, amount, currency = 'JOD', onPaymentSuccess, onPaymentError }) => {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState([]);
   const [currentSession, setCurrentSession] = useState(null);

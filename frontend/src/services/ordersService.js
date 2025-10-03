@@ -113,11 +113,12 @@ const ordersService = {
   },
 
   // Bulk status update
-  bulkUpdateStatus: async (orderIds, status) => {
+  bulkUpdateStatus: async (orderIds, status, note = '') => {
     try {
-      const response = await api.post('/orders/bulk/status', {
+      const response = await api.post('/orders/bulk-status-update', {
         order_ids: orderIds,
-        status
+        status,
+        note
       });
       return response.data;
     } catch (error) {

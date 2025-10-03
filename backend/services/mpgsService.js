@@ -11,14 +11,22 @@ function normalizeGateway(raw){
 }
 
 const MPGS_CONFIG = {
-  gateway: normalizeGateway(process.env.MPGS_GATEWAY || process.env.MPGS_BASE_URL || 'https://mtf.gateway.mastercard.com'),
+  gateway: normalizeGateway(
+    process.env.MPGS_GATEWAY ||
+    process.env.MPGS_BASE_URL ||
+    'https://test-network.mtf.gateway.mastercard.com'
+  ),
   apiVersion: process.env.MPGS_API_VERSION || '73',
   merchantId: process.env.MPGS_MERCHANT_ID || 'TESTNITEST2',
   apiUsername: process.env.MPGS_API_USERNAME || 'merchant.TESTNITEST2',
-  apiPassword: process.env.MPGS_API_PASSWORD || 'CHANGE_ME',
+  apiPassword: process.env.MPGS_API_PASSWORD || 'ac63181fe688fe7ce3cf5a1f105a145a',
   defaultCurrency: process.env.MPGS_DEFAULT_CURRENCY || 'JOD',
-  merchantDisplayName: process.env.MPGS_MERCHANT_NAME || process.env.MPGS_MERCHANT_DISPLAY_NAME || 'Test Merchant'
+  merchantDisplayName: process.env.MPGS_MERCHANT_NAME || process.env.MPGS_MERCHANT_DISPLAY_NAME || 'TESTNITEST2'
 };
+
+if (!process.env.MPGS_API_PASSWORD) {
+  console.warn('[MPGS] Using bundled sandbox credentials. Set MPGS_API_PASSWORD in production environments.');
+}
 
 class MPGSService {
   constructor(cfg) {
@@ -152,16 +160,42 @@ class MPGSService {
 
   // Ensure an order exists explicitly (some profiles require explicit PUT before hosted session use)
   async ensureOrder(orderId, amount, currency = this.cfg.defaultCurrency) {
+    const url = this._orderUrl(orderId);
+    const formattedAmount = Number(amount).toFixed(2);
+    const basePayload = { order: { amount: formattedAmount, currency } };
+
+  const createAttempt = await this._ensureOrderRequest(url, 'CREATE_ORDER', basePayload);
+    if (createAttempt.ok) {
+      return createAttempt.data;
+    }
+
+    const explanation = createAttempt.explanation || '';
+    const shouldRetryWithUpdate = /(already\s+exists|supported\s+operation|not\s+allowed|cannot\s+create|already\s+paid)/i.test(explanation);
+
+    if (!shouldRetryWithUpdate) {
+      throw createAttempt.error;
+    }
+
+    const updateAttempt = await this._ensureOrderRequest(url, 'UPDATE_ORDER', basePayload);
+    if (updateAttempt.ok) {
+      return updateAttempt.data;
+    }
+
+    throw updateAttempt.error;
+  }
+
+  async _ensureOrderRequest(url, apiOperation, payload) {
     try {
-      const url = this._orderUrl(orderId);
-      const payload = { order: { amount: Number(amount).toFixed(2), currency } }; // implicit create/update
-      console.log('[MPGS] Ensuring order via PUT:', url, payload);
-      const { data } = await this.client.put(url, payload);
-      console.log('[MPGS] ensureOrder response:', JSON.stringify(data, null, 2));
-      return data;
-    } catch (e) {
-      console.warn('[MPGS] ensureOrder failed (continuing):', e.response?.data || e.message);
-      throw e;
+      const requestBody = { apiOperation, ...payload };
+      console.log(`[MPGS] Ensuring order via PUT (${apiOperation}):`, url, requestBody);
+  const { data } = await this.client.post(url, requestBody);
+      console.log(`[MPGS] ensureOrder (${apiOperation}) response:`, JSON.stringify(data, null, 2));
+      return { ok: true, data };
+    } catch (error) {
+      const responseData = error.response?.data || error.message;
+      const explanation = error.response?.data?.error?.explanation || error.message;
+      console.warn(`[MPGS] ensureOrder (${apiOperation}) failed:`, responseData);
+      return { ok: false, error, explanation };
     }
   }
 

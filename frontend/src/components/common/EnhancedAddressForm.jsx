@@ -18,11 +18,12 @@ const EnhancedAddressForm = ({
   isEditing = false,
   t,
   initialCoordinates = null,
+  initialAddress = null,
   showMapFirst = true
 }) => {
   const [activeTab, setActiveTab] = useState(showMapFirst ? 'map' : 'form');
   const [selectedLocation, setSelectedLocation] = useState(initialCoordinates);
-  const [autoFilledAddress, setAutoFilledAddress] = useState(null);
+  const [autoFilledAddress, setAutoFilledAddress] = useState(initialAddress || null);
 
   useEffect(() => {
     // Set initial coordinates if provided
@@ -34,6 +35,12 @@ const EnhancedAddressForm = ({
       setSelectedLocation(normalizedCoordinates);
     }
   }, [initialCoordinates]);
+
+  useEffect(() => {
+    if (initialAddress) {
+      setAutoFilledAddress(prev => prev || initialAddress);
+    }
+  }, [initialAddress]);
 
   const handleLocationSelect = (location) => {
     // Ensure coordinates are numbers
@@ -136,6 +143,7 @@ const EnhancedAddressForm = ({
       onLocationSelect={handleLocationSelect}
       onAddressChange={handleAddressChange}
       initialLocation={selectedLocation}
+      initialAddress={initialAddress}
       form={form}
       height={400}
       t={t}

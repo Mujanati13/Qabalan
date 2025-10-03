@@ -249,11 +249,14 @@ const downloadFile = (blob, filename) => {
 /**
  * Utility function to format currency values for export
  */
-export const formatCurrencyForExport = (value, currency = 'USD') => {
+import { DEFAULT_CURRENCY } from './formatters';
+
+export const formatCurrencyForExport = (value, currency = DEFAULT_CURRENCY) => {
   if (typeof value !== 'number') return value;
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('en-JO', {
     style: 'currency',
-    currency: currency
+    currency: currency,
+    currencyDisplay: 'narrowSymbol'
   }).format(value);
 };
 

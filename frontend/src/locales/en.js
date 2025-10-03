@@ -323,7 +323,13 @@ export const en = {
     editVariant: 'Edit Variant',
     updateVariant: 'Update Variant',
     variantUpdatedSuccess: 'Variant updated successfully',
-    variantUpdateError: 'Failed to update variant'
+    variantUpdateError: 'Failed to update variant',
+
+    homeSections: {
+      title: 'Homepage Sections',
+      topPicks: 'Show in Top Picks',
+      newArrivals: 'Show in New Arrivals'
+    }
   },
 
   // Categories
@@ -655,19 +661,36 @@ export const en = {
     // Order Details
     order_items: 'Order Items',
     order_summary: 'Order Summary',
+    order_value: 'Order Value',
     subtotal: 'Subtotal',
     delivery_fee: 'Delivery Fee',
     deliveryFee: 'Delivery Fee',
+    delivery_fee_label: 'Delivery Fee',
+    free_delivery: 'Free Delivery',
+    no_delivery_fee: 'Not applicable',
     orderDateTime: 'Order Date/Time',
     customerName: 'Customer Name',
     phoneNumber: 'Phone',
     email: 'Email',
     location: 'Location/Address',
+    contact_location: 'Contact & Location',
+    order_details: 'Order Details',
+    pickup_order: 'Pickup Order',
+    no_location: 'No location',
     discount: 'Discount',
+    discount_label: 'Discount',
+    promo_discount_label: 'Promo Discount',
+    shipping_discount_label: 'Shipping Discount',
+    total_savings_label: 'Total Savings',
+    no_discount: 'No discount',
+    no_shipping_discount: 'No shipping discount',
     totalAmount: 'Total Amount',
+    total_due: 'Total Due',
     clickToEditDeliveryFee: 'Click to edit delivery fee',
     resetDeliveryFee: 'Reset to calculated fee',
     tax_amount: 'Tax Amount',
+    tax_label: 'Tax',
+    no_tax: 'No tax',
     discount_amount: 'Discount Amount',
     
     // Order Types
@@ -686,6 +709,20 @@ export const en = {
     payment_processing: 'Processing payment...',
     return_to_orders: 'Return to Orders',
     card_payment_info: 'After creating the order, you will be redirected to secure payment gateway (MPGS) to complete the payment.',
+  generate_payment_link: 'Generate payment link',
+  payment_link: 'Payment Link',
+  payment_link_generated: 'Payment link generated!',
+  payment_link_generation_failed: 'Failed to generate payment link',
+  payment_link_missing: 'Payment link was not returned by the server',
+  link_copied_to_clipboard: 'Link copied to clipboard',
+  link_for_order: 'Link for order #{orderNumber}',
+  open_payment_page: 'Open payment page',
+  copy_link: 'Copy Link',
+  link_copied: 'Link copied to clipboard',
+  link_copied_for_order: 'Link copied for order #{orderNumber}',
+  payment_link_instruction: 'Share this link with the customer to complete payment:',
+  payment_link_note: 'Note: This link is valid until the order is paid or cancelled.',
+  unknown_customer: 'Unknown customer',
     
     // Search
     search_orders: 'Search orders...',

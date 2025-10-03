@@ -11,8 +11,8 @@
     "test:notifications": "node test-order-status-notifications.js",
     "test:notifications:quick": "node quick-notification-test.js",
     "test:notifications:comprehensive": "node comprehensive-notification-test.js",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+  "lint": "eslint",
+  "lint:fix": "eslint --fix",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js"
   },

@@ -305,6 +305,8 @@ const StaffManagement = () => {
   const [templateVisible, setTemplateVisible] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [permissionVisible, setPermissionVisible] = useState(false);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [passwordLoading, setPasswordLoading] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
@@ -324,6 +326,7 @@ const StaffManagement = () => {
   const [assignForm] = Form.useForm();
   const [bulkAssignForm] = Form.useForm();
   const [templateForm] = Form.useForm();
+  const [passwordForm] = Form.useForm();
 
   // Permission modules for role management
   const permissionModules = [
@@ -674,6 +677,53 @@ const StaffManagement = () => {
     setStaffVisible(true);
   };
 
+  const handleOpenPasswordReset = (record) => {
+    setSelectedStaff(record);
+    passwordForm.resetFields();
+    setPasswordVisible(true);
+  };
+
+  const handlePasswordSubmit = async (values) => {
+    const operation = 'Reset Staff Password';
+
+    try {
+      if (!selectedStaff?.id) {
+        throw new Error('No staff member selected');
+      }
+
+      if (values.new_password !== values.confirm_password) {
+        throw new Error('Password confirmation does not match');
+      }
+
+      setPasswordLoading(true);
+      setOperationLoadingState(operation, true);
+
+      const payload = {
+        new_password: values.new_password.trim(),
+        confirm_password: values.confirm_password.trim()
+      };
+
+      await staffRoleService.resetStaffPassword(selectedStaff.id, payload);
+
+      notification.success({
+        message: 'Password Reset',
+        description: `${selectedStaff.first_name} ${selectedStaff.last_name}'s password has been updated.`,
+        duration: 4,
+        placement: 'topRight'
+      });
+
+      setPasswordVisible(false);
+      passwordForm.resetFields();
+
+      setRetryAttempts(prev => ({ ...prev, [operation]: 0 }));
+    } catch (error) {
+      handleError(error, operation, { showNotification: true });
+    } finally {
+      setPasswordLoading(false);
+      setOperationLoadingState(operation, false);
+    }
+  };
+
   const handleStaffSubmit = async (values) => {
     const operation = editMode ? 'Update Staff Member' : 'Create Staff Member';
     
@@ -697,6 +747,25 @@ const StaffManagement = () => {
         position: sanitizeInput(values.position),
         notes: sanitizeInput(values.notes),
       };
+
+      if (sanitizedValues.hire_date) {
+        const hireDateValue = dayjs(sanitizedValues.hire_date);
+        sanitizedValues.hire_date = hireDateValue.isValid()
+          ? hireDateValue.format('YYYY-MM-DD')
+          : null;
+      }
+
+      sanitizedValues.user_type = sanitizedValues.user_type || 'staff';
+
+      if (typeof sanitizedValues.password === 'string') {
+        sanitizedValues.password = sanitizedValues.password.trim();
+      }
+
+      Object.keys(sanitizedValues).forEach((key) => {
+        if (sanitizedValues[key] === null || sanitizedValues[key] === undefined || sanitizedValues[key] === '') {
+          delete sanitizedValues[key];
+        }
+      });
       
       // Validate email format
       if (!validateEmail(sanitizedValues.email)) {
@@ -1409,6 +1478,15 @@ const StaffManagement = () => {
                     Manage Roles
                   </Menu.Item>
                 )}
+                {user?.user_type === 'admin' && (
+                  <Menu.Item
+                    key="reset-password"
+                    icon={<LockOutlined />}
+                    onClick={() => handleOpenPasswordReset(record)}
+                  >
+                    Reset Password
+                  </Menu.Item>
+                )}
                 {hasPermission('staff.delete') && (
                   <>
                     <Menu.Divider />
@@ -2046,9 +2124,10 @@ const StaffManagement = () => {
               className="responsive-table"
               scroll={{ x: 1200, y: 600 }}
               pagination={{
-                pageSize: 10,
+                defaultPageSize: 10,
                 showSizeChanger: true,
                 showQuickJumper: true,
+                pageSizeOptions: ['10', '20', '50', '100'],
                 showTotal: (total, range) =>
                   `${range[0]}-${range[1]} of ${total} items`,
                 size: 'default',
@@ -2075,9 +2154,10 @@ const StaffManagement = () => {
               className="responsive-table"
               scroll={{ x: 1000, y: 600 }}
               pagination={{
-                pageSize: 10,
+                defaultPageSize: 10,
                 showSizeChanger: true,
                 showQuickJumper: true,
+                pageSizeOptions: ['10', '20', '50', '100'],
                 showTotal: (total, range) =>
                   `${range[0]}-${range[1]} of ${total} items`,
                 size: 'default',
@@ -2268,7 +2348,10 @@ const StaffManagement = () => {
             <Form.Item
               label="Password"
               name="password"
-              rules={[{ required: true, message: 'Please enter password' }]}
+              rules={[
+                { required: true, message: 'Please enter password' },
+                { min: 8, message: 'Password must be at least 8 characters' }
+              ]}
             >
               <Input.Password />
             </Form.Item>
@@ -2320,6 +2403,81 @@ const StaffManagement = () => {
               </Space>
             </div>
           )}
+        </Form>
+      </Modal>
+
+      {/* Reset Password Modal */}
+      <Modal
+        title={
+          selectedStaff
+            ? `Reset Password - ${selectedStaff.first_name} ${selectedStaff.last_name}`
+            : 'Reset Password'
+        }
+        open={passwordVisible}
+        onCancel={() => {
+          setPasswordVisible(false);
+          passwordForm.resetFields();
+        }}
+        footer={null}
+        width={480}
+      >
+        <Form form={passwordForm} layout="vertical" onFinish={handlePasswordSubmit}>
+          <Alert
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Set a strong temporary password and share it securely with the staff member."
+          />
+
+          <Form.Item
+            label="New Password"
+            name="new_password"
+            rules={[
+              { required: true, message: 'Please enter the new password' },
+              { min: 8, message: 'Password must be at least 8 characters' },
+              {
+                pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/,
+                message: 'Password must include upper & lower case letters and a number'
+              }
+            ]}
+          >
+            <Input.Password prefix={<LockOutlined />} placeholder="Enter new password" />
+          </Form.Item>
+
+          <Form.Item
+            label="Confirm Password"
+            name="confirm_password"
+            dependencies={["new_password"]}
+            rules={[
+              { required: true, message: 'Please confirm the password' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('new_password') === value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('Passwords do not match'));
+                }
+              })
+            ]}
+          >
+            <Input.Password prefix={<LockOutlined />} placeholder="Confirm new password" />
+          </Form.Item>
+
+          <div style={{ textAlign: 'right' }}>
+            <Space>
+              <Button
+                onClick={() => {
+                  setPasswordVisible(false);
+                  passwordForm.resetFields();
+                }}
+              >
+                Cancel
+              </Button>
+              <Button type="primary" htmlType="submit" icon={<KeyOutlined />} loading={passwordLoading}>
+                Reset Password
+              </Button>
+            </Space>
+          </div>
         </Form>
       </Modal>
 
@@ -2986,9 +3144,10 @@ const StaffManagement = () => {
           rowKey="id"
           size="small"
           pagination={{
-            pageSize: 10,
+            defaultPageSize: 10,
             showSizeChanger: true,
             showQuickJumper: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total, range) =>
               `${range[0]}-${range[1]} of ${total} items`,
           }}

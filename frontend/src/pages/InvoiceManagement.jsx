@@ -230,9 +230,10 @@ const InvoiceManagement = () => {
   };
 
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-JO', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'JOD',
+      currencyDisplay: 'narrowSymbol'
     }).format(amount || 0);
   };
 
@@ -271,7 +272,7 @@ const InvoiceManagement = () => {
         discount_amount: order.discount_amount,
         total_amount: order.total_amount,
         paid_amount: order.paid_amount || (order.payment_status === 'paid' ? order.total_amount : 0),
-        currency_code: order.currency_code || 'USD',
+  currency_code: order.currency_code || 'JOD',
         billing_address: order.billing_address,
         shipping_address: order.delivery_address,
         notes: order.notes || order.special_instructions,

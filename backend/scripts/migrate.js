@@ -29,9 +29,15 @@ async function runMigrations() {
             await executeQuery(statement);
             console.log(`  ✓ Executed statement successfully`);
           } catch (error) {
-            // Ignore "already exists" errors for CREATE TABLE IF NOT EXISTS
-            if (error.code === 'ER_TABLE_EXISTS_ERROR' || error.message.includes('already exists')) {
-              console.log(`  ✓ Table already exists, skipping`);
+            const code = error.code;
+            const message = error.message || '';
+            if (
+              code === 'ER_TABLE_EXISTS_ERROR' ||
+              code === 'ER_DUP_KEYNAME' ||
+              message.includes('already exists') ||
+              message.includes('Duplicate key name')
+            ) {
+              console.log(`  ✓ Already applied, skipping`);
             } else {
               console.error(`  ✗ Error executing statement:`, error.message);
               throw error;

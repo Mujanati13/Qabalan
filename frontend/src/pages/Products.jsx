@@ -132,7 +132,12 @@ const Products = () => {
       "branches.bulkRemoveConfirmTitle": "Remove Products from All Branches",
       "branches.bulkUpdateStockTitle": "Update Stock for All Branches",
       "branches.bulkActivateTitle": "Activate Products in All Branches",
-      "branches.bulkDeactivateTitle": "Deactivate Products in All Branches"
+      "branches.bulkDeactivateTitle": "Deactivate Products in All Branches",
+      "branches.filterByDepartment": "Filter by Department",
+      "branches.selectDepartment": "Select department",
+      "branches.branchAvailability": "Branch Availability",
+      "branches.availabilityAll": "All statuses",
+      "branches.unavailableInBranch": "Unavailable in this branch"
     };
     return branchTranslations[key] || t(key) || key;
   };
@@ -147,6 +152,25 @@ const Products = () => {
 
   // Use tWithBranch as our t function
   const translatedT = tWithBranch;
+
+  const formatTranslation = (key, replacements = {}, fallback = '') => {
+    const raw = t(key, replacements);
+    if (typeof raw === 'string') {
+      if (/\{\w+\}/.test(raw)) {
+        return raw.replace(/\{(\w+)\}/g, (match, token) => {
+          const value = replacements[token];
+          return value !== undefined && value !== null ? value : match;
+        });
+      }
+      return raw;
+    }
+
+    if (typeof fallback === 'function') {
+      return fallback();
+    }
+
+    return fallback;
+  };
 
   // Helper function for better error handling
   const handleApiError = (error, defaultMessage = 'An error occurred') => {
@@ -173,6 +197,7 @@ const Products = () => {
   const [form] = Form.useForm();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedDepartment, setSelectedDepartment] = useState("");
   const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "inactive"
   const [switchLoading, setSwitchLoading] = useState({});
   
@@ -202,7 +227,46 @@ const Products = () => {
   const [productBranches, setProductBranches] = useState([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [selectedBranchFilter, setSelectedBranchFilter] = useState("");
+  const [branchAvailabilityFilter, setBranchAvailabilityFilter] = useState("available");
   const [productBranchForm] = Form.useForm();
+  const [paginationState, setPaginationState] = useState({
+    current: 1,
+    pageSize: 20,
+    total: 0,
+  });
+
+  const departmentOptions = useMemo(() => {
+    if (!Array.isArray(categories)) return [];
+    return categories.filter((category) => !category?.parent_id);
+  }, [categories]);
+
+  const filteredCategoryOptions = useMemo(() => {
+    if (!Array.isArray(categories)) return [];
+    if (!selectedDepartment) return categories;
+
+    const departmentId = selectedDepartment.toString();
+    return categories.filter((category) => {
+      if (!category) return false;
+      const categoryId = category.id ? category.id.toString() : '';
+      const parentId = category.parent_id ? category.parent_id.toString() : '';
+      return categoryId === departmentId || parentId === departmentId;
+    });
+  }, [categories, selectedDepartment]);
+
+  useEffect(() => {
+    if (!selectedDepartment || !selectedCategory) {
+      return;
+    }
+
+    const inDepartment = filteredCategoryOptions.some((category) => {
+      if (!category?.id) return false;
+      return category.id.toString() === selectedCategory;
+    });
+
+    if (!inDepartment) {
+      setSelectedCategory("");
+    }
+  }, [selectedDepartment, selectedCategory, filteredCategoryOptions]);
 
   // Helper function to get the correct image URL
   const getImageUrl = (imagePath) => {
@@ -611,7 +675,6 @@ const Products = () => {
 
   // Load data
   useEffect(() => {
-    loadProducts();
     loadCategories();
     loadProductShippingAnalytics();
     loadBranches();
@@ -623,6 +686,11 @@ const Products = () => {
     const action = searchParams.get('action');
     const category = searchParams.get('category');
     const search = searchParams.get('search');
+    const department = searchParams.get('department');
+    const branch = searchParams.get('branch');
+    const branchAvailability = searchParams.get('branchAvailability');
+  const pageParam = searchParams.get('page');
+  const pageSizeParam = searchParams.get('pageSize');
 
     // Set filters from URL parameters
     if (category) {
@@ -630,6 +698,31 @@ const Products = () => {
     }
     if (search) {
       setSearchText(search);
+    }
+    if (department) {
+      setSelectedDepartment(department);
+    }
+    if (branch) {
+      setSelectedBranchFilter(branch);
+    }
+    if (branchAvailability) {
+      setBranchAvailabilityFilter(branchAvailability);
+    }
+    if (pageParam) {
+      const parsedPage = parseInt(pageParam, 10);
+      if (!Number.isNaN(parsedPage) && parsedPage > 0) {
+        setPaginationState((prev) =>
+          prev.current === parsedPage ? prev : { ...prev, current: parsedPage }
+        );
+      }
+    }
+    if (pageSizeParam) {
+      const parsedPageSize = parseInt(pageSizeParam, 10);
+      if (!Number.isNaN(parsedPageSize) && parsedPageSize > 0) {
+        setPaginationState((prev) =>
+          prev.pageSize === parsedPageSize ? prev : { ...prev, pageSize: parsedPageSize }
+        );
+      }
     }
 
     // Handle direct product actions
@@ -686,38 +779,86 @@ const Products = () => {
 
   // Reload products when search text or category changes (with debounce for search)
   useEffect(() => {
-    const timeoutId = setTimeout(
-      () => {
-        loadProducts();
-      },
-      searchText ? 500 : 0
-    ); // 500ms delay for search, immediate for category
+    const shouldDebounce = !!searchText;
+    const timeoutId = setTimeout(() => {
+      loadProducts();
+    }, shouldDebounce ? 500 : 0);
 
     return () => clearTimeout(timeoutId);
-  }, [searchText, selectedCategory, statusFilter, selectedBranchFilter]);
+  }, [
+    searchText,
+    selectedCategory,
+    selectedDepartment,
+    statusFilter,
+    selectedBranchFilter,
+    branchAvailabilityFilter,
+    paginationState.current,
+    paginationState.pageSize
+  ]);
 
-  const loadProducts = async () => {
+  const loadProducts = async (pageOverride, pageSizeOverride) => {
     setLoading(true);
     try {
+      const currentPage = pageOverride ?? paginationState.current;
+      const currentPageSize = pageSizeOverride ?? paginationState.pageSize;
+      const statusParam =
+        statusFilter === "all"
+          ? undefined
+          : statusFilter === "active"
+          ? "active"
+          : "inactive";
+
       const params = {
-        search: searchText,
-        category_id: selectedCategory || undefined, // Don't send empty string
-        include_inactive: statusFilter === "all" || statusFilter === "inactive",
-        branch_id: selectedBranchFilter || undefined, // Add branch filter
-        page: 1,
-        limit: 50,
+        search: searchText || undefined,
+        category_id: selectedCategory || undefined,
+        department_id: selectedDepartment || undefined,
+        include_inactive: statusFilter !== "active",
+        status: statusParam,
+        branch_id: selectedBranchFilter || undefined,
+        branch_availability: selectedBranchFilter ? branchAvailabilityFilter : undefined,
+        include_branch_inactive:
+          selectedBranchFilter && branchAvailabilityFilter !== "available" ? true : undefined,
+        page: currentPage,
+        limit: currentPageSize,
       };
 
-      // Remove undefined values
       Object.keys(params).forEach((key) => {
         if (params[key] === undefined || params[key] === "") {
           delete params[key];
         }
       });
 
-      console.log("Loading products with params:", params);
       const response = await productsService.getProducts(params);
-      setProducts(Array.isArray(response.data) ? response.data : []);
+      const responseData = Array.isArray(response?.data) ? response.data : [];
+      setProducts(responseData);
+
+      const paginationInfo = response?.pagination || {};
+      const nextPagination = {
+        current: paginationInfo.page || currentPage,
+        pageSize: paginationInfo.limit || currentPageSize,
+        total:
+          paginationInfo.total ??
+          paginationInfo.count ??
+          paginationInfo.totalItems ??
+          responseData.length,
+      };
+
+      setPaginationState((prev) => {
+        if (
+          prev.current === nextPagination.current &&
+          prev.pageSize === nextPagination.pageSize &&
+          prev.total === nextPagination.total
+        ) {
+          return prev;
+        }
+        return nextPagination;
+      });
+
+      updateUrlParams({
+        page: nextPagination.current > 1 ? String(nextPagination.current) : undefined,
+        pageSize:
+          nextPagination.pageSize !== 20 ? String(nextPagination.pageSize) : undefined,
+      });
     } catch (error) {
       message.error(
         error.response?.data?.message ||
@@ -748,9 +889,33 @@ const Products = () => {
           created_at: "2024-01-15T10:00:00Z",
         },
       ]);
+      setPaginationState((prev) => ({ ...prev, total: 1 }));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTableChange = (tablePagination) => {
+    if (!tablePagination) {
+      return;
+    }
+
+    const { current, pageSize } = tablePagination;
+
+    setPaginationState((prev) => {
+      const nextPageSize = pageSize || prev.pageSize;
+      const nextCurrent = nextPageSize !== prev.pageSize ? 1 : (current || prev.current || 1);
+
+      if (prev.current === nextCurrent && prev.pageSize === nextPageSize) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        current: nextCurrent,
+        pageSize: nextPageSize,
+      };
+    });
   };
 
   const loadCategories = async () => {
@@ -797,7 +962,9 @@ const Products = () => {
       ...product,
       category_id: categoryId || product.category?.id,
       is_active: product.is_active === 1 || product.is_active === true,
-      is_featured: product.is_featured === 1 || product.is_featured === true,
+  is_featured: product.is_featured === 1 || product.is_featured === true,
+  is_home_top: product.is_home_top === 1 || product.is_home_top === true,
+  is_home_new: product.is_home_new === 1 || product.is_home_new === true,
       images: product.images?.map((img, index) => ({
         uid: index,
         name: img,
@@ -903,12 +1070,17 @@ const Products = () => {
   const handleBulkStatusUpdate = async (status) => {
     if (!hasSelected) return;
     
+    const count = selectedRowKeys.length;
+    const statusLabel = status ? t('common.active') : t('common.inactive');
+    const confirmMessage = formatTranslation(
+      'products.bulk_status_update_confirm_message',
+      { count, status: statusLabel },
+      () => `Are you sure you want to change ${count} product(s) to ${statusLabel}?`
+    );
+
     Modal.confirm({
       title: t('products.bulk_status_update_confirm_title'),
-      content: t('products.bulk_status_update_confirm_message', { 
-        count: selectedRowKeys.length, 
-        status: status ? t('common.active') : t('common.inactive')
-      }),
+      content: confirmMessage,
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {
@@ -917,9 +1089,12 @@ const Products = () => {
           await Promise.all(selectedRowKeys.map(id => 
             productsService.updateProduct(id, { is_active: status })
           ));
-          message.success(t('products.bulk_status_updated_successfully', { 
-            count: selectedRowKeys.length 
-          }));
+          const successMessage = formatTranslation(
+            'products.bulk_status_updated_successfully',
+            { count },
+            () => `${count} product(s) updated successfully`
+          );
+          message.success(successMessage);
           setSelectedRowKeys([]);
           loadProducts();
         } catch (error) {
@@ -1146,7 +1321,9 @@ const Products = () => {
     
     Modal.confirm({
       title: translatedT('branches.bulkActivateTitle') || 'Activate Products in All Branches',
-      content: `Activate ${selectedRowKeys.length} selected products in all their assigned branches?`,
+      content: selectedBranchFilter
+        ? `Activate ${selectedRowKeys.length} selected products in the chosen branch?`
+        : `Activate ${selectedRowKeys.length} selected products in all their assigned branches?`,
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       onOk: async () => {
@@ -1154,24 +1331,40 @@ const Products = () => {
           setBulkActionLoading(true);
           
           const operations = [];
+          const skippedProducts = [];
+          const branchFilterId = selectedBranchFilter ? Number(selectedBranchFilter) : null;
+          const branchLabel = branchFilterId
+            ? (branches.find(branch => String(branch.id) === String(branchFilterId))?.name || `Branch ${branchFilterId}`)
+            : null;
+
           for (const productId of selectedRowKeys) {
             // Get product branches first
             const branchesResponse = await api.get(`/products/${productId}/branches`);
             if (branchesResponse.data.success) {
               const productBranches = branchesResponse.data.data?.availability || [];
-              // Activate in each branch
-              for (const branch of productBranches) {
-                operations.push(
-                  api.put(`/products/${productId}/branches/${branch.branch_id}`, {
-                    is_available: true
-                  })
-                );
+              const targetBranches = branchFilterId
+                ? productBranches.filter(branch => String(branch.branch_id) === String(branchFilterId))
+                : productBranches;
+
+              if (branchFilterId && targetBranches.length === 0) {
+                skippedProducts.push(productId);
+                continue;
+              }
+
+              for (const branch of targetBranches) {
+                operations.push(api.put(`/products/${productId}/branches/${branch.branch_id}`, {
+                  is_available: true
+                }));
               }
             }
           }
           
           await Promise.all(operations);
-          message.success(`Successfully activated ${selectedRowKeys.length} products in all branches`);
+          const successScope = branchLabel ? ` in ${branchLabel}` : ' in all branches';
+          message.success(`Successfully activated ${selectedRowKeys.length} products${successScope}`);
+          if (skippedProducts.length > 0 && branchLabel) {
+            message.warning(`${skippedProducts.length} products are not assigned to ${branchLabel} and were skipped.`);
+          }
           setSelectedRowKeys([]);
         } catch (error) {
           console.error('Error in bulk branch activation:', error);
@@ -1188,7 +1381,9 @@ const Products = () => {
     
     Modal.confirm({
       title: translatedT('branches.bulkDeactivateTitle') || 'Deactivate Products in All Branches',
-      content: `Deactivate ${selectedRowKeys.length} selected products in all their assigned branches? Products will still be assigned to branches but marked as unavailable.`,
+      content: selectedBranchFilter
+        ? `Deactivate ${selectedRowKeys.length} selected products in the chosen branch? They will remain assigned but marked as unavailable.`
+        : `Deactivate ${selectedRowKeys.length} selected products in all their assigned branches? Products will still be assigned to branches but marked as unavailable.`,
       okText: t('common.confirm'),
       cancelText: t('common.cancel'),
       okType: 'danger',
@@ -1197,24 +1392,40 @@ const Products = () => {
           setBulkActionLoading(true);
           
           const operations = [];
+          const skippedProducts = [];
+          const branchFilterId = selectedBranchFilter ? Number(selectedBranchFilter) : null;
+          const branchLabel = branchFilterId
+            ? (branches.find(branch => String(branch.id) === String(branchFilterId))?.name || `Branch ${branchFilterId}`)
+            : null;
+
           for (const productId of selectedRowKeys) {
             // Get product branches first
             const branchesResponse = await api.get(`/products/${productId}/branches`);
             if (branchesResponse.data.success) {
               const productBranches = branchesResponse.data.data?.availability || [];
-              // Deactivate in each branch
-              for (const branch of productBranches) {
-                operations.push(
-                  api.put(`/products/${productId}/branches/${branch.branch_id}`, {
-                    is_available: false
-                  })
-                );
+              const targetBranches = branchFilterId
+                ? productBranches.filter(branch => String(branch.branch_id) === String(branchFilterId))
+                : productBranches;
+
+              if (branchFilterId && targetBranches.length === 0) {
+                skippedProducts.push(productId);
+                continue;
+              }
+
+              for (const branch of targetBranches) {
+                operations.push(api.put(`/products/${productId}/branches/${branch.branch_id}`, {
+                  is_available: false
+                }));
               }
             }
           }
           
           await Promise.all(operations);
-          message.success(`Successfully deactivated ${selectedRowKeys.length} products in all branches`);
+          const successScope = branchLabel ? ` in ${branchLabel}` : ' in all branches';
+          message.success(`Successfully deactivated ${selectedRowKeys.length} products${successScope}`);
+          if (skippedProducts.length > 0 && branchLabel) {
+            message.warning(`${skippedProducts.length} products are not assigned to ${branchLabel} and were skipped.`);
+          }
           setSelectedRowKeys([]);
         } catch (error) {
           console.error('Error in bulk branch deactivation:', error);
@@ -1238,25 +1449,68 @@ const Products = () => {
 
   const handleSubmit = async (values) => {
     try {
+      const normalizedValues = { ...values };
+
+      // Normalize stock quantity to a number (or remove if invalid)
+      if (normalizedValues.stock_quantity !== undefined && normalizedValues.stock_quantity !== null) {
+        const parsedStock = Number(normalizedValues.stock_quantity);
+        normalizedValues.stock_quantity = Number.isNaN(parsedStock) ? undefined : parsedStock;
+      }
+
+      // Convert boolean switches to 1/0 for backend compatibility
+      ['is_active', 'is_featured', 'is_home_top', 'is_home_new'].forEach((field) => {
+        if (normalizedValues[field] !== undefined && normalizedValues[field] !== null) {
+          normalizedValues[field] = normalizedValues[field] ? 1 : 0;
+        }
+      });
+
       // Create FormData to handle file uploads
       const formData = new FormData();
 
       // Add all form fields to FormData
-      Object.keys(values).forEach((key) => {
+      Object.keys(normalizedValues).forEach((key) => {
+        const value = normalizedValues[key];
+
         if (key === "main_image_file" && values[key]?.[0]?.originFileObj) {
           // Handle file upload
           formData.append("main_image", values[key][0].originFileObj);
         } else if (
-          values[key] !== undefined &&
-          values[key] !== null &&
+          value !== undefined &&
+          value !== null &&
           key !== "main_image_file"
         ) {
-          formData.append(key, values[key]);
+          // Skip complex objects/arrays that are handled via dedicated endpoints
+          if (Array.isArray(value) || typeof value === 'object') {
+            return;
+          }
+
+          formData.append(key, value);
         }
       });
 
       if (editingProduct) {
         await productsService.updateProduct(editingProduct.id, formData);
+
+        const desiredStockQuantity = normalizedValues.stock_quantity;
+        const existingStockQuantity = editingProduct?.stock_quantity;
+        const parsedExistingStock = existingStockQuantity === undefined || existingStockQuantity === null
+          ? undefined
+          : Number(existingStockQuantity);
+
+        const shouldSyncStock = typeof desiredStockQuantity === 'number' && !Number.isNaN(desiredStockQuantity) &&
+          parsedExistingStock !== desiredStockQuantity;
+
+        if (shouldSyncStock) {
+          try {
+            await api.put(`/products/${editingProduct.id}/stock`, {
+              stock_quantity: desiredStockQuantity
+            });
+          } catch (stockError) {
+            console.error('Error syncing stock quantity:', stockError);
+            message.warning('Product saved, but updating stock quantity failed. Please retry from the stock tools.');
+          }
+        }
+
         message.success(t("products.updateSuccess"));
       } else {
         await productsService.createProduct(formData);
@@ -1579,15 +1833,30 @@ const Products = () => {
       ...getColumnSortProps('base_price', 'currency'),
       render: (basePrice, record) => {
         const salePrice = record.sale_price;
-        const finalPrice = salePrice || basePrice || 0;
-        const hasDiscount = salePrice && salePrice < basePrice;
+        const finalPrice = record.final_price ?? salePrice ?? basePrice ?? 0;
+        const hasDiscount = Boolean(salePrice && basePrice && salePrice < basePrice);
+        const branchOverride = record.branch_price_override;
+        const usesBranchOverride = Boolean(
+          selectedBranchFilter && branchOverride !== null && branchOverride !== undefined
+        );
 
         return (
           <div>
             <div style={{ fontWeight: 500 }}>
-              ${Number(finalPrice).toFixed(2)}
+              {Number(finalPrice).toFixed(2)} JOD
             </div>
-            {hasDiscount && (
+            {usesBranchOverride && (
+              <div
+                style={{
+                  fontSize: "12px",
+                  color: "#722ed1",
+                  fontWeight: 500
+                }}
+              >
+                {translatedT("branches.priceOverride")}
+              </div>
+            )}
+            {(hasDiscount || usesBranchOverride) && basePrice && (
               <div
                 style={{
                   fontSize: "12px",
@@ -1595,58 +1864,14 @@ const Products = () => {
                   textDecoration: "line-through",
                 }}
               >
-                ${Number(basePrice).toFixed(2)}
+                {Number(basePrice).toFixed(2)} JOD
               </div>
             )}
           </div>
         );
       },
     },
-    {
-      title: "Stock Qty",
-      dataIndex: "stock_quantity",
-      key: "stock_quantity",
-      width: 120,
-      responsive: ["md"],
-      ...getColumnSortProps('stock_quantity', 'number'),
-      render: (stockQuantity, record) => {
-        const qty = stockQuantity || 0;
-        const minLevel = record.min_stock_level || 0;
-        const isLowStock = qty <= minLevel && minLevel > 0;
-        
-        return (
-          <div style={{ textAlign: 'center' }}>
-            <InputNumber
-              size="small"
-              value={qty}
-              min={0}
-              style={{ 
-                width: 70,
-                color: qty <= 0 ? '#ff4d4f' : isLowStock ? '#fa8c16' : '#52c41a'
-              }}
-              onChange={(newValue) => {
-                if (newValue !== null && newValue !== qty) {
-                  handleUpdateProductStock(record.id, newValue);
-                }
-              }}
-              onPressEnter={(e) => e.target.blur()}
-            />
-            <div style={{ marginTop: 2 }}>
-              {isLowStock && qty > 0 && (
-                <Tag color="orange" size="small" style={{ fontSize: '10px' }}>
-                  Low
-                </Tag>
-              )}
-              {qty <= 0 && (
-                <Tag color="red" size="small" style={{ fontSize: '10px' }}>
-                  Out
-                </Tag>
-              )}
-            </div>
-          </div>
-        );
-      },
-    },
+  
     {
       title: t("products.status"),
       dataIndex: "is_active",
@@ -1673,7 +1898,39 @@ const Products = () => {
       key: "stock_status",
       responsive: ["lg"],
       ...getColumnSortProps('stock_status', 'string'),
-      render: (stockStatus) => {
+      render: (stockStatus, record) => {
+        if (selectedBranchFilter) {
+          const branchAvailable = record.branch_is_available === 1 || record.branch_is_available === true || record.branch_is_available === "1";
+
+          if (!branchAvailable) {
+            return <Tag color="default">{translatedT("branches.unavailableInBranch")}</Tag>;
+          }
+
+          const branchStatusRaw = (record.branch_stock_status || stockStatus || "").toLowerCase();
+          const branchQuantity = Number(record.branch_stock_quantity ?? record.stock_quantity ?? 0);
+          const branchReserved = Number(record.branch_reserved_quantity ?? 0);
+
+          const statusMap = {
+            unavailable: { color: "default", label: translatedT("branches.unavailableInBranch") },
+            out_of_stock: { color: "red", label: t("products.outOfStock") },
+            low_stock: { color: "orange", label: t("products.limitedStock") },
+            limited: { color: "orange", label: t("products.limitedStock") },
+            in_stock: { color: "green", label: t("products.inStock") }
+          };
+
+          const statusInfo = statusMap[branchStatusRaw] || statusMap.in_stock;
+
+          return (
+            <div>
+              <Tag color={statusInfo.color}>{statusInfo.label}</Tag>
+              <div style={{ fontSize: "12px", color: "#666" }}>
+                {translatedT("branches.stockQuantity")}: {branchQuantity}
+                {branchReserved > 0 ? ` · Reserved: ${branchReserved}` : ""}
+              </div>
+            </div>
+          );
+        }
+
         if (stockStatus === "out_of_stock") {
           return <Tag color="red">{t("products.outOfStock")}</Tag>;
         }
@@ -1881,11 +2138,35 @@ const Products = () => {
               prefix={<SearchOutlined />}
               value={searchText}
               onChange={(e) => {
-                setSearchText(e.target.value);
-                updateUrlParams({ search: e.target.value });
+                const nextValue = e.target.value;
+                setSearchText(nextValue);
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                updateUrlParams({ search: nextValue, page: undefined });
               }}
               size="middle"
             />
+          </Col>
+          <Col xs={24} sm={24} md={12} lg={8} xl={6}>
+            <Select
+              placeholder={translatedT("branches.filterByDepartment")}
+              style={{ width: "100%" }}
+              value={selectedDepartment}
+              onChange={(value) => {
+                setSelectedDepartment(value || "");
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                updateUrlParams({ department: value, page: undefined });
+              }}
+              allowClear
+              size="middle"
+              optionFilterProp="children"
+              showSearch
+            >
+              {departmentOptions.map((department) => (
+                <Option key={department.id} value={String(department?.id ?? '')}>
+                  {department?.title_en || department?.name || translatedT("branches.selectDepartment")}
+                </Option>
+              ))}
+            </Select>
           </Col>
           <Col xs={24} sm={24} md={12} lg={8} xl={6}>
             <Select
@@ -1894,12 +2175,15 @@ const Products = () => {
               value={selectedCategory}
               onChange={(value) => {
                 setSelectedCategory(value);
-                updateUrlParams({ category: value });
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                updateUrlParams({ category: value, page: undefined });
               }}
               allowClear
               size="middle"
+              optionFilterProp="children"
+              showSearch
             >
-              {(Array.isArray(categories) ? categories : []).map((category) => (
+              {(Array.isArray(filteredCategoryOptions) ? filteredCategoryOptions : []).map((category) => (
                 <Option
                   key={category?.id || Math.random()}
                   value={category?.id ? category.id.toString() : ""}
@@ -1914,7 +2198,14 @@ const Products = () => {
               placeholder={t("products.filterByStatus")}
               style={{ width: "100%" }}
               value={statusFilter}
-              onChange={setStatusFilter}
+              onChange={(value) => {
+                setStatusFilter(value);
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                updateUrlParams({
+                  status: value === "all" ? undefined : value,
+                  page: undefined,
+                });
+              }}
               size="middle"
             >
               <Option value="all">{t("common.all")}</Option>
@@ -1927,16 +2218,50 @@ const Products = () => {
               placeholder={translatedT("branches.filterByBranch")}
               style={{ width: "100%" }}
               value={selectedBranchFilter}
-              onChange={setSelectedBranchFilter}
+              onChange={(value) => {
+                const normalizedValue = value || "";
+                setSelectedBranchFilter(normalizedValue);
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                if (!normalizedValue) {
+                  setBranchAvailabilityFilter("available");
+                  updateUrlParams({ branch: undefined, branchAvailability: undefined, page: undefined });
+                } else {
+                  updateUrlParams({
+                    branch: normalizedValue,
+                    branchAvailability: branchAvailabilityFilter,
+                    page: undefined,
+                  });
+                }
+              }}
               allowClear
               size="middle"
               loading={loadingBranches}
+              optionFilterProp="children"
+              showSearch
             >
               {(Array.isArray(branches) ? branches : []).map((branch) => (
                 <Option key={branch.id} value={branch.id.toString()}>
                   {branch.name} ({branch.code})
                 </Option>
               ))}
+            </Select>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={6} xl={4}>
+            <Select
+              placeholder={translatedT("branches.branchAvailability")}
+              style={{ width: "100%" }}
+              value={branchAvailabilityFilter}
+              onChange={(value) => {
+                setBranchAvailabilityFilter(value);
+                setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
+                updateUrlParams({ branchAvailability: value, page: undefined });
+              }}
+              size="middle"
+              disabled={!selectedBranchFilter}
+            >
+              <Option value="available">{translatedT("branches.available")}</Option>
+              <Option value="unavailable">{translatedT("branches.unavailable")}</Option>
+              <Option value="all">{translatedT("branches.availabilityAll")}</Option>
             </Select>
           </Col>
           <Col xs={24} sm={12} md={8} lg={6} xl={4}>
@@ -1960,7 +2285,7 @@ const Products = () => {
                   <Menu.SubMenu key="export" title={
                     <Space>
                       <UploadOutlined />
-                      {t("common.export")} ({filteredProducts.length} items)
+                      {t("common.export")} ({paginationState.total ?? filteredProducts.length} items)
                     </Space>
                   }>
                     <Menu.Item 
@@ -2002,14 +2327,14 @@ const Products = () => {
               <Space size="large">
                 <Statistic 
                   title="Total Products" 
-                  value={filteredProducts.length} 
+                  value={paginationState.total ?? filteredProducts.length} 
                   prefix={<BoxPlotOutlined />}
                   valueStyle={{ fontSize: '16px', color: '#1890ff' }}
                 />
                 {selectedBranchFilter && (
                   <Statistic 
                     title={`Products in ${branches.find(b => b.id.toString() === selectedBranchFilter)?.name || 'Selected Branch'}`}
-                    value={filteredProducts.length}
+                    value={paginationState.total ?? filteredProducts.length}
                     prefix={<ShopOutlined />}
                     valueStyle={{ fontSize: '16px', color: '#52c41a' }}
                   />
@@ -2017,7 +2342,7 @@ const Products = () => {
                 {selectedCategory && (
                   <Statistic 
                     title="Filtered by Category"
-                    value={filteredProducts.length}
+                    value={paginationState.total ?? filteredProducts.length}
                     prefix={<TagsOutlined />}
                     valueStyle={{ fontSize: '16px', color: '#722ed1' }}
                   />
@@ -2025,7 +2350,7 @@ const Products = () => {
                 {searchText && (
                   <Statistic 
                     title={`Search: "${searchText}"`}
-                    value={filteredProducts.length}
+                    value={paginationState.total ?? filteredProducts.length}
                     prefix={<SearchOutlined />}
                     valueStyle={{ fontSize: '16px', color: '#fa8c16' }}
                   />
@@ -2143,11 +2468,14 @@ const Products = () => {
           rowKey="id"
           loading={loading}
           scroll={{ x: 800 }}
-          onChange={() => {}} // Disable default sorting
+          onChange={handleTableChange}
           pagination={{
-            pageSize: 10,
+            current: paginationState.current,
+            pageSize: paginationState.pageSize,
+            total: paginationState.total,
             showSizeChanger: true,
             showQuickJumper: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
             showTotal: (total) => t("common.totalItems", { total }),
             responsive: true,
             showLessItems: true,
@@ -2224,7 +2552,7 @@ const Products = () => {
                   min={0}
                   precision={2}
                   style={{ width: "100%" }}
-                  addonBefore="$"
+                  addonBefore="JOD"
                 />
               </Form.Item>
             </Col>
@@ -2234,7 +2562,7 @@ const Products = () => {
                   min={0}
                   precision={2}
                   style={{ width: "100%" }}
-                  addonBefore="$"
+                  addonBefore="JOD"
                 />
               </Form.Item>
             </Col>
@@ -2369,6 +2697,30 @@ const Products = () => {
               <Form.Item
                 name="is_featured"
                 label={t("products.featured")}
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={t("products.yes")}
+                  unCheckedChildren={t("products.no")}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item
+                name="is_home_top"
+                label={t("products.homeSections.topPicks")}
+                valuePropName="checked"
+              >
+                <Switch
+                  checkedChildren={t("products.yes")}
+                  unCheckedChildren={t("products.no")}
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12} md={8}>
+              <Form.Item
+                name="is_home_new"
+                label={t("products.homeSections.newArrivals")}
                 valuePropName="checked"
               >
                 <Switch
@@ -2886,7 +3238,7 @@ const Products = () => {
                               style={{ width: '100%' }}
                               placeholder="0.00"
                               precision={2}
-                              addonBefore="$"
+                              addonBefore="JOD"
                             />
                           </Form.Item>
                         </Col>
@@ -2989,7 +3341,7 @@ const Products = () => {
                   title: t("products.priceModifier"),
                   dataIndex: "price_modifier",
                   key: "price_modifier",
-                  render: (value) => value ? `$${Number(value).toFixed(2)}` : '$0.00',
+                  render: (value) => value ? `${Number(value).toFixed(2)} JOD` : '0.00 JOD',
                 },
                 {
                   title: t("products.stock"),
@@ -3124,7 +3476,7 @@ const Products = () => {
                   style={{ width: '100%' }}
                   placeholder="0.00"
                   precision={2}
-                  addonBefore="$"
+                  addonBefore="JOD"
                 />
               </Form.Item>
             </Col>
@@ -3419,7 +3771,7 @@ const Products = () => {
                               min={0}
                               precision={2}
                               placeholder="0.00"
-                              addonBefore="$"
+                              addonBefore="JOD"
                             />
                           </Form.Item>
                         </Col>
@@ -3527,7 +3879,7 @@ const Products = () => {
                   title: translatedT("branches.priceOverride"),
                   dataIndex: "price_override",
                   key: "price_override",
-                  render: (value) => value ? `$${Number(value).toFixed(2)}` : '-',
+                  render: (value) => value ? `${Number(value).toFixed(2)} JOD` : '-',
                 },
                 {
                   title: translatedT("branches.status"),

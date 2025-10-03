@@ -149,10 +149,11 @@ class OrderService {
 
   // Utility methods
   formatCurrency(amount) {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-JO', {
       style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
+      currency: 'JOD',
+      minimumFractionDigits: 2,
+      currencyDisplay: 'narrowSymbol'
     }).format(amount || 0);
   }
 

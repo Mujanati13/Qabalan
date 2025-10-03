@@ -11,7 +11,7 @@ const MPGS_CONFIG = {
   apiVersion: process.env.MPGS_API_VERSION || '73',
   gateway: (process.env.MPGS_GATEWAY || 'https://test-gateway.mastercard.com').replace(/\/+$/, '').replace(/\/api$/i, ''),
   returnBaseUrl: process.env.MPGS_RETURN_BASE_URL || 'http://localhost:3015',
-  defaultCurrency: process.env.MPGS_DEFAULT_CURRENCY || 'USD'
+  defaultCurrency: process.env.MPGS_DEFAULT_CURRENCY || 'JOD'
 };
 
 // ---------------------------------------------------------------------------
@@ -92,8 +92,8 @@ router.get('/mpgs/payment/view', async (req, res) => {
 
     // Update order with session info
     await executeQuery(
-      'UPDATE orders SET payment_session_id = ?, payment_provider = ? WHERE id = ?',
-      [sessionResponse.session.id, 'mpgs', order.id]
+      'UPDATE orders SET payment_session_id = ?, payment_provider = ?, currency = ? WHERE id = ?',
+      [sessionResponse.session.id, 'mpgs', order.currency || MPGS_CONFIG.defaultCurrency, order.id]
     );
 
     // Return payment page HTML
@@ -340,13 +340,38 @@ router.get('/mpgs/payment/success', async (req, res) => {
       return res.status(400).json({ error: 'orders_id parameter required' });
     }
 
+    // Get current order state
+    const currentOrderRows = await executeQuery(
+      'SELECT payment_status, order_status FROM orders WHERE id = ? LIMIT 1',
+      [orderId]
+    );
+
+    if (!currentOrderRows.length) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const currentOrder = currentOrderRows[0];
+
     // Update order as paid
     const updateResult = await executeQuery(
       'UPDATE orders SET payment_status = ?, payment_success_indicator = ?, updated_at = NOW() WHERE id = ?',
-      ['completed', resultIndicator || 'SUCCESS', orderId]
+      ['paid', resultIndicator || 'SUCCESS', orderId]
     );
 
     if (updateResult.affectedRows > 0) {
+      if (currentOrder.payment_status !== 'paid') {
+        await executeQuery(
+          `INSERT INTO order_status_history (order_id, status, note, changed_by)
+           VALUES (?, ?, ?, ?)`,
+          [
+            orderId,
+            currentOrder.order_status,
+            'Payment status automatically updated to paid via MPGS callback',
+            null
+          ]
+        );
+      }
+      
       // Redirect to home with success message
       const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
       res.redirect(`${homeUrl}/home?thanks=1&order_id=${orderId}`);
@@ -506,7 +531,7 @@ router.get('/mpgs/return', async (req, res) => {
 
     // Look up stored successIndicator for this orderId
     const rows = await executeQuery(
-      'SELECT id, order_number, total_amount, payment_status, payment_session_id, payment_success_indicator FROM orders WHERE id = ?', 
+      'SELECT id, order_number, total_amount, payment_status, order_status, payment_session_id, payment_success_indicator FROM orders WHERE id = ?', 
       [orderId]
     );
     
@@ -525,7 +550,7 @@ router.get('/mpgs/return', async (req, res) => {
     let redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?orderId=${orderId}`;
 
     if (indicatorMatch) {
-      paymentStatus = 'completed';
+      paymentStatus = 'paid';
       redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?orderId=${orderId}`;
     }
 
@@ -534,6 +559,19 @@ router.get('/mpgs/return', async (req, res) => {
       'UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?',
       [paymentStatus, 'card', orderId]
     );
+
+    if (paymentStatus === 'paid' && order.payment_status !== 'paid') {
+      await executeQuery(
+        `INSERT INTO order_status_history (order_id, status, note, changed_by)
+         VALUES (?, ?, ?, ?)`,
+        [
+          orderId,
+          order.order_status,
+          'Payment status automatically updated to paid via MPGS return',
+          null
+        ]
+      );
+    }
 
     console.log(`Order ${order.order_number || orderId} payment status updated to: ${paymentStatus}`);
 

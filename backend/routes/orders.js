@@ -202,8 +202,13 @@ const calculateDeliveryFee = async (customerData, orderType = 'delivery', orderA
 
 /**
  * Validate and apply promo code
+ * @param {string} code - Promo code
+ * @param {number} subtotal - Order subtotal
+ * @param {number} userId - User ID (nullable for guest orders)
+ * @param {number} deliveryFee - Delivery fee (needed for free_shipping calculation)
+ * @returns {Object|null} Promo result with discount amount
  */
-const applyPromoCode = async (code, subtotal, userId) => {
+const applyPromoCode = async (code, subtotal, userId, deliveryFee = 0) => {
   if (!code) return null;
   
   const [promo] = await executeQuery(
@@ -250,8 +255,10 @@ const applyPromoCode = async (code, subtotal, userId) => {
       discountAmount = promo.discount_value;
       break;
     case 'free_shipping':
-      // Free shipping promos don't affect subtotal discount, handled separately
-      discountAmount = 0;
+      // For free shipping promos, the discount is the delivery fee amount
+      // This ensures the discount_amount column reflects the actual savings
+      discountAmount = deliveryFee;
+      console.log(`🚚 Free shipping promo applied: delivery fee ${deliveryFee} will be recorded as discount`);
       break;
     case 'bxgy':
       // Buy X Get Y promos need item-level calculation, for now treat as 0
@@ -271,7 +278,8 @@ const applyPromoCode = async (code, subtotal, userId) => {
   
   return {
     promo,
-    discountAmount: Math.min(discountAmount, subtotal)
+    discountAmount: Math.min(discountAmount, subtotal + (promo.discount_type === 'free_shipping' ? deliveryFee : 0)),
+    isFreeShipping: promo.discount_type === 'free_shipping'
   };
 };
 
@@ -284,10 +292,327 @@ const calculatePointsEarned = (subtotal) => {
   return Math.floor(subtotal / pointsRate);
 };
 
+const parseNumericValue = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const numeric = typeof value === 'number' ? value : parseFloat(value);
+  if (Number.isNaN(numeric)) {
+    return null;
+  }
+  return numeric;
+};
+
+const getProductBasePrice = (product) => {
+  const salePrice = parseNumericValue(product?.sale_price);
+  if (salePrice !== null && salePrice > 0) {
+    return salePrice;
+  }
+  const basePrice = parseNumericValue(product?.base_price);
+  if (basePrice !== null) {
+    return basePrice;
+  }
+  return 0;
+};
+
+const resolveVariantUnitPrice = (basePrice, variant) => {
+  if (!variant) {
+    return basePrice;
+  }
+
+  const directPrice = parseNumericValue(variant.price);
+  if (directPrice !== null) {
+    return directPrice;
+  }
+
+  const priceModifier = parseNumericValue(variant.price_modifier);
+  if (priceModifier !== null) {
+    return basePrice + priceModifier;
+  }
+
+  return basePrice;
+};
+
+const parseDbInt = (value, defaultValue = 0) => {
+  if (value === undefined || value === null) {
+    return defaultValue;
+  }
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) ? defaultValue : parsed;
+};
+
+const parsedPointsRate = parseFloat(process.env.LOYALTY_POINTS_RATE);
+const LOYALTY_POINTS_RATE = Number.isFinite(parsedPointsRate) && parsedPointsRate > 0
+  ? parsedPointsRate
+  : 0.01;
+
+const sanitizePointsValue = (value) => {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(numeric));
+};
+
+const calculatePointsRedemption = async ({ userId, requestedPoints, orderTotal }) => {
+  const summary = {
+    requestedPoints: sanitizePointsValue(requestedPoints),
+    appliedPoints: 0,
+    discountValue: 0,
+    availablePoints: 0,
+    remainingPoints: 0
+  };
+
+  if (!userId || summary.requestedPoints <= 0 || !Number.isFinite(orderTotal) || orderTotal <= 0 || LOYALTY_POINTS_RATE <= 0) {
+    return summary;
+  }
+
+  await ensureLoyaltyAccount(userId);
+
+  const [account] = await executeQuery(
+    'SELECT available_points FROM user_loyalty_points WHERE user_id = ? LIMIT 1',
+    [userId]
+  );
+
+  summary.availablePoints = Math.max(parseDbInt(account?.available_points, 0), 0);
+
+  if (summary.availablePoints <= 0) {
+    summary.remainingPoints = summary.availablePoints;
+    return summary;
+  }
+
+  const maxRedeemableByOrder = Math.max(0, Math.floor(orderTotal / LOYALTY_POINTS_RATE));
+  const appliedPoints = Math.min(summary.requestedPoints, summary.availablePoints, maxRedeemableByOrder);
+
+  summary.appliedPoints = appliedPoints;
+  summary.discountValue = Number((appliedPoints * LOYALTY_POINTS_RATE).toFixed(2));
+  summary.remainingPoints = Math.max(summary.availablePoints - appliedPoints, 0);
+
+  return summary;
+};
+
+const getBranchInventoryRecord = async (branchId, productId, variantId) => {
+  if (!branchId) {
+    return null;
+  }
+
+  let query;
+  let params;
+
+  if (variantId) {
+    query = `SELECT id, branch_id, product_id, variant_id, stock_quantity, reserved_quantity, is_available
+              FROM branch_inventory
+              WHERE branch_id = ? AND product_id = ? AND variant_id = ?
+              LIMIT 1`;
+    params = [branchId, productId, variantId];
+  } else {
+    query = `SELECT id, branch_id, product_id, variant_id, stock_quantity, reserved_quantity, is_available
+              FROM branch_inventory
+              WHERE branch_id = ? AND product_id = ? AND variant_id IS NULL
+              LIMIT 1`;
+    params = [branchId, productId];
+  }
+
+  let [record] = await executeQuery(query, params);
+
+  if (!record && variantId) {
+    const [fallbackRecord] = await executeQuery(
+      `SELECT id, branch_id, product_id, variant_id, stock_quantity, reserved_quantity, is_available
+         FROM branch_inventory
+         WHERE branch_id = ? AND product_id = ? AND variant_id IS NULL
+         LIMIT 1`,
+      [branchId, productId]
+    );
+
+    record = fallbackRecord || null;
+  }
+
+  return record || null;
+};
+
+const ensureLoyaltyAccount = async (userId) => {
+  if (!userId) {
+    return;
+  }
+
+  await executeQuery(
+    `INSERT INTO user_loyalty_points (user_id, total_points, available_points, lifetime_earned, lifetime_redeemed)
+     VALUES (?, 0, 0, 0, 0)
+     ON DUPLICATE KEY UPDATE updated_at = updated_at`,
+    [userId]
+  );
+};
+
+const pointTransactionExists = async (userId, orderId, type) => {
+  if (!userId || !orderId || !type) {
+    return false;
+  }
+
+  const [existing] = await executeQuery(
+    `SELECT id FROM point_transactions WHERE user_id = ? AND order_id = ? AND type = ? LIMIT 1`,
+    [userId, orderId, type]
+  );
+
+  return !!existing;
+};
+
+const recordPointTransaction = async (userId, orderId, points, type, descriptionEn, descriptionAr) => {
+  if (!userId || !orderId || !points || points <= 0) {
+    return;
+  }
+
+  await executeQuery(
+    `INSERT INTO point_transactions (user_id, order_id, points, type, description_en, description_ar)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [userId, orderId, points, type, descriptionEn, descriptionAr]
+  );
+};
+
+const redeemLoyaltyPoints = async ({ userId, orderId, orderNumber, points }) => {
+  if (!userId || !orderId || !points || points <= 0) {
+    return;
+  }
+
+  const alreadyRedeemed = await pointTransactionExists(userId, orderId, 'redeemed');
+  if (alreadyRedeemed) {
+    return;
+  }
+
+  await ensureLoyaltyAccount(userId);
+
+  await executeQuery(
+    `UPDATE user_loyalty_points
+     SET 
+       total_points = GREATEST(total_points - ?, 0),
+       available_points = GREATEST(available_points - ?, 0),
+       lifetime_redeemed = lifetime_redeemed + ?
+     WHERE user_id = ?`,
+    [points, points, points, userId]
+  );
+
+  await recordPointTransaction(
+    userId,
+    orderId,
+    points,
+    'redeemed',
+    `Points redeemed on order #${orderNumber}`,
+    `تم استخدام النقاط للطلب رقم #${orderNumber}`
+  );
+};
+
+const awardLoyaltyPoints = async ({ userId, orderId, orderNumber, points }) => {
+  if (!userId || !orderId || !points || points <= 0) {
+    return;
+  }
+
+  const alreadyAwarded = await pointTransactionExists(userId, orderId, 'earned');
+  if (alreadyAwarded) {
+    return;
+  }
+
+  await ensureLoyaltyAccount(userId);
+
+  await executeQuery(
+    `UPDATE user_loyalty_points
+     SET 
+       total_points = total_points + ?,
+       available_points = available_points + ?,
+       lifetime_earned = lifetime_earned + ?
+     WHERE user_id = ?`,
+    [points, points, points, userId]
+  );
+
+  await recordPointTransaction(
+    userId,
+    orderId,
+    points,
+    'earned',
+    `Points earned from order #${orderNumber}`,
+    `نقاط مكتسبة من الطلب رقم #${orderNumber}`
+  );
+};
+
+const refundRedeemedPoints = async ({ userId, orderId, orderNumber, points }) => {
+  if (!userId || !orderId || !points || points <= 0) {
+    return;
+  }
+
+  const redeemedExists = await pointTransactionExists(userId, orderId, 'redeemed');
+  if (!redeemedExists) {
+    return;
+  }
+
+  const alreadyRefunded = await pointTransactionExists(userId, orderId, 'bonus');
+  if (alreadyRefunded) {
+    return;
+  }
+
+  await ensureLoyaltyAccount(userId);
+
+  await executeQuery(
+    `UPDATE user_loyalty_points
+     SET 
+       total_points = total_points + ?,
+       available_points = available_points + ?,
+       lifetime_redeemed = GREATEST(lifetime_redeemed - ?, 0)
+     WHERE user_id = ?`,
+    [points, points, points, userId]
+  );
+
+  await recordPointTransaction(
+    userId,
+    orderId,
+    points,
+    'bonus',
+    `Points refunded for cancelled order #${orderNumber}`,
+    `تمت إعادة النقاط للطلب الملغى رقم #${orderNumber}`
+  );
+};
+
+const revokeEarnedPoints = async ({ userId, orderId, orderNumber, points }) => {
+  if (!userId || !orderId || !points || points <= 0) {
+    return;
+  }
+
+  const earnedExists = await pointTransactionExists(userId, orderId, 'earned');
+  if (!earnedExists) {
+    return;
+  }
+
+  const alreadyRevoked = await pointTransactionExists(userId, orderId, 'expired');
+  if (alreadyRevoked) {
+    return;
+  }
+
+  await ensureLoyaltyAccount(userId);
+
+  await executeQuery(
+    `UPDATE user_loyalty_points
+     SET 
+       total_points = GREATEST(total_points - ?, 0),
+       available_points = GREATEST(available_points - ?, 0),
+       lifetime_earned = GREATEST(lifetime_earned - ?, 0)
+     WHERE user_id = ?`,
+    [points, points, points, userId]
+  );
+
+  await recordPointTransaction(
+    userId,
+    orderId,
+    points,
+    'expired',
+    `Points reversed for cancelled order #${orderNumber}`,
+    `تم خصم النقاط بعد إلغاء الطلب رقم #${orderNumber}`
+  );
+};
+
 /**
  * Validate order items and calculate totals
  */
-const validateAndCalculateOrderItems = async (items) => {
+const validateAndCalculateOrderItems = async (items, branchId = null) => {
   if (!items || !Array.isArray(items) || items.length === 0) {
     throw new Error('Order must contain at least one item');
   }
@@ -295,6 +620,7 @@ const validateAndCalculateOrderItems = async (items) => {
   const validatedItems = [];
   let subtotal = 0;
   let totalPointsEarned = 0;
+  const inventoryAdjustments = [];
   
   for (const item of items) {
     const { product_id, variant_id, quantity, special_instructions } = item;
@@ -319,14 +645,19 @@ const validateAndCalculateOrderItems = async (items) => {
       throw new Error(`Product "${product.title_en}" is out of stock`);
     }
     
-    let unitPrice = product.sale_price || product.base_price;
+    const baseProductPrice = getProductBasePrice(product);
+    let unitPrice = baseProductPrice;
     let pointsPerItem = product.loyalty_points;
+    let branchInventoryRecord = null;
+
+    if (branchId) {
+      branchInventoryRecord = await getBranchInventoryRecord(branchId, product_id, variant_id || null);
+    }
     
     // If variant specified, get variant details
     if (variant_id) {
       const [variant] = await executeQuery(
-        `SELECT id, title_ar, title_en, price, stock_quantity, is_active
-         FROM product_variants WHERE id = ? AND product_id = ? AND is_active = 1`,
+        `SELECT * FROM product_variants WHERE id = ? AND product_id = ? AND is_active = 1`,
         [variant_id, product_id]
       );
       
@@ -334,21 +665,59 @@ const validateAndCalculateOrderItems = async (items) => {
         throw new Error(`Product variant with ID ${variant_id} not found or inactive`);
       }
       
-      if (variant.stock_quantity < quantity) {
+      const variantStockQuantity = parseNumericValue(variant.stock_quantity);
+      if (variantStockQuantity !== null && variantStockQuantity < quantity && !branchInventoryRecord) {
         throw new Error(`Insufficient stock for variant with ID ${variant_id}`);
       }
       
-      unitPrice = variant.price;
+      unitPrice = resolveVariantUnitPrice(baseProductPrice, variant);
+      if (unitPrice === null) {
+        throw new Error(`Unable to determine price for variant with ID ${variant_id}`);
+      }
+    }
+
+    if (branchId) {
+      if (branchInventoryRecord) {
+        if (branchInventoryRecord.is_available === 0) {
+          throw new Error(`Selected item is not available at branch ${branchId}`);
+        }
+        const branchStock = parseDbInt(branchInventoryRecord.stock_quantity);
+        const branchReserved = parseDbInt(branchInventoryRecord.reserved_quantity);
+        const branchAvailable = branchStock - branchReserved;
+
+        if (branchAvailable < quantity) {
+          throw new Error(`Insufficient stock for ${variant_id ? 'variant' : 'product'} at branch ${branchId}`);
+        }
+
+        inventoryAdjustments.push({
+          branch_inventory_id: branchInventoryRecord.id,
+          branch_id: branchInventoryRecord.branch_id,
+          product_id,
+          variant_id: variant_id || null,
+          quantity,
+          branch_stock: branchStock,
+          branch_reserved: branchReserved,
+          branch_available: branchAvailable,
+          remaining_after_order: branchAvailable - quantity
+        });
+      } else {
+        throw new Error(`Selected item is not available at branch ${branchId}`);
+      }
     }
     
-    const totalPrice = unitPrice * quantity;
+    const resolvedUnitPrice = parseNumericValue(unitPrice);
+    if (resolvedUnitPrice === null) {
+      throw new Error(`Unable to determine price for product with ID ${product_id}`);
+    }
+    
+    const totalPrice = resolvedUnitPrice * quantity;
     const itemPointsEarned = pointsPerItem * quantity;
     
     validatedItems.push({
       product_id,
       variant_id: variant_id || null,
       quantity,
-      unit_price: unitPrice,
+      unit_price: resolvedUnitPrice,
       total_price: totalPrice,
       points_earned: itemPointsEarned,
       special_instructions: special_instructions || null
@@ -361,7 +730,8 @@ const validateAndCalculateOrderItems = async (items) => {
   return {
     items: validatedItems,
     subtotal,
-    pointsEarned: totalPointsEarned
+    pointsEarned: totalPointsEarned,
+    inventoryAdjustments
   };
 };
 
@@ -641,7 +1011,8 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
         o.id, o.order_number, o.user_id, o.branch_id, o.delivery_address_id,
         o.customer_name, o.customer_phone, o.customer_email, 
         o.order_type, o.payment_method, o.payment_status, o.order_status,
-        o.subtotal, o.delivery_fee, o.tax_amount, o.discount_amount, o.total_amount,
+        o.subtotal, o.delivery_fee, o.delivery_fee_original, o.tax_amount, 
+        o.discount_amount, o.shipping_discount_amount, o.total_amount,
         o.points_used, o.points_earned, o.promo_code_id, o.gift_card_id, o.special_instructions,
         o.estimated_delivery_time, o.delivered_at, o.cancelled_at, o.cancellation_reason,
         o.created_at, o.updated_at, o.guest_delivery_address,
@@ -846,6 +1217,9 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       ORDER BY oi.id ASC
     `, [req.params.id]);
 
+    // Attach order items on the order object for downstream consumers
+    order.order_items = orderItems;
+
     // Get status history
     const statusHistory = await executeQuery(`
       SELECT 
@@ -952,6 +1326,8 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       success: true,
       data: {
         order,
+        order_items: orderItems,
+        // Maintain legacy "items" key for backward compatibility
         items: orderItems,
         status_history: statusHistory
       }
@@ -984,8 +1360,11 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
       promo_code,
       points_to_use = 0,
       is_guest = false,
-      branch_id // Add branch_id parameter for proper delivery calculation
+      branch_id, // Add branch_id parameter for proper delivery calculation
+      customer_id
     } = req.body;
+
+    const isDeliveryOrder = order_type === 'delivery';
 
     console.log('📋 Extracted parameters:', {
       items_count: items?.length || 0,
@@ -1015,7 +1394,7 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
     }
 
     // Validate and calculate items
-    const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items);
+  const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items, branch_id || null);
 
     // Calculate delivery fee
     let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
@@ -1030,7 +1409,7 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
       subtotal
     });
     
-    if (order_type === 'delivery') {
+  if (isDeliveryOrder) {
       console.log('📍 Order type is delivery, proceeding with fee calculation...');
       
       if (!branch_id) {
@@ -1115,16 +1494,53 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
       }
     }
     
-    const deliveryFee = deliveryCalculation.delivery_fee;
+  const originalDeliveryFee = Number(deliveryCalculation.delivery_fee || 0);
+
+  let adjustedDeliveryFee = originalDeliveryFee;
+  let shippingDiscountAmount = 0;
+  let promoDiscountAmount = 0;
+
+    const promoUserId = (() => {
+      if (isGuestOrder) {
+        return null;
+      }
+      if (req.user && ['admin', 'staff'].includes(req.user.user_type)) {
+        const parsedCustomerId = sanitizePointsValue(customer_id);
+        if (parsedCustomerId > 0) {
+          return parsedCustomerId;
+        }
+      }
+      return req.user?.id || null;
+    })();
 
     // Apply promo code if provided
-    let discountAmount = 0;
-    let promoDetails = null;
+  let promoDetails = null;
+    
     if (promo_code) {
       try {
-        const promoResult = await applyPromoCode(promo_code, subtotal, isGuestOrder ? null : req.user.id);
+        const promoResult = await applyPromoCode(
+          promo_code,
+          subtotal,
+          promoUserId,
+          originalDeliveryFee
+        );
         if (promoResult) {
-          discountAmount = promoResult.discountAmount;
+          if (promoResult.isFreeShipping) {
+            if (isDeliveryOrder) {
+              const computedShippingDiscount = Number(promoResult.discountAmount || 0);
+              shippingDiscountAmount = Math.min(originalDeliveryFee, computedShippingDiscount);
+              adjustedDeliveryFee = Math.max(originalDeliveryFee - shippingDiscountAmount, 0);
+              console.log('🚚 Free shipping applied:', {
+                originalDeliveryFee,
+                shippingDiscountAmount,
+                adjustedDeliveryFee
+              });
+            } else {
+              console.log('🚫 Skipping free shipping promo for non-delivery order');
+            }
+          } else {
+            promoDiscountAmount = Number(promoResult.discountAmount || 0);
+          }
           promoDetails = promoResult.promo;
         }
       } catch (error) {
@@ -1138,33 +1554,181 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
 
     // Calculate tax (if applicable)
     const taxRate = 0; // Configure as needed
-    const taxAmount = (subtotal + deliveryFee - discountAmount) * taxRate;
+  const taxAmount = (subtotal + adjustedDeliveryFee - promoDiscountAmount) * taxRate;
 
-    // Calculate total
-    const totalAmount = subtotal + deliveryFee + taxAmount - discountAmount;
+    const sanitizedPointsRequest = sanitizePointsValue(points_to_use);
+    let pointsSummary = {
+      requestedPoints: sanitizedPointsRequest,
+      appliedPoints: 0,
+      discountValue: 0,
+      availablePoints: 0,
+      remainingPoints: 0,
+      blocked: false
+    };
+
+  const orderTotalBeforePoints = subtotal + adjustedDeliveryFee + taxAmount - promoDiscountAmount;
+
+    if (sanitizedPointsRequest > 0) {
+      let pointsUserId = null;
+
+      if (req.user && ['admin', 'staff'].includes(req.user.user_type) && customer_id) {
+        const parsedCustomerId = sanitizePointsValue(customer_id); // reuse sanitizer for integer conversion
+        pointsUserId = parsedCustomerId > 0 ? parsedCustomerId : null;
+      } else if (req.user?.id) {
+        pointsUserId = req.user.id;
+      }
+
+      if (pointsUserId) {
+        pointsSummary = await calculatePointsRedemption({
+          userId: pointsUserId,
+          requestedPoints: sanitizedPointsRequest,
+          orderTotal: orderTotalBeforePoints
+        });
+      } else {
+        pointsSummary.blocked = true;
+      }
+    }
+
+    const totalAmount = Math.max(0, orderTotalBeforePoints - pointsSummary.discountValue);
+    const totalPromoDiscount = promoDiscountAmount + shippingDiscountAmount;
 
     res.json({
       success: true,
       data: {
         items: validatedItems,
         subtotal,
-        delivery_fee: deliveryFee,
+  delivery_fee: adjustedDeliveryFee,
+  delivery_fee_original: originalDeliveryFee,
         tax_amount: taxAmount,
-        discount_amount: discountAmount,
+        discount_amount: promoDiscountAmount,
+        shipping_discount_amount: shippingDiscountAmount,
+        total_discount_amount: totalPromoDiscount,
         total_amount: totalAmount,
+        points_requested: pointsSummary.requestedPoints,
+        points_applied: pointsSummary.appliedPoints,
+        points_discount_amount: pointsSummary.discountValue,
+        points_available: pointsSummary.availablePoints,
+        points_remaining: pointsSummary.remainingPoints,
+        points_blocked: pointsSummary.blocked,
+        points_rate: LOYALTY_POINTS_RATE,
         points_earned: pointsEarned,
         promo_details: promoDetails
       }
     });
 
   } catch (error) {
-    if (error.message.includes('not found') || error.message.includes('out of stock')) {
+    const normalizedMessage = (error?.message || '').toLowerCase();
+    if (
+      normalizedMessage.includes('not found') ||
+      normalizedMessage.includes('out of stock') ||
+      normalizedMessage.includes('insufficient stock') ||
+      normalizedMessage.includes('not available at branch')
+    ) {
       return res.status(400).json({
         success: false,
         message: error.message,
         message_ar: 'خطأ في بيانات الطلب'
       });
     }
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/orders/branch-availability
+ * @desc    Get availability status per branch for the provided cart items
+ * @access  Public/Private (guest and authenticated)
+ */
+router.post('/branch-availability', optionalAuth, validateOrderItems, async (req, res, next) => {
+  try {
+    const { branch_ids, include_inactive } = req.body;
+    const items = req.body.items || [];
+
+    // Determine which branches to evaluate
+    let branches = [];
+    const uniqueBranchIds = Array.isArray(branch_ids)
+      ? Array.from(new Set(branch_ids.filter(id => Number.isFinite(Number(id))).map(id => Number(id))))
+      : [];
+
+    if (uniqueBranchIds.length > 0) {
+      const placeholders = uniqueBranchIds.map(() => '?').join(',');
+      branches = await executeQuery(
+        `SELECT id, title_en, title_ar, is_active FROM branches WHERE id IN (${placeholders})`,
+        uniqueBranchIds
+      );
+    } else {
+      const onlyActive = include_inactive === true || include_inactive === 'true' ? '' : 'WHERE is_active = 1';
+      branches = await executeQuery(
+        `SELECT id, title_en, title_ar, is_active FROM branches ${onlyActive} ORDER BY title_en ASC`
+      );
+    }
+
+    if (!branches || branches.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          branches: []
+        }
+      });
+    }
+
+    const availability = [];
+
+    for (const branch of branches) {
+      if (!branch?.is_active) {
+        availability.push({
+          branch_id: branch.id,
+          status: 'inactive',
+          issues: ['Branch is inactive'],
+          message: 'Branch is inactive'
+        });
+        continue;
+      }
+
+      try {
+        const { inventoryAdjustments } = await validateAndCalculateOrderItems(items, branch.id);
+
+        let minRemaining = null;
+        let minAvailable = null;
+
+        inventoryAdjustments.forEach((adjustment) => {
+          const branchAvailable = Number(adjustment?.branch_available);
+          const remainingAfterOrder = Number(adjustment?.remaining_after_order);
+
+          if (Number.isFinite(branchAvailable)) {
+            minAvailable = minAvailable === null ? branchAvailable : Math.min(minAvailable, branchAvailable);
+          }
+
+          if (Number.isFinite(remainingAfterOrder)) {
+            minRemaining = minRemaining === null ? remainingAfterOrder : Math.min(minRemaining, remainingAfterOrder);
+          }
+        });
+
+        availability.push({
+          branch_id: branch.id,
+          status: 'available',
+          min_available: minAvailable,
+          min_remaining: minRemaining,
+          issues: []
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Branch cannot fulfill this order';
+        availability.push({
+          branch_id: branch.id,
+          status: 'unavailable',
+          issues: [message],
+          message
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        branches: availability
+      }
+    });
+  } catch (error) {
     next(error);
   }
 });
@@ -1193,13 +1757,16 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       is_guest = false
     } = req.body;
 
-    const isGuestOrder = is_guest || !req.user;
-    const isAdminOrder = req.user && customer_id; // Admin creating order for customer
+  const isGuestOrder = is_guest || !req.user;
+  const resolvedCustomerId = sanitizePointsValue(customer_id);
+  const customerIdForOrder = resolvedCustomerId > 0 ? resolvedCustomerId : null;
+  const isAdminOrder = req.user && customerIdForOrder; // Admin creating order for customer
+  const isDeliveryOrder = order_type === 'delivery';
 
     console.log('\n🏪 [ORDER DEBUG] Order creation started...');
     console.log('🏪 [ORDER DEBUG] Request user:', req.user ? { id: req.user.id, user_type: req.user.user_type } : 'None');
-    console.log('🏪 [ORDER DEBUG] Order flags:', { isGuestOrder, isAdminOrder });
-    console.log('🏪 [ORDER DEBUG] Customer info:', { customer_id, customer_name, customer_phone, customer_email });
+  console.log('🏪 [ORDER DEBUG] Order flags:', { isGuestOrder, isAdminOrder });
+  console.log('🏪 [ORDER DEBUG] Customer info:', { customer_id: customerIdForOrder, customer_name, customer_phone, customer_email });
 
     // Basic validation
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -1256,7 +1823,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
 
     // Validate delivery address for delivery orders
     let addressAreaId = null;
-    if (order_type === 'delivery') {
+  if (isDeliveryOrder) {
       if (isGuestOrder) {
         // Debug: Log the guest delivery address data
         console.log('🔍 Guest delivery validation debug:', {
@@ -1292,7 +1859,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         }
 
         // Determine which user ID to validate against
-        const userIdToCheck = isAdminOrder ? customer_id : req.user.id;
+  const userIdToCheck = isAdminOrder ? customerIdForOrder : req.user.id;
 
         const [address] = await executeQuery(
           'SELECT area_id FROM user_addresses WHERE id = ? AND user_id = ? AND is_active = 1',
@@ -1312,14 +1879,14 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     }
 
     // Calculate order totals
-    const { items: validatedItems, subtotal, pointsEarned } = await validateAndCalculateOrderItems(items);
+  const { items: validatedItems, subtotal, pointsEarned, inventoryAdjustments } = await validateAndCalculateOrderItems(items, branch_id);
 
     // Calculate delivery fee using enhanced shipping system
     let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
     
-    if (order_type === 'delivery' && addressAreaId) {
+  if (isDeliveryOrder && addressAreaId) {
       // Try to get coordinates from the address
-      const userIdForAddress = isGuestOrder ? null : (isAdminOrder ? customer_id : req.user.id);
+  const userIdForAddress = isGuestOrder ? null : (isAdminOrder ? customerIdForOrder : req.user.id);
       const [addressDetails] = await executeQuery(`
         SELECT ua.latitude, ua.longitude, ua.area_id, a.delivery_fee 
         FROM user_addresses ua
@@ -1345,37 +1912,79 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       }
     }
 
-    const deliveryFee = deliveryCalculation.delivery_fee;
-
-    // Apply promo code
-    let discountAmount = 0;
+    const originalDeliveryFee = Number(deliveryCalculation.delivery_fee || 0);
+    let deliveryFee = originalDeliveryFee;
+    let shippingDiscountAmount = 0;
+    let promoDiscountAmount = 0;
     let promoCodeId = null;
+    let isFreeShippingPromo = false;
+    
     if (promo_code) {
-      const promoResult = await applyPromoCode(promo_code, subtotal, isGuestOrder ? null : req.user.id);
+      const promoResult = await applyPromoCode(
+        promo_code,
+        subtotal,
+        isGuestOrder ? null : (isAdminOrder ? customerIdForOrder : req.user.id),
+        originalDeliveryFee
+      );
       if (promoResult) {
-        discountAmount = promoResult.discountAmount;
         promoCodeId = promoResult.promo.id;
+        isFreeShippingPromo = promoResult.isFreeShipping;
+        
+        if (isFreeShippingPromo) {
+          if (isDeliveryOrder) {
+            const computedShippingDiscount = Number(promoResult.discountAmount || 0);
+            shippingDiscountAmount = Math.min(originalDeliveryFee, computedShippingDiscount);
+            deliveryFee = Math.max(originalDeliveryFee - shippingDiscountAmount, 0);
+            console.log('🚚 Free shipping promo applied for order:', {
+              originalDeliveryFee,
+              shippingDiscountAmount,
+              deliveryFee
+            });
+          } else {
+            console.log('🚫 Skipping free shipping promo for non-delivery order');
+            isFreeShippingPromo = false;
+          }
+        } else {
+          promoDiscountAmount = Number(promoResult.discountAmount || 0);
+        }
       }
     }
 
     // Calculate tax
     const taxRate = 0; // Configure as needed
-    const taxAmount = (subtotal + deliveryFee - discountAmount) * taxRate;
+    const taxAmount = (subtotal + deliveryFee - promoDiscountAmount) * taxRate;
 
-    // Calculate total
-    const totalAmount = subtotal + deliveryFee + taxAmount - discountAmount;
+  const orderUserId = isGuestOrder && !isAdminOrder ? null : (isAdminOrder ? customerIdForOrder : req.user.id);
+    const orderTotalBeforePoints = subtotal + deliveryFee + taxAmount - promoDiscountAmount;
+    const sanitizedPointsRequest = sanitizePointsValue(points_to_use);
+
+    let pointsSummary = {
+      requestedPoints: sanitizedPointsRequest,
+      appliedPoints: 0,
+      discountValue: 0,
+      availablePoints: 0,
+      remainingPoints: 0
+    };
+
+    if (!isGuestOrder && orderUserId && sanitizedPointsRequest > 0) {
+      pointsSummary = await calculatePointsRedemption({
+        userId: orderUserId,
+        requestedPoints: sanitizedPointsRequest,
+        orderTotal: orderTotalBeforePoints
+      });
+    }
+
+    const totalAmount = Math.max(0, orderTotalBeforePoints - pointsSummary.discountValue);
 
     // Generate order number
     const orderNumber = await generateOrderNumber();
-
-    // Create order and items in transaction
-    const orderUserId = isGuestOrder && !isAdminOrder ? null : (isAdminOrder ? customer_id : req.user.id);
     
     console.log('🔍 Order creation debug:');
     console.log('  isGuestOrder:', isGuestOrder);
     console.log('  isAdminOrder:', isAdminOrder);
     console.log('  req.user:', req.user ? `{id: ${req.user.id}}` : 'null');
     console.log('  orderUserId:', orderUserId);
+    console.log('  pointsSummary:', pointsSummary);
     
     // Helper function to convert undefined to null for SQL
     const nullifyUndefined = (value) => value === undefined ? null : value;
@@ -1392,11 +2001,14 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       order_type,
       payment_method,
       subtotal,
-      deliveryFee,
+  deliveryFee,
+  originalDeliveryFee,
       taxAmount,
-      discountAmount,
+  promoDiscountAmount,
+  shippingDiscountAmount,
       totalAmount,
-      points_to_use: isGuestOrder ? 0 : nullifyUndefined(points_to_use),
+      isFreeShippingPromo,
+      points_to_use: isGuestOrder ? 0 : pointsSummary.requestedPoints,
       pointsEarned: isGuestOrder ? 0 : nullifyUndefined(pointsEarned),
       promoCodeId: nullifyUndefined(promoCodeId),
       special_instructions: nullifyUndefined(special_instructions),
@@ -1411,10 +2023,10 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           INSERT INTO orders (
             order_number, user_id, branch_id, delivery_address_id,
             customer_name, customer_phone, customer_email, order_type, payment_method,
-            subtotal, delivery_fee, tax_amount, discount_amount, total_amount,
+            subtotal, delivery_fee_original, delivery_fee, tax_amount, discount_amount, shipping_discount_amount, total_amount,
             points_used, points_earned, promo_code_id, special_instructions,
             guest_delivery_address, is_guest
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           orderNumber, 
@@ -1427,11 +2039,13 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           order_type, 
           payment_method,
           subtotal, 
-          deliveryFee, 
+          originalDeliveryFee,
+          deliveryFee,
           taxAmount, 
-          discountAmount, 
+          promoDiscountAmount,
+          shippingDiscountAmount,
           totalAmount,
-          isGuestOrder ? 0 : nullifyUndefined(points_to_use), 
+          isGuestOrder ? 0 : pointsSummary.appliedPoints, 
           isGuestOrder ? 0 : nullifyUndefined(pointsEarned), 
           nullifyUndefined(promoCodeId), 
           nullifyUndefined(special_instructions),
@@ -1494,6 +2108,19 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       });
     });
 
+      if (inventoryAdjustments && inventoryAdjustments.length > 0) {
+        inventoryAdjustments.forEach(adjustment => {
+          orderItemsQueries.push({
+            query: `
+              UPDATE branch_inventory
+              SET reserved_quantity = reserved_quantity + ?, updated_at = NOW()
+              WHERE id = ?
+            `,
+            params: [adjustment.quantity, adjustment.branch_inventory_id]
+          });
+        });
+      }
+
     // Add status history entry with actual order ID
     orderItemsQueries.push({
       query: `
@@ -1509,7 +2136,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         promoCodeId: nullifyUndefined(promoCodeId),
         user_id: req.user.id,
         orderId,
-        discountAmount
+        totalDiscountApplied: promoDiscountAmount + shippingDiscountAmount
       });
       
       orderItemsQueries.push({
@@ -1517,7 +2144,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           INSERT INTO promo_code_usages (promo_code_id, user_id, order_id, discount_amount)
           VALUES (?, ?, ?, ?)
         `,
-        params: [nullifyUndefined(promoCodeId), req.user.id, orderId, discountAmount]
+        params: [nullifyUndefined(promoCodeId), req.user.id, orderId, promoDiscountAmount + shippingDiscountAmount]
       });
     }
 
@@ -1537,6 +2164,42 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       LEFT JOIN branches b ON o.branch_id = b.id
       WHERE o.id = ?
     `, [orderId]);
+
+    if (newOrder) {
+      const normalizedDeliveryFee = Number(newOrder.delivery_fee || 0);
+      const normalizedShippingDiscount = Number(newOrder.shipping_discount_amount || 0);
+      const normalizedPromoDiscount = Number(newOrder.discount_amount || 0);
+
+      newOrder.delivery_fee = normalizedDeliveryFee;
+      newOrder.shipping_discount_amount = normalizedShippingDiscount;
+      newOrder.discount_amount = normalizedPromoDiscount;
+      newOrder.delivery_fee_original = newOrder.delivery_fee_original !== null && newOrder.delivery_fee_original !== undefined
+        ? Number(newOrder.delivery_fee_original)
+        : Number((normalizedDeliveryFee + normalizedShippingDiscount).toFixed(2));
+      newOrder.total_discount_amount = Number((normalizedPromoDiscount + normalizedShippingDiscount).toFixed(2));
+
+      newOrder.points_discount_amount = pointsSummary.discountValue;
+      newOrder.points_requested = pointsSummary.requestedPoints;
+      newOrder.points_remaining = pointsSummary.remainingPoints;
+      newOrder.points_rate = LOYALTY_POINTS_RATE;
+    }
+
+    // Handle loyalty points redemption immediately after order creation
+    if (!isGuestOrder && orderUserId) {
+      const pointsUsed = parseDbInt(newOrder.points_used, 0);
+      if (pointsUsed > 0) {
+        try {
+          await redeemLoyaltyPoints({
+            userId: orderUserId,
+            orderId,
+            orderNumber,
+            points: pointsUsed
+          });
+        } catch (loyaltyError) {
+          console.error('❌ Loyalty points redemption failed for order', orderId, loyaltyError);
+        }
+      }
+    }
 
     // Emit socket event for new order
     if (global.socketManager) {
@@ -1591,6 +2254,43 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
             latitude: null,
             longitude: null
           };
+        }
+      }
+      
+      if (!transformedAddress && newOrder.delivery_address_id) {
+        try {
+          const [addressInfo] = await executeQuery(`
+            SELECT ua.name, ua.building_no, ua.floor_no, ua.apartment_no, ua.details,
+                   ua.latitude, ua.longitude,
+                   a.title_en AS area_title_en, a.title_ar AS area_title_ar,
+                   c.title_en AS city_title_en, c.title_ar AS city_title_ar
+            FROM user_addresses ua
+            LEFT JOIN areas a ON ua.area_id = a.id
+            LEFT JOIN cities c ON ua.city_id = c.id
+            WHERE ua.id = ?
+          `, [newOrder.delivery_address_id]);
+
+          if (addressInfo) {
+            transformedAddress = {
+              full_name: addressInfo.name || newOrder.customer_name || '',
+              address_line: [
+                addressInfo.building_no ? `Building ${addressInfo.building_no}` : '',
+                addressInfo.floor_no ? `Floor ${addressInfo.floor_no}` : '',
+                addressInfo.apartment_no ? `Apt ${addressInfo.apartment_no}` : '',
+                addressInfo.details || ''
+              ].filter(Boolean).join(', ') || addressInfo.details || 'Address details not available',
+              city: addressInfo.city_title_en || '',
+              city_ar: addressInfo.city_title_ar || '',
+              area: addressInfo.area_title_en || '',
+              area_ar: addressInfo.area_title_ar || '',
+              governorate: addressInfo.city_title_en || '',
+              governorate_ar: addressInfo.city_title_ar || '',
+              latitude: addressInfo.latitude || null,
+              longitude: addressInfo.longitude || null
+            };
+          }
+        } catch (addressError) {
+          console.warn('Error fetching delivery address for socket broadcast:', addressError);
         }
       }
       
@@ -1701,15 +2401,30 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
       }
     }
 
+    const loyaltyMeta = {
+      requested_points: pointsSummary.requestedPoints,
+      applied_points: pointsSummary.appliedPoints,
+      discount_value: pointsSummary.discountValue,
+      points_rate: LOYALTY_POINTS_RATE,
+      remaining_points: pointsSummary.remainingPoints
+    };
+
     res.status(201).json({
       success: true,
       message: 'Order created successfully',
       message_ar: 'تم إنشاء الطلب بنجاح',
-      data: { order: newOrder }
+      data: { order: newOrder, loyalty: loyaltyMeta }
     });
 
   } catch (error) {
-    if (error.message.includes('not found') || error.message.includes('out of stock') || error.message.includes('promo')) {
+    const normalizedMessage = (error?.message || '').toLowerCase();
+    if (
+      normalizedMessage.includes('not found') ||
+      normalizedMessage.includes('out of stock') ||
+      normalizedMessage.includes('insufficient stock') ||
+      normalizedMessage.includes('not available at branch') ||
+      normalizedMessage.includes('promo')
+    ) {
       return res.status(400).json({
         success: false,
         message: error.message,
@@ -1958,6 +2673,58 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       });
     }
 
+    if (status === 'delivered' && currentOrder.order_status !== 'delivered') {
+      const deliveryItems = await executeQuery(
+        'SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?',
+        [req.params.id]
+      );
+
+      for (const item of deliveryItems) {
+        let branchInventoryRecord = null;
+        if (currentOrder.branch_id) {
+          branchInventoryRecord = await getBranchInventoryRecord(currentOrder.branch_id, item.product_id, item.variant_id);
+        }
+
+        if (branchInventoryRecord) {
+          queries.push({
+            query: `
+              UPDATE branch_inventory
+              SET 
+                stock_quantity = GREATEST(stock_quantity - ?, 0),
+                reserved_quantity = GREATEST(reserved_quantity - ?, 0),
+                updated_at = NOW()
+              WHERE id = ?
+            `,
+            params: [item.quantity, item.quantity, branchInventoryRecord.id]
+          });
+        }
+
+        if (!branchInventoryRecord) {
+          console.warn(`No branch inventory found when delivering order ${req.params.id} for product ${item.product_id} variant ${item.variant_id || 'null'}. Applying fallback stock deduction.`);
+        }
+
+        if (item.variant_id) {
+          queries.push({
+            query: `
+              UPDATE product_variants
+              SET stock_quantity = GREATEST(stock_quantity - ?, 0)
+              WHERE id = ?
+            `,
+            params: [item.quantity, item.variant_id]
+          });
+        } else {
+          queries.push({
+            query: `
+              UPDATE products
+              SET stock_quantity = GREATEST(stock_quantity - ?, 0)
+              WHERE id = ?
+            `,
+            params: [item.quantity, item.product_id]
+          });
+        }
+      }
+    }
+
     await executeTransaction(queries);
 
     // Get updated order
@@ -1971,6 +2738,56 @@ router.put('/:id/status', authenticate, authorize('admin', 'staff'), validateId,
       LEFT JOIN branches b ON o.branch_id = b.id
       WHERE o.id = ?
     `, [req.params.id]);
+
+    if (updatedOrder.user_id) {
+      if (status === 'delivered' && currentOrder.order_status !== 'delivered') {
+        const earnedPoints = parseDbInt(updatedOrder.points_earned, 0);
+        if (earnedPoints > 0) {
+          try {
+            await awardLoyaltyPoints({
+              userId: updatedOrder.user_id,
+              orderId: updatedOrder.id,
+              orderNumber: updatedOrder.order_number,
+              points: earnedPoints
+            });
+          } catch (loyaltyError) {
+            console.error('❌ Loyalty points awarding failed for order', req.params.id, loyaltyError);
+          }
+        }
+      }
+
+      if (status === 'cancelled' && currentOrder.order_status !== 'cancelled') {
+        const pointsUsed = parseDbInt(currentOrder.points_used, 0);
+        if (pointsUsed > 0) {
+          try {
+            await refundRedeemedPoints({
+              userId: updatedOrder.user_id,
+              orderId: updatedOrder.id,
+              orderNumber: updatedOrder.order_number,
+              points: pointsUsed
+            });
+          } catch (loyaltyError) {
+            console.error('❌ Loyalty points refund failed for order', req.params.id, loyaltyError);
+          }
+        }
+
+        if (currentOrder.order_status === 'delivered') {
+          const earnedPoints = parseDbInt(currentOrder.points_earned, 0);
+          if (earnedPoints > 0) {
+            try {
+              await revokeEarnedPoints({
+                userId: updatedOrder.user_id,
+                orderId: updatedOrder.id,
+                orderNumber: updatedOrder.order_number,
+                points: earnedPoints
+              });
+            } catch (loyaltyError) {
+              console.error('❌ Loyalty points revocation failed for order', req.params.id, loyaltyError);
+            }
+          }
+        }
+      }
+    }
 
     // Send notification to customer about status change
     await sendOrderStatusNotification(updatedOrder, status, currentOrder.order_status);
@@ -2117,6 +2934,38 @@ router.delete('/:id', authenticate, validateId, async (req, res, next) => {
     }
 
     await executeTransaction(queries);
+
+    if (currentOrder.user_id) {
+      const pointsUsed = parseDbInt(currentOrder.points_used, 0);
+      if (pointsUsed > 0) {
+        try {
+          await refundRedeemedPoints({
+            userId: currentOrder.user_id,
+            orderId: currentOrder.id,
+            orderNumber: currentOrder.order_number,
+            points: pointsUsed
+          });
+        } catch (loyaltyError) {
+          console.error('❌ Loyalty points refund failed for cancelled order', req.params.id, loyaltyError);
+        }
+      }
+
+      if (currentOrder.order_status === 'delivered') {
+        const earnedPoints = parseDbInt(currentOrder.points_earned, 0);
+        if (earnedPoints > 0) {
+          try {
+            await revokeEarnedPoints({
+              userId: currentOrder.user_id,
+              orderId: currentOrder.id,
+              orderNumber: currentOrder.order_number,
+              points: earnedPoints
+            });
+          } catch (loyaltyError) {
+            console.error('❌ Loyalty points revocation failed for cancelled order', req.params.id, loyaltyError);
+          }
+        }
+      }
+    }
 
     // Send notification to customer about order cancellation
     await sendOrderStatusNotification(currentOrder, 'cancelled', currentOrder.order_status);
@@ -2308,7 +3157,12 @@ router.post('/:id/apply-promo', authenticate, validateId, validatePromoCode, asy
     }
 
     // Validate promo code
-    const promoResult = await applyPromoCode(promo_code, currentOrder.subtotal, req.user.id);
+    const promoResult = await applyPromoCode(
+      promo_code,
+      currentOrder.subtotal,
+      req.user.id,
+      Number(currentOrder.delivery_fee_original ?? currentOrder.delivery_fee ?? 0)
+    );
     if (!promoResult) {
       return res.status(400).json({
         success: false,
@@ -2317,9 +3171,20 @@ router.post('/:id/apply-promo', authenticate, validateId, validatePromoCode, asy
       });
     }
 
-    // Recalculate totals
-    const newDiscountAmount = promoResult.discountAmount;
-    const newTotalAmount = currentOrder.subtotal + currentOrder.delivery_fee + currentOrder.tax_amount - newDiscountAmount;
+    // Recalculate totals with shipping adjustments
+    const originalDeliveryFee = Number(currentOrder.delivery_fee_original ?? currentOrder.delivery_fee ?? 0);
+    let updatedDeliveryFee = originalDeliveryFee;
+    let newDiscountAmount = 0;
+    let newShippingDiscount = 0;
+
+    if (promoResult.isFreeShipping) {
+      newShippingDiscount = Math.min(originalDeliveryFee, Number(promoResult.discountAmount || 0));
+      updatedDeliveryFee = Math.max(originalDeliveryFee - newShippingDiscount, 0);
+    } else {
+      newDiscountAmount = Number(promoResult.discountAmount || 0);
+    }
+
+    const newTotalAmount = currentOrder.subtotal + updatedDeliveryFee + currentOrder.tax_amount - newDiscountAmount;
 
     const queries = [
       {
@@ -2327,11 +3192,22 @@ router.post('/:id/apply-promo', authenticate, validateId, validatePromoCode, asy
           UPDATE orders SET
             promo_code_id = ?,
             discount_amount = ?,
+            shipping_discount_amount = ?,
+            delivery_fee_original = ?,
+            delivery_fee = ?,
             total_amount = ?,
             updated_at = NOW()
           WHERE id = ?
         `,
-        params: [promoResult.promo.id, newDiscountAmount, newTotalAmount, req.params.id]
+        params: [
+          promoResult.promo.id,
+          newDiscountAmount,
+          newShippingDiscount,
+          originalDeliveryFee,
+          updatedDeliveryFee,
+          newTotalAmount,
+          req.params.id
+        ]
       },
       {
         query: `
@@ -2344,7 +3220,12 @@ router.post('/:id/apply-promo', authenticate, validateId, validatePromoCode, asy
           INSERT INTO promo_code_usages (promo_code_id, user_id, order_id, discount_amount)
           VALUES (?, ?, ?, ?)
         `,
-        params: [promoResult.promo.id, req.user.id, req.params.id, newDiscountAmount]
+        params: [
+          promoResult.promo.id,
+          req.user.id,
+          req.params.id,
+          newDiscountAmount + newShippingDiscount
+        ]
       }
     ];
 
@@ -2913,7 +3794,7 @@ router.post('/bulk-status-update', authenticate, authorize('admin', 'staff'), va
     // Get current orders
     const placeholders = order_ids.map(() => '?').join(',');
     const currentOrders = await executeQuery(
-      `SELECT id, order_status FROM orders WHERE id IN (${placeholders})`,
+      `SELECT id, order_status, branch_id FROM orders WHERE id IN (${placeholders})`,
       order_ids
     );
 
@@ -2962,6 +3843,62 @@ router.post('/bulk-status-update', authenticate, authorize('admin', 'staff'), va
         params: [order.id, status, note || `Bulk update to ${status}`, req.user.id]
       });
     });
+
+    if (status === 'delivered') {
+      for (const order of currentOrders) {
+        if (order.order_status === 'delivered') {
+          continue;
+        }
+
+        const deliveryItems = await executeQuery(
+          'SELECT product_id, variant_id, quantity FROM order_items WHERE order_id = ?',
+          [order.id]
+        );
+
+        for (const item of deliveryItems) {
+          let branchInventoryRecord = null;
+          if (order.branch_id) {
+            branchInventoryRecord = await getBranchInventoryRecord(order.branch_id, item.product_id, item.variant_id);
+          }
+
+          if (branchInventoryRecord) {
+            queries.push({
+              query: `
+                UPDATE branch_inventory
+                SET 
+                  stock_quantity = GREATEST(stock_quantity - ?, 0),
+                  reserved_quantity = GREATEST(reserved_quantity - ?, 0),
+                  updated_at = NOW()
+                WHERE id = ?
+              `,
+              params: [item.quantity, item.quantity, branchInventoryRecord.id]
+            });
+          } else {
+            console.warn(`Bulk delivery: no branch inventory found for order ${order.id}, product ${item.product_id}, variant ${item.variant_id || 'null'}. Applying fallback stock deduction.`);
+          }
+
+          if (item.variant_id) {
+            queries.push({
+              query: `
+                UPDATE product_variants
+                SET stock_quantity = GREATEST(stock_quantity - ?, 0)
+                WHERE id = ?
+              `,
+              params: [item.quantity, item.variant_id]
+            });
+          } else {
+            queries.push({
+              query: `
+                UPDATE products
+                SET stock_quantity = GREATEST(stock_quantity - ?, 0)
+                WHERE id = ?
+              `,
+              params: [item.quantity, item.product_id]
+            });
+          }
+        }
+      }
+    }
 
     await executeTransaction(queries);
 
@@ -3192,11 +4129,10 @@ router.put('/:id/payment-method', authenticate, authorize('admin', 'staff'), val
 
     // Log the change
     await executeQuery(
-      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO order_status_history (order_id, status, note, changed_by) 
+       VALUES (?, ?, ?, ?)`,
       [
         req.params.id,
-        currentOrder.order_status,
         currentOrder.order_status,
         `Payment method changed from ${currentOrder.payment_method} to ${payment_method}`,
         req.user.id
@@ -3253,11 +4189,10 @@ router.put('/:id/payment-status', authenticate, authorize('admin', 'staff'), val
 
     // Log the change
     await executeQuery(
-      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO order_status_history (order_id, status, note, changed_by) 
+       VALUES (?, ?, ?, ?)`,
       [
         req.params.id,
-        currentOrder.order_status,
         currentOrder.order_status,
         `Payment status changed from ${currentOrder.payment_status} to ${payment_status}`,
         req.user.id
@@ -3316,20 +4251,32 @@ router.post('/:id/payment-link', authenticate, authorize('admin', 'staff'), vali
       });
     }
 
-    // Generate the payment link
-    const baseUrl = process.env.FRONTEND_URL || 'https://qablanapi.albech.me';
-    const paymentLink = `${baseUrl}/api/payments/mpgs/payment/view?orders_id=${currentOrder.id}&lang=en`;
+    // Generate the payment link using backend base URL
+    const rawBaseUrl = (
+      process.env.MPGS_PAYMENT_LINK_BASE_URL ||
+      process.env.API_BASE_URL ||
+      process.env.BACKEND_URL ||
+      process.env.APP_BASE_URL ||
+      ''
+    ).trim();
+
+    const normalizedBase = rawBaseUrl
+      ? rawBaseUrl.replace(/\/+$/, '')
+      : `http://localhost:${process.env.PORT || 3015}`;
+
+    // Avoid double "/api" if the configured base already includes it
+    const paymentBase = normalizedBase.replace(/\/api$/i, '');
+    const paymentLink = `${paymentBase}/api/payments/mpgs/payment/view?orders_id=${currentOrder.id}&lang=en`;
     
     // You can also create a shorter link using a URL shortener service if needed
     const shortLink = paymentLink; // For now, use the full link
 
     // Log the payment link generation
     await executeQuery(
-      `INSERT INTO order_status_history (order_id, old_status, new_status, notes, changed_by) 
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO order_status_history (order_id, status, note, changed_by) 
+       VALUES (?, ?, ?, ?)`,
       [
         req.params.id,
-        currentOrder.order_status,
         currentOrder.order_status,
         `Payment link generated: ${shortLink}`,
         req.user.id

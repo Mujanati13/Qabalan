@@ -586,7 +586,7 @@ router.delete('/:id', authenticate, authorize('admin', 'staff'), validateId, asy
  */
 router.post('/:id/activate', authenticate, authorize('admin', 'staff'), validateId, async (req, res, next) => {
   try {
-    const { is_active } = req.body;
+    const { is_active, cascade_products = false } = req.body;
 
     if (typeof is_active !== 'boolean') {
       return res.status(400).json({
@@ -609,15 +609,29 @@ router.post('/:id/activate', authenticate, authorize('admin', 'staff'), validate
       });
     }
 
+    const normalizedStatus = is_active ? 1 : 0;
+
     await executeQuery(
       'UPDATE categories SET is_active = ?, updated_at = NOW() WHERE id = ?',
-      [is_active, req.params.id]
+      [normalizedStatus, req.params.id]
     );
+
+    let cascadedProducts = 0;
+    if (cascade_products) {
+      const productUpdateResult = await executeQuery(
+        'UPDATE products SET is_active = ?, updated_at = NOW() WHERE category_id = ?',
+        [normalizedStatus, req.params.id]
+      );
+      cascadedProducts = productUpdateResult?.affectedRows || 0;
+    }
 
     res.json({
       success: true,
       message: `Category ${is_active ? 'activated' : 'deactivated'} successfully`,
-      message_ar: `تم ${is_active ? 'تفعيل' : 'إلغاء تفعيل'} التصنيف بنجاح`
+      message_ar: `تم ${is_active ? 'تفعيل' : 'إلغاء تفعيل'} التصنيف بنجاح`,
+      data: {
+        cascadedProducts
+      }
     });
 
   } catch (error) {

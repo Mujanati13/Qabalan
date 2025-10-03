@@ -107,6 +107,18 @@ class StaffRoleService {
     }
   }
 
+  async resetStaffPassword(staffId, passwordData) {
+    try {
+      const response = await api.put(`/users/${staffId}/password`, passwordData);
+      return response.data;
+    } catch (error) {
+      if (error?.response?.data) {
+        throw error;
+      }
+      throw new Error(error.response?.data?.message || 'Failed to reset staff password');
+    }
+  }
+
   // =====================================
   // ROLE ASSIGNMENT
   // =====================================
@@ -335,11 +347,14 @@ class StaffRoleService {
   }
 
   formatCurrency(amount) {
-    if (!amount) return '$0.00';
-    return new Intl.NumberFormat('en-US', {
+    const formatter = new Intl.NumberFormat('en-JO', {
       style: 'currency',
-      currency: 'USD'
-    }).format(amount);
+      currency: 'JOD',
+      currencyDisplay: 'narrowSymbol'
+    });
+
+    if (!amount) return formatter.format(0);
+    return formatter.format(amount);
   }
 
   // Available modules for permission management

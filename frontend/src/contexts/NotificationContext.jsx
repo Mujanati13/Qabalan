@@ -164,9 +164,10 @@ export const NotificationProvider = ({ children }) => {
 
   // Format price helper
   const formatPrice = (price) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-JO', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'JOD',
+      currencyDisplay: 'narrowSymbol'
     }).format(price);
   };
 

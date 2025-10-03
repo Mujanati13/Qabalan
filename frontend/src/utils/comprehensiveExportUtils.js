@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { message } from 'antd';
+import { DEFAULT_CURRENCY } from './formatters';
 
 /**
  * Comprehensive Export Utility for FECS Admin Dashboard
@@ -18,9 +19,26 @@ const formatDate = (dateString) => {
   });
 };
 
-const formatCurrency = (value) => {
-  if (!value && value !== 0) return '0.00';
-  return Number(value).toFixed(2);
+const getCurrencyFormatter = (locale = 'en-JO', currency = DEFAULT_CURRENCY) =>
+  new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    currencyDisplay: 'narrowSymbol'
+  });
+
+const formatCurrency = (value, locale = 'en-JO', currency = DEFAULT_CURRENCY) => {
+  if (value === null || value === undefined || value === '') {
+    return getCurrencyFormatter(locale, currency).format(0);
+  }
+
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue)) {
+    return getCurrencyFormatter(locale, currency).format(0);
+  }
+
+  return getCurrencyFormatter(locale, currency).format(numericValue);
 };
 
 const safeStringify = (value) => {
@@ -1563,7 +1581,7 @@ export const exportInvoicesToExcel = async (invoices, options = {}) => {
         formatCurrency(invoice.total_amount),
         formatCurrency(invoice.paid_amount),
         formatCurrency(outstandingAmount),
-        invoice.currency_code || 'USD',
+  invoice.currency_code || DEFAULT_CURRENCY,
         invoice.exchange_rate || 1,
         invoice.billing_address || '',
         invoice.shipping_address || invoice.delivery_address || '',
@@ -1659,7 +1677,7 @@ export const exportInvoicesToExcel = async (invoices, options = {}) => {
               payment.payment_method || '',
               payment.payment_provider || payment.gateway || '',
               formatCurrency(payment.amount),
-              payment.currency_code || invoice.currency_code || 'USD',
+              payment.currency_code || invoice.currency_code || DEFAULT_CURRENCY,
               payment.exchange_rate || 1,
               payment.transaction_id || '',
               payment.reference_number || '',

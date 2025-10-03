@@ -198,34 +198,67 @@ const validatePromoCode = (req, res, next) => {
 /**
  * Validate points usage
  */
+const sanitizePointsRequest = (value) => {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(numeric));
+};
+
 const validatePointsUsage = async (req, res, next) => {
   try {
-    const { points_to_use = 0 } = req.body;
+    const rawPoints = req.body?.points_to_use ?? 0;
+    const sanitizedPoints = sanitizePointsRequest(rawPoints);
 
-    if (points_to_use && (typeof points_to_use !== 'number' || points_to_use < 0)) {
-      return res.status(400).json({
+    req.body.points_to_use = sanitizedPoints;
+
+    if (sanitizedPoints === 0) {
+      return next();
+    }
+
+    const isAdmin = req.user && ['admin', 'staff'].includes(req.user.user_type);
+
+    let pointsUserId = null;
+
+    if (!req.user && !isAdmin) {
+      return res.status(401).json({
         success: false,
-        message: 'Points to use must be a non-negative number',
-        message_ar: 'النقاط المستخدمة يجب أن تكون رقماً غير سالب'
+        message: 'Authentication required to redeem loyalty points',
+        message_ar: 'يجب تسجيل الدخول لاستخدام نقاط الولاء'
       });
     }
 
-    if (points_to_use > 0) {
-      // Check if user has enough points
-      const [userPoints] = await executeQuery(
-        'SELECT available_points FROM user_loyalty_points WHERE user_id = ?',
-        [req.user.id]
-      );
-
-      const availablePoints = userPoints ? userPoints.available_points : 0;
-
-      if (points_to_use > availablePoints) {
+    if (isAdmin) {
+      const customerId = sanitizePointsRequest(req.body.customer_id);
+      if (!customerId) {
         return res.status(400).json({
           success: false,
-          message: `Insufficient points. Available: ${availablePoints}, Requested: ${points_to_use}`,
-          message_ar: `نقاط غير كافية. المتاح: ${availablePoints}, المطلوب: ${points_to_use}`
+          message: 'Customer ID is required to redeem points on behalf of a customer',
+          message_ar: 'مطلوب معرف العميل لاستخدام النقاط بالنيابة عن العميل'
         });
       }
+      pointsUserId = customerId;
+    } else {
+      pointsUserId = req.user.id;
+    }
+
+    const [userPoints] = await executeQuery(
+      'SELECT available_points FROM user_loyalty_points WHERE user_id = ? LIMIT 1',
+      [pointsUserId]
+    );
+
+    const availablePoints = Math.max(Number(userPoints?.available_points || 0), 0);
+
+    if (sanitizedPoints > availablePoints) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient points. Available: ${availablePoints}, Requested: ${sanitizedPoints}`,
+        message_ar: `نقاط غير كافية. المتاح: ${availablePoints}، المطلوب: ${sanitizedPoints}`
+      });
     }
 
     next();

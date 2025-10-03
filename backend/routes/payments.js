@@ -7,11 +7,23 @@ const { ensurePaymentSchema } = require('../services/ensurePaymentSchema');
 
 // Environment configuration with fallbacks
 const MPGS_CONFIG = {
+  // Sandbox defaults match current Mastercard test credentials; override via environment variables as needed.
   merchantId: process.env.MPGS_MERCHANT_ID || 'TESTNITEST2',
   apiVersion: process.env.MPGS_API_VERSION || '73',
-  gateway: process.env.MPGS_GATEWAY || 'https://test-gateway.mastercard.com',
+  gateway: process.env.MPGS_GATEWAY || 'https://test-network.mtf.gateway.mastercard.com',
   returnBaseUrl: process.env.MPGS_RETURN_BASE_URL || 'http://localhost:3015',
-  defaultCurrency: process.env.MPGS_DEFAULT_CURRENCY || 'USD'
+  defaultCurrency: process.env.MPGS_DEFAULT_CURRENCY || 'JOD'
+};
+
+const resolveMpgsAuthToken = () => {
+  const username = process.env.MPGS_API_USERNAME || `merchant.${MPGS_CONFIG.merchantId}`;
+  const password = process.env.MPGS_API_PASSWORD;
+
+  if (!password) {
+    throw new Error('MPGS_API_PASSWORD environment variable is not configured');
+  }
+
+  return Buffer.from(`${username}:${password}`).toString('base64');
 };
 
 // ---------------------------------------------------------------------------
@@ -29,7 +41,7 @@ router.get('/mpgs/payment/view', async (req, res) => {
 
     // Get order from database (handle missing currency column gracefully)
     const orderRows = await executeQuery(
-      'SELECT id, total_amount FROM orders WHERE id = ? LIMIT 1', 
+      'SELECT id, total_amount, currency FROM orders WHERE id = ? LIMIT 1', 
       [orderId]
     );
     
@@ -37,9 +49,8 @@ router.get('/mpgs/payment/view', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const order = orderRows[0];
-    // Set default currency if column doesn't exist
-    order.currency = MPGS_CONFIG.defaultCurrency;
+  const order = orderRows[0];
+  order.currency = order.currency || MPGS_CONFIG.defaultCurrency;
     const returnUrl = `${MPGS_CONFIG.returnBaseUrl}/api/payments/mpgs/payment/success?orders_id=${order.id}`;
 
     // Create checkout session using INITIATE_CHECKOUT
@@ -67,15 +78,15 @@ router.get('/mpgs/payment/view', async (req, res) => {
         }
       },
       order: {
-        amount: order.total_amount.toString(),
-        currency: order.currency || MPGS_CONFIG.defaultCurrency,
+  amount: order.total_amount.toString(),
+  currency: order.currency,
         description: `Order #${order.id}`,
         id: order.id.toString()
       }
     };
 
     // Direct API call to MPGS
-    const auth = Buffer.from(`merchant.${MPGS_CONFIG.merchantId}:${process.env.MPGS_API_PASSWORD || '50dab32ebe8f6bc8c55346e4f350101f'}`).toString('base64');
+  const auth = resolveMpgsAuthToken();
     const sessionUrl = `${MPGS_CONFIG.gateway}/api/rest/version/${MPGS_CONFIG.apiVersion}/merchant/${MPGS_CONFIG.merchantId}/session`;
     
     const response = await fetch(sessionUrl, {
@@ -105,8 +116,8 @@ router.get('/mpgs/payment/view', async (req, res) => {
 
     // Update order with session info
     await executeQuery(
-      'UPDATE orders SET payment_session_id = ?, payment_provider = ? WHERE id = ?',
-      [sessionResponse.session.id, 'mpgs', order.id]
+      'UPDATE orders SET payment_session_id = ?, payment_provider = ?, currency = ? WHERE id = ?',
+      [sessionResponse.session.id, 'mpgs', order.currency, order.id]
     );
 
     // For MSO accounts without branded domain access, redirect directly to payment URL
@@ -120,7 +131,7 @@ router.get('/mpgs/payment/view', async (req, res) => {
         paymentUrl: directPaymentUrl,
         orderId: order.id,
         amount: order.total_amount,
-        currency: order.currency || MPGS_CONFIG.defaultCurrency
+  currency: order.currency
       });
     }
     
@@ -178,7 +189,7 @@ router.get('/mpgs/payment/view', async (req, res) => {
 <body>
     <div class="payment-container">
         <h1>🔒 Secure Payment</h1>
-        <p>Order #${order.id} - $${order.total_amount} ${order.currency || MPGS_CONFIG.defaultCurrency}</p>
+  <p>Order #${order.id} - ${order.total_amount} ${order.currency}</p>
         
         <p>Redirecting to secure payment page...</p>
         
@@ -237,7 +248,7 @@ router.get('/mpgs/payment/status', async (req, res) => {
     const order = orderRows[0];
     
     return res.json({
-      success: order.payment_status === 'completed',
+      success: order.payment_status === 'paid',
       orderId: order.id,
       paymentStatus: order.payment_status,
       transactionId: order.payment_session_id,
@@ -260,18 +271,71 @@ router.get('/mpgs/payment/success', async (req, res) => {
   try {
     const orderId = req.query.orders_id || req.query.orderId;
     const resultIndicator = req.query.resultIndicator;
+    const isMobile = req.query.mobile === 'true';
     
     if (!orderId) {
       return res.status(400).json({ error: 'orders_id parameter required' });
     }
 
+    // Get current order state
+    const currentOrderRows = await executeQuery(
+      'SELECT payment_status, order_status FROM orders WHERE id = ? LIMIT 1',
+      [orderId]
+    );
+
+    if (!currentOrderRows.length) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const currentOrder = currentOrderRows[0];
+
     // Update order as paid
     const updateResult = await executeQuery(
       'UPDATE orders SET payment_status = ?, payment_success_indicator = ?, updated_at = NOW() WHERE id = ?',
-      ['completed', resultIndicator || 'SUCCESS', orderId]
+      ['paid', resultIndicator || 'SUCCESS', orderId]
     );
 
     if (updateResult.affectedRows > 0) {
+      if (currentOrder.payment_status !== 'paid') {
+        await executeQuery(
+          `INSERT INTO order_status_history (order_id, status, note, changed_by)
+           VALUES (?, ?, ?, ?)`,
+          [
+            orderId,
+            currentOrder.order_status,
+            'Payment status automatically updated to paid via MPGS callback',
+            null
+          ]
+        );
+      }
+
+      if (isMobile) {
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment Successful</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; background: #f7f9fc; color: #1f2933; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+      .card { background: white; border-radius: 16px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.12); padding: 32px 28px; text-align: center; max-width: 360px; }
+      h1 { margin-bottom: 12px; font-size: 24px; }
+      p { margin: 0 0 24px; line-height: 1.5; }
+      button { background: #1677ff; color: #fff; border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; box-shadow: 0 8px 24px rgba(22, 119, 255, 0.25); }
+      button:active { transform: translateY(1px); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Payment Successful</h1>
+      <p>Your order <strong>#${orderId}</strong> has been paid successfully. You can safely close this window and return to the app.</p>
+      <button onclick="window.location.href='fecs://payment-success?orderId=${orderId}';">Return to App</button>
+    </div>
+  </body>
+</html>`);
+        return;
+      }
+
       // Redirect to home with success message
       const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
       res.redirect(`${homeUrl}/home?thanks=1&order_id=${orderId}`);
@@ -284,6 +348,58 @@ router.get('/mpgs/payment/success', async (req, res) => {
     res.status(500).json({ 
       error: 'Payment completion failed',
       details: error.message 
+    });
+  }
+});
+
+router.get('/mpgs/payment/cancel', async (req, res) => {
+  try {
+    const orderId = req.query.orders_id || req.query.orderId;
+    const isMobile = req.query.mobile === 'true';
+
+    if (!orderId) {
+      return res.status(400).json({ error: 'orders_id parameter required' });
+    }
+
+    await executeQuery(
+      'UPDATE orders SET payment_status = ?, updated_at = NOW() WHERE id = ? LIMIT 1',
+      ['pending', orderId]
+    );
+
+    if (isMobile) {
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment Cancelled</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; background: #f9fafb; color: #1f2937; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+      .card { background: white; border-radius: 16px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.08); padding: 28px 24px; text-align: center; max-width: 360px; }
+      h1 { margin-bottom: 12px; font-size: 24px; }
+      p { margin: 0 0 24px; line-height: 1.6; }
+      button { background: #1f2937; color: #fff; border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; box-shadow: 0 8px 24px rgba(31, 41, 55, 0.18); }
+      button:active { transform: translateY(1px); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Payment Cancelled</h1>
+      <p>Your payment for order <strong>#${orderId}</strong> was not completed. You can return to the app to try again.</p>
+      <button onclick="window.location.href='fecs://payment-cancelled?orderId=${orderId}';">Return to App</button>
+    </div>
+  </body>
+</html>`);
+      return;
+    }
+
+    const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
+    res.redirect(`${homeUrl}/payment-cancelled?orderId=${orderId}`);
+  } catch (error) {
+    console.error('Payment cancel error:', error);
+    res.status(500).json({
+      error: 'Payment cancellation handling failed',
+      details: error.message
     });
   }
 });
@@ -308,7 +424,7 @@ router.post('/mpgs/session', async (req, res) => {
     console.log('Looking up order:', finalOrderId);
     // Get order from database
     const orderRows = await executeQuery(
-      'SELECT id, total_amount FROM orders WHERE id = ? LIMIT 1', 
+      'SELECT id, total_amount, currency FROM orders WHERE id = ? LIMIT 1', 
       [finalOrderId]
     );
     
@@ -320,11 +436,12 @@ router.post('/mpgs/session', async (req, res) => {
       });
     }
 
-    const order = orderRows[0];
+  const order = orderRows[0];
+  order.currency = order.currency || MPGS_CONFIG.defaultCurrency;
     console.log('Found order:', order);
     // Use provided amount/currency or fallback to order/default values
-    const finalAmount = amount || order.total_amount;
-    const finalCurrency = currency || order.currency || MPGS_CONFIG.defaultCurrency;
+  const finalAmount = amount || order.total_amount;
+  const finalCurrency = currency || order.currency;
     const returnUrl = `${MPGS_CONFIG.returnBaseUrl}/api/payments/mpgs/payment/success?orders_id=${order.id}`;
 
     console.log('Session parameters:', { finalAmount, finalCurrency, returnUrl });
@@ -358,7 +475,7 @@ router.post('/mpgs/session', async (req, res) => {
     };
 
     console.log('Creating MPGS session with data:', JSON.stringify(sessionData, null, 2));
-    const auth = Buffer.from(`merchant.${MPGS_CONFIG.merchantId}:${process.env.MPGS_API_PASSWORD || '50dab32ebe8f6bc8c55346e4f350101f'}`).toString('base64');
+    const auth = resolveMpgsAuthToken();
     const sessionUrl = `${MPGS_CONFIG.gateway}/api/rest/version/${MPGS_CONFIG.apiVersion}/merchant/${MPGS_CONFIG.merchantId}/session`;
     
     const response = await fetch(sessionUrl, {
@@ -392,8 +509,8 @@ router.post('/mpgs/session', async (req, res) => {
 
     // Update order with session info
     await executeQuery(
-      'UPDATE orders SET payment_session_id = ?, payment_provider = ? WHERE id = ?',
-      [sessionResponse.session.id, 'mpgs', order.id]
+      'UPDATE orders SET payment_session_id = ?, payment_provider = ?, currency = ? WHERE id = ?',
+      [sessionResponse.session.id, 'mpgs', finalCurrency, order.id]
     );
 
     // Return session info for frontend
@@ -425,6 +542,124 @@ router.post('/mpgs/session', async (req, res) => {
       error: 'Session creation failed',
       details: error.message,
       success: false
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// MOBILE SESSION ENDPOINT (React Native / SDK consumption)
+// ---------------------------------------------------------------------------
+router.post('/mpgs/mobile/session', async (req, res) => {
+  try {
+    const { orderId, amount, currency } = req.body || {};
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        error: 'orderId is required'
+      });
+    }
+
+    let orderRows;
+    try {
+      orderRows = await executeQuery(
+        'SELECT id, total_amount, currency, payment_status FROM orders WHERE id = ? LIMIT 1',
+        [orderId]
+      );
+    } catch (error) {
+      if (error.code === 'ER_BAD_FIELD_ERROR') {
+        console.warn('[MPGS] orders.currency column missing, falling back to default currency');
+        orderRows = await executeQuery(
+          'SELECT id, total_amount, payment_status FROM orders WHERE id = ? LIMIT 1',
+          [orderId]
+        );
+      } else {
+        throw error;
+      }
+    }
+
+    if (!orderRows.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
+      });
+    }
+
+    const order = orderRows[0];
+    const numericAmount = Number(amount ?? order.total_amount ?? 0);
+
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'A positive amount is required to initiate payment'
+      });
+    }
+
+    const finalAmount = Number(numericAmount.toFixed(2));
+  const dbCurrency = Object.prototype.hasOwnProperty.call(order, 'currency') ? order.currency : null;
+  const finalCurrency = currency || dbCurrency || MPGS_CONFIG.defaultCurrency;
+    const returnUrl = `${MPGS_CONFIG.returnBaseUrl}/api/payments/mpgs/payment/success?orders_id=${order.id}&mobile=true`;
+    const cancelUrl = `${MPGS_CONFIG.returnBaseUrl}/api/payments/mpgs/payment/cancel?orders_id=${order.id}&mobile=true`;
+
+    await ensurePaymentSchema();
+
+    try {
+      await mpgs.ensureOrder(order.id, finalAmount, finalCurrency);
+    } catch (ensureError) {
+      console.warn('[MPGS] ensureOrder skipped:', ensureError.response?.data || ensureError.message);
+    }
+
+    const sessionResponse = await mpgs.createHostedSession({
+      orderId: order.id,
+      amount: finalAmount,
+      currency: finalCurrency,
+      returnUrl,
+      cancelUrl
+    });
+
+    const sessionId = sessionResponse?.session?.id;
+
+    if (!sessionId) {
+      console.error('MPGS mobile session response missing session ID:', sessionResponse);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to initiate mobile MPGS session'
+      });
+    }
+
+    await executeQuery(
+      `UPDATE orders
+         SET payment_session_id = ?,
+             payment_provider = ?,
+             payment_success_indicator = ?,
+             currency = ?,
+             updated_at = NOW()
+       WHERE id = ?`,
+      [sessionId, 'mpgs', sessionResponse.successIndicator || null, finalCurrency, order.id]
+    );
+
+    const paymentUrl = `${MPGS_CONFIG.gateway}/checkout/pay/${sessionId}`;
+    const checkoutUrl = `${MPGS_CONFIG.gateway}/checkout/version/${MPGS_CONFIG.apiVersion}/merchant/${MPGS_CONFIG.merchantId}/session/${sessionId}`;
+
+    return res.json({
+      success: true,
+      orderId: order.id,
+      amount: finalAmount,
+      currency: finalCurrency,
+      sessionId,
+      paymentUrl,
+      checkoutUrl,
+      checkoutScript: `${MPGS_CONFIG.gateway}/checkout/version/${MPGS_CONFIG.apiVersion}/checkout.js`,
+      returnUrl,
+      cancelUrl,
+      successIndicator: sessionResponse.successIndicator || null
+    });
+  } catch (error) {
+    console.error('MPGS mobile session error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to prepare mobile payment session',
+      details: error.message
     });
   }
 });
@@ -518,6 +753,11 @@ router.post('/mpgs/create-test-order', async (req, res) => {
   try {
     const { amount = '25.50', currency = 'USD', description = 'Test Order' } = req.body;
     const orderId = Math.floor(Math.random() * 10000) + 1000;
+    const normalizedCurrency = (currency || MPGS_CONFIG.defaultCurrency || 'JOD')
+      .toString()
+      .trim()
+      .toUpperCase()
+      .slice(0, 3);
     const orderNumber = `TEST-${orderId}-${Date.now()}`;
     
     // Insert with all required fields based on actual table structure
@@ -526,12 +766,14 @@ router.post('/mpgs/create-test-order', async (req, res) => {
         id, order_number, branch_id, customer_name, customer_phone, 
         order_type, payment_method, payment_status, order_status,
         subtotal, delivery_fee, tax_amount, discount_amount, total_amount,
+        currency,
         points_used, points_earned, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
     `, [
       orderId, orderNumber, 1, 'Test Customer', '+1234567890',
       'delivery', 'online', 'pending', 'pending',
       parseFloat(amount), 0.00, 0.00, 0.00, parseFloat(amount),
+      normalizedCurrency,
       0, 0
     ]);
 
@@ -541,7 +783,7 @@ router.post('/mpgs/create-test-order', async (req, res) => {
         id: orderId,
         order_number: orderNumber,
         total_amount: amount,
-        currency: currency, // Return currency in response even if not stored
+  currency: normalizedCurrency,
         status: 'pending'
       },
       paymentUrl: `/api/payments/mpgs/payment/view?orders_id=${orderId}`
@@ -557,7 +799,7 @@ router.get('/mpgs/order/:id', async (req, res) => {
   try {
     const orderId = req.params.id;
     const orderRows = await executeQuery(
-      'SELECT id, total_amount, payment_status, payment_session_id FROM orders WHERE id = ? LIMIT 1',
+      'SELECT id, total_amount, payment_status, payment_session_id, currency FROM orders WHERE id = ? LIMIT 1',
       [orderId]
     );
 
@@ -565,9 +807,8 @@ router.get('/mpgs/order/:id', async (req, res) => {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const order = orderRows[0];
-    // Add default currency since column may not exist
-    order.currency = MPGS_CONFIG.defaultCurrency;
+  const order = orderRows[0];
+  order.currency = order.currency || MPGS_CONFIG.defaultCurrency;
     
     res.json({ order });
   } catch (error) {
@@ -668,7 +909,7 @@ router.get('/mpgs/return', async (req, res) => {
 
     // Look up stored successIndicator for this orderId
     const rows = await executeQuery(
-      'SELECT id, order_number, total_amount, payment_status, payment_session_id, payment_success_indicator FROM orders WHERE id = ?', 
+  'SELECT id, order_number, total_amount, payment_status, order_status, payment_session_id, payment_success_indicator FROM orders WHERE id = ?', 
       [orderId]
     );
     
@@ -687,7 +928,7 @@ router.get('/mpgs/return', async (req, res) => {
     let redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-failed?orderId=${orderId}`;
 
     if (indicatorMatch) {
-      paymentStatus = 'completed';
+      paymentStatus = 'paid';
       redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/payment-success?orderId=${orderId}`;
     }
 
@@ -696,6 +937,19 @@ router.get('/mpgs/return', async (req, res) => {
       'UPDATE orders SET payment_status = ?, payment_method = ? WHERE id = ?',
       [paymentStatus, 'card', orderId]
     );
+
+    if (paymentStatus === 'paid' && order.payment_status !== 'paid') {
+      await executeQuery(
+        `INSERT INTO order_status_history (order_id, status, note, changed_by)
+         VALUES (?, ?, ?, ?)`,
+        [
+          orderId,
+          order.order_status,
+          'Payment status automatically updated to paid via MPGS return',
+          null
+        ]
+      );
+    }
 
     console.log(`Order ${order.order_number || orderId} payment status updated to: ${paymentStatus}`);
 

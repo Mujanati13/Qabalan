@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Button, Input, Row, Col, Form, message, Spin, Alert } from 'antd';
+import { Card, Button, Input, Row, Col, Form, message, Spin, Alert, AutoComplete } from 'antd';
 import { EnvironmentOutlined, AimOutlined, CheckOutlined, SearchOutlined } from '@ant-design/icons';
 
 const MapAddressSelector = ({ 
@@ -20,8 +20,67 @@ const MapAddressSelector = ({
   const [selectedLocation, setSelectedLocation] = useState(initialLocation || null);
   const [isReverseGeocoding, setIsReverseGeocoding] = useState(false);
   const [searchInput, setSearchInput] = useState('');
-  const [autocomplete, setAutocomplete] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const [initialApplied, setInitialApplied] = useState(false);
   const searchInputRef = useRef(null);
+  const autocompleteServiceRef = useRef(null);
+  const placesServiceRef = useRef(null);
+  const debounceTimerRef = useRef(null);
+  const prevInitialLocationKeyRef = useRef(null);
+
+  const applyAddressToForm = (address, location) => {
+    if (!address) return;
+
+    if (form && onAddressChange) {
+      onAddressChange({
+        street_address: address.street_address || '',
+        city: address.city || '',
+        state: address.state || '',
+        country: address.country || '',
+        postal_code: address.postal_code || '',
+        full_address: address.full_address || address.formatted_address || '',
+        latitude: Number(location.lat),
+        longitude: Number(location.lng)
+      });
+    }
+  };
+
+  const parseGooglePlace = (result) => {
+    if (!result) return null;
+
+    const addressComponents = result.address_components || [];
+    const addressData = {
+      full_address: result.formatted_address,
+      street_number: '',
+      route: '',
+      city: '',
+      state: '',
+      country: '',
+      postal_code: ''
+    };
+
+    addressComponents.forEach(component => {
+      const types = component.types;
+      if (types.includes('street_number')) {
+        addressData.street_number = component.long_name;
+      } else if (types.includes('route')) {
+        addressData.route = component.long_name;
+      } else if (types.includes('locality')) {
+        addressData.city = component.long_name;
+      } else if (types.includes('administrative_area_level_1')) {
+        addressData.state = component.long_name;
+      } else if (types.includes('country')) {
+        addressData.country = component.long_name;
+      } else if (types.includes('postal_code')) {
+        addressData.postal_code = component.long_name;
+      }
+    });
+
+    addressData.street_address = `${addressData.street_number} ${addressData.route}`.trim();
+    return addressData;
+  };
 
   // Default location (Amman, Jordan)
   const defaultLocation = { lat: 31.9454, lng: 35.9284 };
@@ -31,10 +90,58 @@ const MapAddressSelector = ({
   }, []);
 
   useEffect(() => {
-    if (map && initialLocation) {
-      updateMapLocation(initialLocation);
+    const key = initialLocation ? `${Number(initialLocation.lat)}:${Number(initialLocation.lng)}` : null;
+    if (prevInitialLocationKeyRef.current !== key) {
+      prevInitialLocationKeyRef.current = key;
+      setInitialApplied(false);
     }
-  }, [map, initialLocation]);
+  }, [initialLocation]);
+
+  useEffect(() => {
+    if (initialAddress) {
+      const addressText = initialAddress.full_address || initialAddress.street_address || initialAddress.description || '';
+      if (addressText && !searchInput) {
+        setSearchInput(addressText);
+      }
+    }
+  }, [initialAddress]);
+
+  useEffect(() => {
+    if (!map || !initialLocation || initialApplied) {
+      return;
+    }
+
+    const lat = Number(initialLocation.lat);
+    const lng = Number(initialLocation.lng);
+
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      return;
+    }
+
+    const location = { lat, lng };
+
+    updateMapLocation(location);
+
+    if (initialAddress) {
+      applyAddressToForm(initialAddress, location);
+      const addressText = initialAddress.full_address || initialAddress.street_address || initialAddress.description || '';
+      if (addressText) {
+        setSearchInput(prev => prev || addressText);
+      }
+    } else {
+      performReverseGeocoding(location);
+    }
+
+    setInitialApplied(true);
+  }, [map, initialLocation, initialAddress, initialApplied]);
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
 
   const loadGoogleMaps = () => {
     // Check if Google Maps is already loaded
@@ -109,7 +216,10 @@ const MapAddressSelector = ({
         ]
       });
 
-      setMap(mapInstance);
+  setMap(mapInstance);
+
+  autocompleteServiceRef.current = new window.google.maps.places.AutocompleteService();
+  placesServiceRef.current = new window.google.maps.places.PlacesService(mapInstance);
 
       // Add click listener
       if (!disabled) {
@@ -120,9 +230,6 @@ const MapAddressSelector = ({
       if (initialPos) {
         addMarker(initialPos, mapInstance);
       }
-
-      // Initialize autocomplete
-      initializeAutocomplete();
 
       setLoading(false);
     } catch (error) {
@@ -207,77 +314,329 @@ const MapAddressSelector = ({
     setMarker(newMarker);
   };
 
-  const performReverseGeocoding = async (location) => {
-    if (!window.google || !window.google.maps) return;
-    
-    setIsReverseGeocoding(true);
-    
-    try {
-      const geocoder = new window.google.maps.Geocoder();
-      
-      geocoder.geocode(
-        { location: location },
-        (results, status) => {
-          setIsReverseGeocoding(false);
-          
-          if (status === 'OK' && results[0]) {
-            const result = results[0];
-            const addressComponents = result.address_components;
-            
-            // Parse address components
-            const addressData = {
-              formatted_address: result.formatted_address,
-              street_number: '',
-              route: '',
-              locality: '',
-              administrative_area_level_1: '',
-              country: '',
-              postal_code: ''
-            };
-            
-            addressComponents.forEach(component => {
-              const types = component.types;
-              if (types.includes('street_number')) {
-                addressData.street_number = component.long_name;
-              } else if (types.includes('route')) {
-                addressData.route = component.long_name;
-              } else if (types.includes('locality')) {
-                addressData.locality = component.long_name;
-              } else if (types.includes('administrative_area_level_1')) {
-                addressData.administrative_area_level_1 = component.long_name;
-              } else if (types.includes('country')) {
-                addressData.country = component.long_name;
-              } else if (types.includes('postal_code')) {
-                addressData.postal_code = component.long_name;
-              }
+  const geocodeWithGoogle = (query) => {
+    if (!window.google || !window.google.maps) {
+      return Promise.reject(new Error('google_unavailable'));
+    }
+
+    const geocoder = new window.google.maps.Geocoder();
+
+    return new Promise((resolve, reject) => {
+      geocoder.geocode({ address: query }, (results, status) => {
+        if (status === 'OK' && results?.length) {
+          const primaryResult = results[0];
+          const geometryLocation = primaryResult.geometry?.location;
+          if (geometryLocation) {
+            resolve({
+              location: {
+                lat: Number(geometryLocation.lat()),
+                lng: Number(geometryLocation.lng())
+              },
+              formattedAddress: primaryResult.formatted_address || query
             });
-            
-            // Update form fields if form is provided
-            if (form && onAddressChange) {
-              const formattedAddress = {
-                street_address: `${addressData.street_number} ${addressData.route}`.trim(),
-                city: addressData.locality,
-                state: addressData.administrative_area_level_1,
-                country: addressData.country,
-                postal_code: addressData.postal_code,
-                full_address: addressData.formatted_address,
-                latitude: Number(location.lat),
-                longitude: Number(location.lng)
-              };
-              
-              onAddressChange(formattedAddress);
+            return;
+          }
+        }
+        reject(new Error(status || 'geocode_failed'));
+      });
+    });
+  };
+
+  const geocodeWithNominatim = async (query) => {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`;
+    const response = await fetch(url, {
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('nominatim_error');
+    }
+
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('nominatim_no_results');
+    }
+
+    const result = data[0];
+    return {
+      location: {
+        lat: Number(result.lat),
+        lng: Number(result.lon)
+      },
+      formattedAddress: result.display_name || query
+    };
+  };
+
+  const fetchGoogleSuggestions = (value) => {
+    if (!autocompleteServiceRef.current) return;
+
+    setIsFetchingSuggestions(true);
+
+    autocompleteServiceRef.current.getPlacePredictions(
+      {
+        input: value,
+        componentRestrictions: { country: 'jo' }
+      },
+      (predictions, status) => {
+        if (status === 'OK') {
+          setSuggestions(predictions || []);
+        } else if (status === 'ZERO_RESULTS') {
+          setSuggestions([]);
+        } else {
+          console.warn('Autocomplete prediction status:', status);
+          setSuggestions([]);
+        }
+        setIsFetchingSuggestions(false);
+      }
+    );
+  };
+
+  const fetchNominatimSuggestions = async (value) => {
+    setIsFetchingSuggestions(true);
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(value)}`;
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('nominatim_error');
+      }
+
+      const data = await response.json();
+      const results = Array.isArray(data) ? data.map(item => ({
+        description: item.display_name,
+        place_id: item.place_id,
+        lat: item.lat,
+        lng: item.lon,
+        source: 'nominatim'
+      })) : [];
+
+      setSuggestions(results);
+    } catch (error) {
+      console.error('Suggestion fetch error:', error);
+      setSuggestions([]);
+    } finally {
+      setIsFetchingSuggestions(false);
+    }
+  };
+
+  const selectPrediction = (prediction) => {
+    if (!prediction) {
+      return Promise.reject(new Error('invalid_prediction'));
+    }
+
+    if (prediction.source === 'nominatim') {
+      const location = {
+        lat: Number(prediction.lat),
+        lng: Number(prediction.lng)
+      };
+      updateMapLocation(location);
+      setSuggestions([]);
+      setSearchInput(prediction.description || '');
+      performReverseGeocoding(location);
+      message.success(t ? t('map.placeSelected') : 'Location selected successfully');
+      return Promise.resolve(location);
+    }
+
+    if (!window.google || !window.google.maps || !prediction.place_id) {
+      return Promise.reject(new Error('google_unavailable'));
+    }
+
+    if (!placesServiceRef.current && map) {
+      placesServiceRef.current = new window.google.maps.places.PlacesService(map);
+    }
+
+    const service = placesServiceRef.current;
+    if (!service) {
+      return Promise.reject(new Error('places_service_unavailable'));
+    }
+
+    return new Promise((resolve, reject) => {
+      service.getDetails(
+        {
+          placeId: prediction.place_id,
+          fields: ['geometry', 'formatted_address', 'address_components']
+        },
+        (placeResult, status) => {
+          if (
+            status === window.google.maps.places.PlacesServiceStatus.OK &&
+            placeResult?.geometry?.location
+          ) {
+            const location = {
+              lat: Number(placeResult.geometry.location.lat()),
+              lng: Number(placeResult.geometry.location.lng())
+            };
+
+            updateMapLocation(location);
+            const parsedAddress = parseGooglePlace(placeResult);
+            if (parsedAddress) {
+              performReverseGeocoding(location, parsedAddress);
+            } else {
+              performReverseGeocoding(location);
             }
-            
+
+            setSearchInput(placeResult.formatted_address || prediction.description || '');
+            setSuggestions([]);
+            message.success(t ? t('map.placeSelected') : 'Location selected successfully');
+            resolve(location);
           } else {
-            console.warn('Geocoding failed:', status);
-            message.warning(t ? t('map.geocodingFailed') : 'Could not get address for this location');
+            reject(new Error(status || 'place_details_failed'));
           }
         }
       );
+    });
+  };
+
+  const handleSuggestionSelect = async (value, option) => {
+    const prediction = option?.prediction;
+    try {
+      await selectPrediction(prediction);
     } catch (error) {
-      setIsReverseGeocoding(false);
+      console.error('Suggestion selection error:', error);
+      message.error(t ? t('map.placeNotFound') : 'Unable to load details for this place. Please try another search.');
+    }
+  };
+
+  const handleSearchSubmit = async () => {
+    const query = searchInput.trim();
+    if (!query) {
+      message.warning(t ? t('map.enterSearchTerm') : 'Please enter a location to search');
+      return;
+    }
+
+    if (!map) {
+      message.warning(t ? t('map.mapNotReady') : 'Map is still loading. Please wait a moment and try again.');
+      return;
+    }
+
+    setIsSearching(true);
+
+    try {
+      let handled = false;
+
+      if (suggestions.length > 0) {
+        try {
+          await selectPrediction(suggestions[0]);
+          handled = true;
+        } catch (predictionError) {
+          console.warn('Primary prediction selection failed:', predictionError);
+        }
+      }
+
+      if (!handled) {
+        let result = null;
+
+        if (window.google && window.google.maps) {
+          try {
+            result = await geocodeWithGoogle(query);
+          } catch (googleError) {
+            console.warn('Google geocoding failed, falling back to Nominatim:', googleError);
+          }
+        }
+
+        if (!result) {
+          result = await geocodeWithNominatim(query);
+        }
+
+        if (result?.location) {
+          updateMapLocation(result.location);
+          setSearchInput(result.formattedAddress || query);
+          performReverseGeocoding(result.location);
+          setSuggestions([]);
+          message.success(t ? t('map.searchSuccess') : 'Location found and selected on the map');
+        } else {
+          throw new Error('no_location_result');
+        }
+      }
+    } catch (error) {
+      console.error('Manual map search error:', error);
+      message.error(t ? t('map.searchFailed') : 'Could not find that location. Please refine your search.');
+      setSuggestions([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const performReverseGeocoding = async (location, prefetchedAddress = null) => {
+    if (prefetchedAddress) {
+      applyAddressToForm(prefetchedAddress, location);
+      return;
+    }
+
+    setIsReverseGeocoding(true);
+
+    const reverseGeocodeWithGoogle = () => {
+      if (!window.google || !window.google.maps) {
+        return Promise.reject(new Error('google_unavailable'));
+      }
+
+      const geocoder = new window.google.maps.Geocoder();
+
+      return new Promise((resolve, reject) => {
+        geocoder.geocode({ location }, (results, status) => {
+          if (status === 'OK' && results?.length) {
+            resolve(parseGooglePlace(results[0]));
+          } else {
+            reject(new Error(status || 'geocode_failed'));
+          }
+        });
+      });
+    };
+
+    const reverseGeocodeWithNominatim = async () => {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(location.lat)}&lon=${encodeURIComponent(location.lng)}&zoom=18&addressdetails=1`;
+
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('nominatim_reverse_error');
+      }
+
+      const data = await response.json();
+      if (!data) {
+        throw new Error('nominatim_reverse_empty');
+      }
+
+      const address = data.address || {};
+      return {
+        full_address: data.display_name || '',
+        street_address: [address.house_number, address.road].filter(Boolean).join(' '),
+        city: address.city || address.town || address.village || address.municipality || '',
+        state: address.state || address.region || '',
+        country: address.country || '',
+        postal_code: address.postcode || ''
+      };
+    };
+
+    try {
+      let address = null;
+
+      try {
+        address = await reverseGeocodeWithGoogle();
+      } catch (googleError) {
+        console.warn('Google reverse geocoding failed, falling back to Nominatim:', googleError);
+        address = await reverseGeocodeWithNominatim();
+      }
+
+      applyAddressToForm(address, location);
+
+      if (!address?.full_address) {
+        message.warning(t ? t('map.geocodingPartial') : 'Coordinates saved, but no formatted address was found.');
+      }
+    } catch (error) {
       console.error('Reverse geocoding error:', error);
-      message.error(t ? t('map.geocodingError') : 'Error getting address information');
+      message.warning(t ? t('map.geocodingFailed') : 'Could not get address for this location');
+    } finally {
+      setIsReverseGeocoding(false);
     }
   };
 
@@ -325,60 +684,60 @@ const MapAddressSelector = ({
     );
   };
 
-  const initializeAutocomplete = () => {
-    if (!window.google || !window.google.maps || !searchInputRef.current) return;
+  const handleSearchInputChange = (value) => {
+    setSearchInput(value);
 
-    try {
-      const autocompleteInstance = new window.google.maps.places.Autocomplete(
-        searchInputRef.current.input,
-        {
-          types: ['address'],
-          componentRestrictions: { country: 'jo' }, // Restrict to Jordan
-          fields: ['place_id', 'geometry', 'name', 'formatted_address', 'address_components']
-        }
-      );
-
-      autocompleteInstance.addListener('place_changed', () => {
-        const place = autocompleteInstance.getPlace();
-        
-        if (!place.geometry || !place.geometry.location) {
-          message.warning(t ? t('map.placeNotFound') : 'Location not found for this place');
-          return;
-        }
-
-        const location = {
-          lat: Number(place.geometry.location.lat()),
-          lng: Number(place.geometry.location.lng())
-        };
-
-        // Update map and marker
-        updateMapLocation(location);
-        
-        // Set search input to the formatted address
-        setSearchInput(place.formatted_address || place.name || '');
-        
-        // Perform reverse geocoding to get detailed address info
-        performReverseGeocoding(location);
-        
-        message.success(t ? t('map.placeSelected') : 'Location selected successfully');
-      });
-
-      setAutocomplete(autocompleteInstance);
-    } catch (error) {
-      console.error('Error initializing autocomplete:', error);
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
     }
-  };
 
-  const handleSearchInputChange = (e) => {
-    setSearchInput(e.target.value);
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      setIsFetchingSuggestions(false);
+      return;
+    }
+
+    debounceTimerRef.current = window.setTimeout(() => {
+      if (window.google && window.google.maps && autocompleteServiceRef.current) {
+        fetchGoogleSuggestions(trimmed);
+      } else {
+        fetchNominatimSuggestions(trimmed);
+      }
+    }, 250);
   };
 
   const clearSearch = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
     setSearchInput('');
+    setSuggestions([]);
+    setIsFetchingSuggestions(false);
     if (searchInputRef.current) {
       searchInputRef.current.focus();
     }
   };
+
+  const autoCompleteOptions = suggestions.map(prediction => {
+    const mainText = prediction.structured_formatting?.main_text || prediction.description || prediction.formattedAddress || '';
+    const secondaryText = prediction.structured_formatting?.secondary_text || '';
+
+    return {
+      value: prediction.description || prediction.formattedAddress || '',
+      label: (
+        <div>
+          <div style={{ fontWeight: 600 }}>{mainText}</div>
+          {secondaryText && (
+            <div style={{ fontSize: 12, color: '#999' }}>{secondaryText}</div>
+          )}
+        </div>
+      ),
+      prediction
+    };
+  });
+
+  const suggestionsOpen = (suggestions.length > 0) || (isFetchingSuggestions && searchInput.trim().length > 0);
 
   if (mapError) {
     return (
@@ -452,27 +811,60 @@ const MapAddressSelector = ({
     >
       {/* Search Input */}
       <div style={{ marginBottom: 16 }}>
-        <Input
-          ref={searchInputRef}
-          placeholder={t ? t('map.searchPlaceholder') : 'Search for places, addresses, or landmarks...'}
-          value={searchInput}
-          onChange={handleSearchInputChange}
-          prefix={<SearchOutlined />}
-          suffix={
-            searchInput && (
-              <Button 
-                type="text" 
-                size="small" 
-                onClick={clearSearch}
-                style={{ padding: 0, height: 'auto', minWidth: 'auto' }}
-              >
-                ×
-              </Button>
-            )
-          }
-          disabled={disabled}
-          style={{ width: '100%' }}
-        />
+        <Row gutter={8} wrap={false} align="middle">
+          <Col flex="auto">
+            <AutoComplete
+              value={searchInput}
+              options={autoCompleteOptions}
+              onSearch={handleSearchInputChange}
+              onSelect={handleSuggestionSelect}
+              open={suggestionsOpen}
+              notFoundContent={isFetchingSuggestions ? <Spin size="small" /> : null}
+              dropdownMatchSelectWidth={false}
+              filterOption={false}
+              getPopupContainer={(trigger) => trigger.parentNode}
+              disabled={disabled}
+            >
+              <Input
+                ref={searchInputRef}
+                placeholder={t ? t('map.searchPlaceholder') : 'Search for places, addresses, or landmarks...'}
+                onChange={(e) => handleSearchInputChange(e.target.value)}
+                onPressEnter={handleSearchSubmit}
+                prefix={<SearchOutlined />}
+                suffix={
+                  searchInput && (
+                    <Button 
+                      type="text" 
+                      size="small" 
+                      onClick={clearSearch}
+                      style={{ padding: 0, height: 'auto', minWidth: 'auto' }}
+                    >
+                      ×
+                    </Button>
+                  )
+                }
+                disabled={disabled}
+                style={{ width: '100%' }}
+              />
+            </AutoComplete>
+          </Col>
+          <Col>
+            <Button
+              type="primary"
+              icon={<SearchOutlined />}
+              onClick={handleSearchSubmit}
+              disabled={disabled}
+              loading={isSearching}
+            >
+              {t ? t('common.search') : 'Search'}
+            </Button>
+          </Col>
+        </Row>
+        {isSearching && (
+          <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+            {t ? t('map.searching') : 'Searching for the best match...'}
+          </div>
+        )}
       </div>
       <div style={{ position: 'relative' }}>
         <div

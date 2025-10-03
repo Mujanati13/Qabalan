@@ -5,6 +5,37 @@ const { validateId, validatePagination } = require('../middleware/validation');
 
 const router = express.Router();
 
+const buildBranchTitleFallback = (branch = {}) => {
+  const { id } = branch;
+  const normalizedId = id !== undefined && id !== null ? String(id).trim() : '';
+  const fallbackLabel = normalizedId ? `Branch ${normalizedId}` : 'Branch';
+  const fallbackArabicLabel = normalizedId ? `الفرع ${normalizedId}` : 'الفرع';
+
+  const candidatesEn = [branch.title_en, branch.display_name, branch.title_ar];
+  const candidatesAr = [branch.title_ar, branch.display_name, branch.title_en];
+
+  const pickFirstNonEmpty = (values, fallback) => {
+    for (const value of values) {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.length > 0) {
+          return trimmed;
+        }
+      }
+    }
+    return fallback;
+  };
+
+  const titleEn = pickFirstNonEmpty(candidatesEn, fallbackLabel);
+  const titleAr = pickFirstNonEmpty(candidatesAr, fallbackArabicLabel);
+
+  return {
+    ...branch,
+    title_en: titleEn,
+    title_ar: titleAr,
+  };
+};
+
 /**
  * @route   GET /api/branches
  * @desc    Get all branches with optional filters
@@ -51,16 +82,28 @@ router.get('/', validatePagination, async (req, res, next) => {
 
     if (validatedPage && validatedLimit) {
       const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
+      const normalizedData = Array.isArray(result?.data)
+        ? result.data.map(buildBranchTitleFallback)
+        : [];
+      if (normalizedData.length > 0) {
+        console.log('[branches] Sample normalized branch (paginated):', normalizedData[0]);
+      }
       res.json({
         success: true,
-        data: result.data,
+        data: normalizedData,
         pagination: result.pagination
       });
     } else {
       const branches = await executeQuery(query, queryParams);
+      const normalizedBranches = Array.isArray(branches)
+        ? branches.map(buildBranchTitleFallback)
+        : [];
+      if (normalizedBranches.length > 0) {
+        console.log('[branches] Sample normalized branch (full list):', normalizedBranches[0]);
+      }
       res.json({
         success: true,
-        data: branches
+        data: normalizedBranches
       });
     }
 
@@ -91,7 +134,7 @@ router.get('/:id', validateId, async (req, res, next) => {
 
     res.json({
       success: true,
-      data: { branch }
+      data: { branch: buildBranchTitleFallback(branch) }
     });
 
   } catch (error) {
@@ -156,7 +199,7 @@ router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
       success: true,
       message: 'Branch created successfully',
       message_ar: 'تم إنشاء الفرع بنجاح',
-      data: { branch: newBranch }
+      data: { branch: buildBranchTitleFallback(newBranch) }
     });
 
   } catch (error) {
@@ -248,7 +291,7 @@ router.put('/:id', authenticate, authorize('admin'), validateId, async (req, res
       success: true,
       message: 'Branch updated successfully',
       message_ar: 'تم تحديث الفرع بنجاح',
-      data: { branch: updatedBranch }
+      data: { branch: buildBranchTitleFallback(updatedBranch) }
     });
 
   } catch (error) {
@@ -302,7 +345,7 @@ router.patch('/:id/status', authenticate, authorize('admin'), validateId, async 
       success: true,
       message: `Branch ${is_active ? 'activated' : 'deactivated'} successfully`,
       message_ar: `تم ${is_active ? 'تفعيل' : 'إلغاء تفعيل'} الفرع بنجاح`,
-      data: { branch: updatedBranch }
+      data: { branch: buildBranchTitleFallback(updatedBranch) }
     });
 
   } catch (error) {

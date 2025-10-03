@@ -57,6 +57,9 @@ const customersService = {
       const response = await api.put(`/users/${id}/password`, passwordData);
       return response.data;
     } catch (error) {
+      if (error?.response?.data) {
+        throw error;
+      }
       throw new Error(error.response?.data?.message || 'Failed to change password');
     }
   },

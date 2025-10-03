@@ -37,13 +37,48 @@ const validateRole = [
   body('description').optional().isLength({ max: 500 }).withMessage('Description must be less than 500 characters'),
 ];
 
-const validateStaff = [
-  body('email').isEmail().withMessage('Valid email is required'),
-  body('first_name').trim().isLength({ min: 2, max: 50 }).withMessage('First name must be 2-50 characters'),
-  body('last_name').trim().isLength({ min: 2, max: 50 }).withMessage('Last name must be 2-50 characters'),
-  body('user_type').isIn(['admin', 'staff']).withMessage('User type must be admin or staff'),
-  body('password').optional().isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('phone').optional().isMobilePhone().withMessage('Valid phone number is required if provided'),
+const staffValidationRules = [
+  body('email')
+    .isEmail()
+    .withMessage('Valid email is required')
+    .bail()
+    .normalizeEmail(),
+  body('first_name')
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('First name must be 2-50 characters'),
+  body('last_name')
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Last name must be 2-50 characters'),
+  body('user_type')
+    .default('staff')
+    .isIn(['admin', 'staff'])
+    .withMessage('User type must be admin or staff'),
+  body('phone')
+    .optional({ nullable: true, checkFalsy: true })
+    .bail()
+    .customSanitizer(value => (typeof value === 'string' ? value.trim() : value))
+    .matches(/^[0-9+\-\s()]{6,20}$/)
+    .withMessage('Phone number must be 6-20 characters and contain only digits, spaces, or + - ( ) symbols'),
+];
+
+const validateStaffCreate = [
+  ...staffValidationRules,
+  body('password')
+    .exists({ checkFalsy: true })
+    .withMessage('Password is required')
+    .bail()
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters'),
+];
+
+const validateStaffUpdate = [
+  ...staffValidationRules,
+  body('password')
+    .optional({ nullable: true, checkFalsy: true })
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters'),
 ];
 
 // =====================================
@@ -229,7 +264,7 @@ router.get('/staff/:id', authenticate, requirePermission('staff', 'can_read'), a
 });
 
 // Create new staff member
-router.post('/staff', authenticate, requirePermission('staff', 'can_create'), validateStaff, async (req, res) => {
+router.post('/staff', authenticate, requirePermission('staff', 'can_create'), validateStaffCreate, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -264,7 +299,7 @@ router.post('/staff', authenticate, requirePermission('staff', 'can_create'), va
 });
 
 // Update staff member
-router.put('/staff/:id', authenticate, requirePermission('staff', 'can_update'), validateStaff, async (req, res) => {
+router.put('/staff/:id', authenticate, requirePermission('staff', 'can_update'), validateStaffUpdate, async (req, res) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {

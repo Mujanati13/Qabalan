@@ -6,6 +6,126 @@ const { uploadSingle, uploadMultiple, deleteImage } = require('../middleware/upl
 
 const router = express.Router();
 
+const mapVariantResponse = (variant) => {
+  if (!variant) {
+    return variant;
+  }
+
+  const hasTitleAr = Object.prototype.hasOwnProperty.call(variant, 'title_ar');
+  const hasTitleEn = Object.prototype.hasOwnProperty.call(variant, 'title_en');
+  const hasPrice = Object.prototype.hasOwnProperty.call(variant, 'price');
+
+  return {
+    ...variant,
+    ...(hasTitleAr ? {} : { title_ar: variant.variant_name || variant.variant_value || null }),
+    ...(hasTitleEn ? {} : { title_en: variant.variant_value || variant.variant_name || null }),
+    ...(hasPrice ? {} : { price: null })
+  };
+};
+
+const normalizeBooleanInput = (value, defaultValue = undefined) => {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  if (value === null) {
+    return defaultValue;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized.length === 0 || normalized === 'null' || normalized === 'undefined') {
+      return defaultValue;
+    }
+
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) {
+      return 1;
+    }
+
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) {
+      return 0;
+    }
+  }
+
+  if (typeof value === 'number') {
+    if (Number.isNaN(value)) {
+      return defaultValue;
+    }
+    return value === 0 ? 0 : 1;
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 1 : 0;
+  }
+
+  return value ? 1 : 0;
+};
+
+const VALID_STOCK_STATUSES = new Set(['in_stock', 'out_of_stock', 'limited']);
+
+const normalizeIntegerInput = (value, { allowNull = true, min = null, max = null } = {}) => {
+  if (value === undefined) {
+    return { value: undefined };
+  }
+
+  if (value === null) {
+    return allowNull ? { value: null } : { error: 'Value is required' };
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || trimmed === 'null' || trimmed === 'undefined') {
+      return allowNull ? { value: null } : { error: 'Value is required' };
+    }
+    value = trimmed;
+  }
+
+  const numericValue = Number(value);
+  if (Number.isNaN(numericValue) || !Number.isFinite(numericValue)) {
+    return { error: 'Value must be a number' };
+  }
+
+  const integerValue = Math.trunc(numericValue);
+
+  if (min !== null && integerValue < min) {
+    return { error: `Value must be greater than or equal to ${min}` };
+  }
+
+  if (max !== null && integerValue > max) {
+    return { error: `Value must be less than or equal to ${max}` };
+  }
+
+  return { value: integerValue };
+};
+
+const normalizeStockStatus = (status, quantityHint = undefined) => {
+  if (status === undefined || status === null) {
+    if (typeof quantityHint === 'number') {
+      return quantityHint <= 0 ? 'out_of_stock' : 'in_stock';
+    }
+    return 'in_stock';
+  }
+
+  if (typeof status === 'string') {
+    const normalized = status.trim().toLowerCase();
+    if (normalized.length === 0) {
+      if (typeof quantityHint === 'number') {
+        return quantityHint <= 0 ? 'out_of_stock' : 'in_stock';
+      }
+      return 'in_stock';
+    }
+
+    if (VALID_STOCK_STATUSES.has(normalized)) {
+      return normalized;
+    }
+  } else if (VALID_STOCK_STATUSES.has(status)) {
+    return status;
+  }
+
+  return null;
+};
+
 /**
  * @route   GET /api/products
  * @desc    Get all products with pagination and filters
@@ -20,70 +140,145 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       search, 
       sort = 'created_at', 
       order = 'desc',
-      is_featured,
+  is_featured,
+  is_home_top,
+  is_home_new,
       min_price,
       max_price,
       stock_status,
       include_inactive = false,
-      branch_id
+      branch_id,
+      include_branch_inactive = false,
+      branch_availability,
+      department_id,
+      status
     } = req.query;
 
     // Validate pagination parameters
-    const validatedPage = Math.max(1, parseInt(page));
-    const validatedLimit = Math.min(Math.max(1, parseInt(limit)), 100); // Max 100 items per page
+    const validatedPage = Math.max(1, parseInt(page, 10) || 1);
+    const validatedLimit = Math.min(Math.max(1, parseInt(limit, 10) || 12), 100); // Max 100 items per page
 
-    let whereConditions = [];
-    let queryParams = [];
+    const whereConditions = [];
+    const whereParams = [];
+    const joinParams = [];
 
     // Only filter by active status if include_inactive is false or not provided
-    const shouldIncludeInactive = include_inactive === 'true' || include_inactive === true || include_inactive === '1';
-    console.log('Products API - include_inactive parameter:', include_inactive, 'shouldIncludeInactive:', shouldIncludeInactive);
-    
-    if (!shouldIncludeInactive) {
+    let shouldIncludeInactive = include_inactive === 'true' || include_inactive === true || include_inactive === '1';
+    console.log('Products API - include_inactive parameter:', include_inactive, 'status parameter:', status);
+
+    let statusFilterValue = null;
+    if (status !== undefined && status !== null) {
+      const statusNormalized = String(status).toLowerCase();
+      if (['1', 'true', 'active'].includes(statusNormalized)) {
+        statusFilterValue = 1;
+      } else if (['0', 'false', 'inactive'].includes(statusNormalized)) {
+        statusFilterValue = 0;
+      }
+    }
+
+    if (statusFilterValue !== null) {
+      shouldIncludeInactive = true; // Explicit status filter overrides default active-only behaviour
+      whereConditions.push('p.is_active = ?');
+      whereParams.push(statusFilterValue);
+    } else if (!shouldIncludeInactive) {
       whereConditions.push('p.is_active = 1');
     }
+
+    const shouldIncludeBranchInactive = include_branch_inactive === 'true' || include_branch_inactive === true || include_branch_inactive === '1';
+    const normalizedBranchAvailability = (branch_availability || '').toLowerCase();
+    const allowedBranchAvailability = ['available', 'unavailable', 'all'];
+    const branchAvailabilityFilter = allowedBranchAvailability.includes(normalizedBranchAvailability)
+      ? normalizedBranchAvailability
+      : (shouldIncludeBranchInactive ? 'all' : 'available');
 
     // Category filter
     if (category_id) {
       whereConditions.push('p.category_id = ?');
-      queryParams.push(category_id);
+      whereParams.push(category_id);
+    }
+
+    // Department filter
+    if (department_id) {
+      whereConditions.push('(c.id = ? OR c.parent_id = ?)');
+      whereParams.push(department_id, department_id);
     }
 
     // Featured filter
-    if (is_featured !== undefined) {
+    const normalizedFeaturedFilter = normalizeBooleanInput(is_featured);
+    if (normalizedFeaturedFilter !== undefined && normalizedFeaturedFilter !== null) {
       whereConditions.push('p.is_featured = ?');
-      queryParams.push(is_featured === 'true' ? 1 : 0);
+      whereParams.push(normalizedFeaturedFilter);
+    }
+
+    const normalizedHomeTopFilter = normalizeBooleanInput(is_home_top);
+    if (normalizedHomeTopFilter !== undefined && normalizedHomeTopFilter !== null) {
+      whereConditions.push('p.is_home_top = ?');
+      whereParams.push(normalizedHomeTopFilter);
+    }
+
+    const normalizedHomeNewFilter = normalizeBooleanInput(is_home_new);
+    if (normalizedHomeNewFilter !== undefined && normalizedHomeNewFilter !== null) {
+      whereConditions.push('p.is_home_new = ?');
+      whereParams.push(normalizedHomeNewFilter);
     }
 
     // Stock status filter
     if (stock_status) {
       whereConditions.push('p.stock_status = ?');
-      queryParams.push(stock_status);
+      whereParams.push(stock_status);
     }
 
     // Search filter
     if (search) {
       whereConditions.push('(p.title_ar LIKE ? OR p.title_en LIKE ? OR p.description_ar LIKE ? OR p.description_en LIKE ?)');
       const searchTerm = `%${search}%`;
-      queryParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
+      whereParams.push(searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
     // Price range filter
     if (min_price) {
       whereConditions.push('COALESCE(p.sale_price, p.base_price) >= ?');
-      queryParams.push(min_price);
+      whereParams.push(min_price);
     }
     if (max_price) {
       whereConditions.push('COALESCE(p.sale_price, p.base_price) <= ?');
-      queryParams.push(max_price);
+      whereParams.push(max_price);
     }
 
     // Branch filter - only show products available in specific branch
     let branchJoin = '';
     if (branch_id) {
-      branchJoin = 'INNER JOIN branch_inventory bi ON p.id = bi.product_id';
-      whereConditions.push('bi.branch_id = ?');
-      queryParams.push(branch_id);
+      branchJoin = `
+        INNER JOIN (
+          SELECT 
+            bi.product_id,
+            bi.branch_id,
+            SUM(bi.stock_quantity) AS branch_stock_quantity,
+            SUM(bi.min_stock_level) AS branch_min_stock_level,
+            SUM(bi.reserved_quantity) AS branch_reserved_quantity,
+            MAX(bi.price_override) AS branch_price_override,
+            MAX(bi.is_available) AS branch_is_available,
+            MAX(b.is_active) AS branch_is_active,
+            CASE
+              WHEN MAX(bi.is_available) = 0 THEN 'unavailable'
+              WHEN SUM(bi.stock_quantity) <= 0 THEN 'out_of_stock'
+              WHEN SUM(bi.stock_quantity) <= SUM(bi.min_stock_level) THEN 'low_stock'
+              ELSE 'in_stock'
+            END AS branch_stock_status
+          FROM branch_inventory bi
+          INNER JOIN branches b ON bi.branch_id = b.id
+          WHERE bi.branch_id = ?
+          GROUP BY bi.product_id, bi.branch_id
+        ) bi ON p.id = bi.product_id
+      `;
+      joinParams.push(branch_id);
+      whereConditions.push('bi.branch_is_active = 1');
+
+      if (branchAvailabilityFilter === 'available') {
+        whereConditions.push('bi.branch_is_available = 1');
+      } else if (branchAvailabilityFilter === 'unavailable') {
+        whereConditions.push('bi.branch_is_available = 0');
+      }
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -96,12 +291,14 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
     const query = `
       SELECT 
         p.id, p.title_ar, p.title_en, p.description_ar, p.description_en,
-        p.base_price, p.sale_price, p.loyalty_points, p.main_image, 
-        p.is_active, p.is_featured, p.stock_status, p.sku, p.sort_order,
+  p.base_price, p.sale_price, p.loyalty_points, p.main_image, 
+  p.is_active, p.is_featured, p.is_home_top, p.is_home_new,
+  p.stock_status, p.sku, p.sort_order,
         p.stock_quantity, p.created_at, p.updated_at,
         c.title_ar as category_title_ar, c.title_en as category_title_en,
-        ${branch_id ? 'bi.price_override, bi.stock_quantity as branch_stock_quantity, CASE WHEN bi.stock_quantity <= 0 THEN "out_of_stock" WHEN bi.stock_quantity <= bi.min_stock_level THEN "low_stock" ELSE "in_stock" END as branch_stock_status,' : ''}
-        ${branch_id ? 'COALESCE(bi.price_override, p.sale_price, p.base_price)' : 'COALESCE(p.sale_price, p.base_price)'} as final_price,
+  ${branch_id ? `bi.branch_price_override, bi.branch_stock_quantity, bi.branch_reserved_quantity, bi.branch_stock_status, bi.branch_is_available, bi.branch_is_active, bi.branch_id,
+        ` : ''}
+        ${branch_id ? 'COALESCE(bi.branch_price_override, p.sale_price, p.base_price)' : 'COALESCE(p.sale_price, p.base_price)'} as final_price,
         ${req.user ? `(SELECT COUNT(*) FROM user_favorites uf WHERE uf.user_id = ${req.user.id} AND uf.product_id = p.id) as is_favorited` : '0 as is_favorited'}
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -110,7 +307,9 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       ORDER BY ${sortField} ${sortOrder}
     `;
 
-    const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
+  const queryParams = [...joinParams, ...whereParams];
+
+  const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
 
     res.json({
       success: true,
@@ -199,8 +398,40 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
       weight = null,
       weight_unit = 'g',
       is_featured = false,
-      stock_status = 'in_stock'
+      is_active = 1,
+      stock_status = 'in_stock',
+      stock_quantity = null,
+      is_home_top = 0,
+      is_home_new = 0
     } = req.body;
+
+    const normalizedIsFeatured = normalizeBooleanInput(is_featured, 0);
+    const normalizedIsActive = normalizeBooleanInput(is_active, 1);
+    const normalizedHomeTop = normalizeBooleanInput(is_home_top, 0);
+    const normalizedHomeNew = normalizeBooleanInput(is_home_new, 0);
+    const stockQuantityResult = normalizeIntegerInput(stock_quantity, { allowNull: true, min: 0 });
+    if (stockQuantityResult.error) {
+      if (req.uploadedImage) {
+        await deleteImage(req.uploadedImage.filename, 'products');
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Stock quantity must be a non-negative integer',
+        message_ar: 'يجب أن تكون كمية المخزون رقمًا صحيحًا غير سالب'
+      });
+    }
+    const normalizedStockQuantity = stockQuantityResult.value;
+    const normalizedStockStatus = normalizeStockStatus(stock_status, normalizedStockQuantity);
+    if (normalizedStockStatus === null) {
+      if (req.uploadedImage) {
+        await deleteImage(req.uploadedImage.filename, 'products');
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid stock status provided',
+        message_ar: 'حالة المخزون المدخلة غير صالحة'
+      });
+    }
 
     // Get uploaded image filename if available, otherwise use URL from form
     let main_image = '';
@@ -301,8 +532,9 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
       INSERT INTO products (
         category_id, title_ar, title_en, description_ar, description_en, 
         slug, sku, base_price, sale_price, loyalty_points, weight, weight_unit,
-        main_image, is_featured, stock_status, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        main_image, is_featured, stock_status, is_active, stock_quantity,
+        is_home_top, is_home_new
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       category_id, 
       title_ar, 
@@ -317,9 +549,12 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
       processedWeight,
       weight_unit,
       main_image, 
-      is_featured ? 1 : 0,
-      stock_status,
-      1  // is_active
+      normalizedIsFeatured ?? 0,
+      normalizedStockStatus,
+      normalizedIsActive ?? 1,
+      normalizedStockQuantity,
+      normalizedHomeTop ?? 0,
+      normalizedHomeNew ?? 0
     ]);
 
     const [newProduct] = await executeQuery(
@@ -369,8 +604,15 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       is_featured,
       is_active,
       stock_status,
-      stock_quantity
+      stock_quantity,
+      is_home_top,
+      is_home_new
     } = req.body;
+
+    const normalizedIsFeatured = normalizeBooleanInput(is_featured);
+    const normalizedIsActive = normalizeBooleanInput(is_active);
+    const normalizedHomeTop = normalizeBooleanInput(is_home_top);
+    const normalizedHomeNew = normalizeBooleanInput(is_home_new);
 
     // Check if product exists and get current image
     const [existingProduct] = await executeQuery(
@@ -475,6 +717,41 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       }
     }
 
+    const stockQuantityProvided = Object.prototype.hasOwnProperty.call(req.body, 'stock_quantity');
+    let normalizedStockQuantityValue;
+    if (stockQuantityProvided) {
+      const stockQuantityResult = normalizeIntegerInput(stock_quantity, { allowNull: true, min: 0 });
+      if (stockQuantityResult.error) {
+        if (req.uploadedImage) {
+          await deleteImage(req.uploadedImage.filename, 'products');
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Stock quantity must be a non-negative integer',
+          message_ar: 'يجب أن تكون كمية المخزون رقمًا صحيحًا غير سالب'
+        });
+      }
+      normalizedStockQuantityValue = stockQuantityResult.value;
+    }
+
+    const stockStatusProvided = Object.prototype.hasOwnProperty.call(req.body, 'stock_status');
+    let normalizedStockStatusValue;
+    if (stockStatusProvided) {
+      normalizedStockStatusValue = normalizeStockStatus(stock_status, normalizedStockQuantityValue);
+      if (normalizedStockStatusValue === null) {
+        if (req.uploadedImage) {
+          await deleteImage(req.uploadedImage.filename, 'products');
+        }
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid stock status provided',
+          message_ar: 'حالة المخزون المدخلة غير صالحة'
+        });
+      }
+    } else if (typeof normalizedStockQuantityValue === 'number') {
+      normalizedStockStatusValue = normalizeStockStatus(undefined, normalizedStockQuantityValue);
+    }
+
     // Get new image - prioritize uploaded file, then URL, then keep existing
     let main_image;
     if (req.uploadedImage) {
@@ -547,21 +824,32 @@ router.put('/:id', authenticate, authorize('admin', 'staff'), validateId, upload
       updateFields.push('main_image = COALESCE(?, main_image)');
       updateValues.push(main_image || null);
     }
-    if (is_featured !== undefined) {
-      updateFields.push('is_featured = COALESCE(?, is_featured)');
-      updateValues.push(is_featured !== undefined ? (is_featured ? 1 : 0) : null);
+    if (normalizedIsFeatured !== undefined) {
+      updateFields.push('is_featured = ?');
+      updateValues.push(normalizedIsFeatured);
     }
-    if (is_active !== undefined) {
-      updateFields.push('is_active = COALESCE(?, is_active)');
-      updateValues.push(is_active !== undefined ? (is_active ? 1 : 0) : null);
+    if (normalizedIsActive !== undefined) {
+      updateFields.push('is_active = ?');
+      updateValues.push(normalizedIsActive);
     }
-    if (stock_status !== undefined) {
-      updateFields.push('stock_status = COALESCE(?, stock_status)');
-      updateValues.push(stock_status || null);
+    if (normalizedHomeTop !== undefined) {
+      updateFields.push('is_home_top = ?');
+      updateValues.push(normalizedHomeTop);
     }
-    if (stock_quantity !== undefined) {
+    if (normalizedHomeNew !== undefined) {
+      updateFields.push('is_home_new = ?');
+      updateValues.push(normalizedHomeNew);
+    }
+    if (stockQuantityProvided) {
       updateFields.push('stock_quantity = COALESCE(?, stock_quantity)');
-      updateValues.push(stock_quantity !== undefined ? parseInt(stock_quantity) : null);
+      updateValues.push(normalizedStockQuantityValue);
+    }
+
+    if (stockStatusProvided || typeof normalizedStockQuantityValue === 'number') {
+      if (normalizedStockStatusValue !== undefined) {
+        updateFields.push('stock_status = ?');
+        updateValues.push(normalizedStockStatusValue);
+      }
     }
 
     // Always update the timestamp
@@ -874,8 +1162,14 @@ router.get('/:id/branches', authenticate, authorize('admin', 'staff'), validateI
         b.title_ar as branch_title_ar, b.title_en as branch_title_en,
         UPPER(LEFT(REPLACE(b.title_en, ' ', ''), 4)) as branch_code,
         b.is_active as branch_is_active,
-        pv.variant_name as variant_title_ar, pv.variant_value as variant_title_en,
-        pv.price_modifier as variant_price,
+        pv.variant_name,
+        pv.variant_value,
+        pv.price_modifier,
+        pv.stock_quantity as variant_stock_quantity,
+        pv.sku as variant_sku,
+        COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
+        COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+        NULL as variant_price,
         (bi.stock_quantity - bi.reserved_quantity) as available_quantity,
         CASE 
           WHEN bi.stock_quantity <= bi.min_stock_level THEN 'low'
@@ -886,7 +1180,7 @@ router.get('/:id/branches', authenticate, authorize('admin', 'staff'), validateI
       INNER JOIN branches b ON bi.branch_id = b.id
       LEFT JOIN product_variants pv ON bi.variant_id = pv.id
       WHERE bi.product_id = ?
-      ORDER BY b.title_en ASC, pv.variant_name ASC, pv.variant_value ASC
+  ORDER BY b.title_en ASC, COALESCE(pv.variant_value, pv.variant_name) ASC
     `, [req.params.id]);
 
     res.json({
@@ -1122,9 +1416,14 @@ router.get('/inventory/low-stock', authenticate, authorize('admin', 'staff'), as
         bi.stock_quantity, bi.min_stock_level, bi.reserved_quantity, bi.price_override,
         p.title_ar as product_title_ar, p.title_en as product_title_en,
         p.sku, p.main_image,
-        b.title_ar as branch_title_ar, b.title_en as branch_title_en,
-        pv.variant_name as variant_title_ar, pv.variant_value as variant_title_en,
-        (bi.stock_quantity - bi.reserved_quantity) as available_quantity
+    b.title_ar as branch_title_ar, b.title_en as branch_title_en,
+    pv.variant_name,
+    pv.variant_value,
+    COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
+    COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+    pv.price_modifier as variant_price_modifier,
+    NULL as variant_price,
+    (bi.stock_quantity - bi.reserved_quantity) as available_quantity
       FROM branch_inventory bi
       INNER JOIN products p ON bi.product_id = p.id
       INNER JOIN branches b ON bi.branch_id = b.id
@@ -1327,6 +1626,8 @@ router.get('/:id/variants', optionalAuth, validateId, async (req, res, next) => 
     const productId = req.params.id;
     const activeOnly = req.query.active_only === 'true';
     const isAdmin = req.user && (req.user.user_type === 'admin' || req.user.user_type === 'staff');
+  const branchIdParam = req.query.branch_id ? parseInt(req.query.branch_id, 10) : null;
+  const includeBranchStock = Number.isInteger(branchIdParam) && branchIdParam > 0;
     
     // First check if product exists
     const productResult = await executeQuery(
@@ -1343,35 +1644,63 @@ router.get('/:id/variants', optionalAuth, validateId, async (req, res, next) => 
     }
     
     // Build query based on user type and filter
-    let whereClause = 'WHERE product_id = ?';
-    const queryParams = [productId];
+    let whereClause = 'WHERE pv.product_id = ?';
+    const queryParams = includeBranchStock ? [branchIdParam, productId] : [productId];
     
     // Non-admin users or when active_only is requested, filter for active variants only
     if (!isAdmin || activeOnly) {
-      whereClause += ' AND is_active = 1';
+      whereClause += ' AND pv.is_active = 1';
     }
-    
+    const availableQuantityExpr = includeBranchStock
+      ? 'COALESCE(bi.stock_quantity - COALESCE(bi.reserved_quantity, 0), pv.stock_quantity)'
+      : 'pv.stock_quantity';
+
+    const stockStatusExpr = includeBranchStock
+      ? `CASE
+          WHEN COALESCE(bi.is_available, 1) = 0 THEN 'unavailable'
+          WHEN ${availableQuantityExpr} <= 0 THEN 'out_of_stock'
+          ELSE 'in_stock'
+        END`
+      : `CASE
+          WHEN ${availableQuantityExpr} <= 0 THEN 'out_of_stock'
+          ELSE 'in_stock'
+        END`;
+
+    const branchJoin = includeBranchStock
+      ? 'LEFT JOIN branch_inventory bi ON bi.variant_id = pv.id AND bi.branch_id = ?'
+      : '';
+
     const variants = await executeQuery(`
       SELECT 
-        id,
-        product_id,
-        variant_name,
-        variant_value,
-        price_modifier,
-        stock_quantity,
-        sku,
-        is_active,
-        created_at,
-        updated_at
-      FROM product_variants 
+        pv.id,
+        pv.product_id,
+        pv.variant_name,
+        pv.variant_value,
+        pv.price_modifier,
+        pv.stock_quantity,
+  ${includeBranchStock ? 'bi.stock_quantity AS branch_stock_quantity,' : 'NULL AS branch_stock_quantity,'}
+  ${includeBranchStock ? '(bi.stock_quantity - COALESCE(bi.reserved_quantity, 0)) AS branch_available_quantity,' : 'NULL AS branch_available_quantity,'}
+  ${includeBranchStock ? 'COALESCE(bi.is_available, 1) AS branch_is_available,' : 'NULL AS branch_is_available,'}
+        ${availableQuantityExpr} AS available_quantity,
+        ${stockStatusExpr} AS stock_status,
+        pv.sku,
+        pv.is_active,
+        pv.created_at,
+        pv.updated_at,
+        COALESCE(pv.variant_name, pv.variant_value) AS title_ar,
+        COALESCE(pv.variant_value, pv.variant_name) AS title_en,
+        NULL AS price
+      FROM product_variants pv
+      ${branchJoin}
       ${whereClause}
-      ORDER BY variant_name, variant_value
+      ORDER BY COALESCE(pv.variant_value, pv.variant_name) ASC
     `, queryParams);
-    
+    const mappedVariants = variants.map(mapVariantResponse);
+
     res.json({
       success: true,
-      data: variants,
-      count: variants.length
+      data: mappedVariants,
+      count: mappedVariants.length
     });
     
   } catch (error) {
@@ -1388,35 +1717,36 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
   try {
     const productId = req.params.id;
     const {
+      title_ar,
+      title_en,
       variant_name,
       variant_value,
+      price,
       price_modifier,
       stock_quantity,
       sku,
       is_active
     } = req.body;
-    
-    // Sanitize and validate parameters - convert undefined to null for database compatibility
-    const sanitizedPriceModifier = price_modifier !== undefined ? parseFloat(price_modifier) || 0 : 0;
-    const sanitizedStockQuantity = stock_quantity !== undefined ? parseInt(stock_quantity) || 0 : 0;
+
+    const sanitizeNumber = (value, fallback = null) => {
+      if (value === undefined || value === null || value === '') {
+        return fallback;
+      }
+      const parsed = parseFloat(value);
+      return Number.isNaN(parsed) ? fallback : parsed;
+    };
+
+    const sanitizedStockQuantity = stock_quantity !== undefined && stock_quantity !== null
+      ? (parseInt(stock_quantity) || 0)
+      : 0;
     const sanitizedSku = sku !== undefined && sku !== '' ? sku : null;
-    const sanitizedIsActive = is_active !== undefined ? (is_active ? 1 : 0) : 1; // Default to active
-    
-    // Validate required fields
-    if (!variant_name || !variant_value) {
-      return res.status(400).json({
-        success: false,
-        message: 'Variant name and value are required',
-        message_ar: 'اسم وقيمة المتغير مطلوبان'
-      });
-    }
-    
-    // Check if product exists
+    const sanitizedIsActive = is_active !== undefined ? (is_active ? 1 : 0) : 1;
+
     const productResult = await executeQuery(
-      'SELECT id FROM products WHERE id = ?',
+      'SELECT id, base_price, sale_price FROM products WHERE id = ?',
       [productId]
     );
-    
+
     if (productResult.length === 0) {
       return res.status(404).json({
         success: false,
@@ -1424,13 +1754,41 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
         message_ar: 'المنتج غير موجود'
       });
     }
-    
-    // Check if this variant combination already exists
+
+    const product = productResult[0];
+    const parsePriceValue = (value) => sanitizeNumber(value, 0) || 0;
+    const basePrice = parsePriceValue(product.sale_price) > 0
+      ? parsePriceValue(product.sale_price)
+      : parsePriceValue(product.base_price);
+
+  const finalVariantName = (variant_name || title_ar || title_en || variant_value || '').toString().trim();
+  const finalVariantValue = (variant_value || title_en || title_ar || variant_name || '').toString().trim();
+  const normalizedVariantName = finalVariantName || null;
+  const normalizedVariantValue = finalVariantValue || null;
+
+    if (!finalVariantName && !finalVariantValue) {
+      return res.status(400).json({
+        success: false,
+        message: 'A variant label is required',
+        message_ar: 'اسم المتغير مطلوب'
+      });
+    }
+
+    let finalPriceModifier = 0;
+    const providedModifier = sanitizeNumber(price_modifier, null);
+    const providedPrice = sanitizeNumber(price, null);
+
+    if (providedModifier !== null) {
+      finalPriceModifier = providedModifier;
+    } else if (providedPrice !== null) {
+      finalPriceModifier = providedPrice - basePrice;
+    }
+
     const existingVariant = await executeQuery(
-      'SELECT id FROM product_variants WHERE product_id = ? AND variant_name = ? AND variant_value = ?',
-      [productId, variant_name, variant_value]
+      'SELECT id FROM product_variants WHERE product_id = ? AND ((variant_name IS NULL AND ? IS NULL) OR variant_name = ?) AND ((variant_value IS NULL AND ? IS NULL) OR variant_value = ?)',
+      [productId, normalizedVariantName, normalizedVariantName, normalizedVariantValue, normalizedVariantValue]
     );
-    
+
     if (existingVariant.length > 0) {
       return res.status(400).json({
         success: false,
@@ -1438,27 +1796,25 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
         message_ar: 'تركيبة المتغير هذه موجودة بالفعل'
       });
     }
-    
-    // Insert new variant
+
     const result = await executeQuery(`
       INSERT INTO product_variants 
       (product_id, variant_name, variant_value, price_modifier, stock_quantity, sku, is_active)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [productId, variant_name, variant_value, sanitizedPriceModifier, sanitizedStockQuantity, sanitizedSku, sanitizedIsActive]);
-    
-    // Get the created variant
+  `, [productId, normalizedVariantName, normalizedVariantValue, finalPriceModifier, sanitizedStockQuantity, sanitizedSku, sanitizedIsActive]);
+
     const newVariant = await executeQuery(
       'SELECT * FROM product_variants WHERE id = ?',
       [result.insertId]
     );
-    
+
     res.status(201).json({
       success: true,
       message: 'Product variant created successfully',
       message_ar: 'تم إنشاء متغير المنتج بنجاح',
-      data: newVariant[0]
+      data: mapVariantResponse(newVariant[0])
     });
-    
+
   } catch (error) {
     next(error);
   }
@@ -1474,15 +1830,25 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
     const productId = req.params.id;
     const variantId = req.params.variantId;
     const {
+      title_ar,
+      title_en,
       variant_name,
       variant_value,
+      price,
       price_modifier,
       stock_quantity,
       sku,
       is_active
     } = req.body;
+
+    const sanitizeNumber = (value, fallback = null) => {
+      if (value === undefined || value === null || value === '') {
+        return fallback;
+      }
+      const parsed = parseFloat(value);
+      return Number.isNaN(parsed) ? fallback : parsed;
+    };
     
-    // Check if variant exists for this product
     const variantResult = await executeQuery(
       'SELECT id FROM product_variants WHERE id = ? AND product_id = ?',
       [variantId, productId]
@@ -1496,35 +1862,68 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
       });
     }
     
-    // Build dynamic update query
     let updateFields = [];
     let updateValues = [];
-    
-    if (variant_name !== undefined) {
+
+    if (variant_name !== undefined || title_ar !== undefined) {
+      const updatedName = (variant_name || title_ar || '').toString().trim();
       updateFields.push('variant_name = ?');
-      updateValues.push(variant_name);
+      updateValues.push(updatedName || null);
     }
-    if (variant_value !== undefined) {
+
+    if (variant_value !== undefined || title_en !== undefined) {
+      const updatedValue = (variant_value || title_en || '').toString().trim();
       updateFields.push('variant_value = ?');
-      updateValues.push(variant_value);
+      updateValues.push(updatedValue || null);
     }
+
     if (price_modifier !== undefined) {
+      const modifier = sanitizeNumber(price_modifier, 0);
       updateFields.push('price_modifier = ?');
-      updateValues.push(price_modifier !== null ? parseFloat(price_modifier) || 0 : 0);
+      updateValues.push(modifier);
+    } else if (price !== undefined) {
+      const providedPrice = sanitizeNumber(price, null);
+      if (providedPrice === null) {
+        return res.status(400).json({
+          success: false,
+          message: 'A valid price is required for the variant',
+          message_ar: 'مطلوب تحديد سعر صالح للمتغير'
+        });
+      }
+
+      const productData = await executeQuery(
+        'SELECT base_price, sale_price FROM products WHERE id = ?',
+        [productId]
+      );
+
+      const basePriceValue = (() => {
+        if (productData.length === 0) {
+          return 0;
+        }
+        const sale = sanitizeNumber(productData[0].sale_price, 0);
+        const base = sanitizeNumber(productData[0].base_price, 0);
+        return sale && sale > 0 ? sale : base;
+      })();
+
+      updateFields.push('price_modifier = ?');
+      updateValues.push(providedPrice - basePriceValue);
     }
+
     if (stock_quantity !== undefined) {
       updateFields.push('stock_quantity = ?');
-      updateValues.push(stock_quantity !== null ? parseInt(stock_quantity) || 0 : 0);
+      updateValues.push(stock_quantity !== null ? (parseInt(stock_quantity) || 0) : 0);
     }
+
     if (sku !== undefined) {
       updateFields.push('sku = ?');
       updateValues.push(sku !== null && sku !== '' ? sku : null);
     }
+
     if (is_active !== undefined) {
       updateFields.push('is_active = ?');
-      updateValues.push(is_active);
+      updateValues.push(is_active ? 1 : 0);
     }
-    
+
     if (updateFields.length === 0) {
       return res.status(400).json({
         success: false,
@@ -1532,18 +1931,15 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
         message_ar: 'لا توجد حقول للتحديث'
       });
     }
-    
-    // Add updated_at
+
     updateFields.push('updated_at = NOW()');
     updateValues.push(variantId);
-    
-    // Update variant
+
     await executeQuery(
       `UPDATE product_variants SET ${updateFields.join(', ')} WHERE id = ?`,
       updateValues
     );
     
-    // Get updated variant
     const updatedVariant = await executeQuery(
       'SELECT * FROM product_variants WHERE id = ?',
       [variantId]
@@ -1553,7 +1949,7 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
       success: true,
       message: 'Product variant updated successfully',
       message_ar: 'تم تحديث متغير المنتج بنجاح',
-      data: updatedVariant[0]
+      data: mapVariantResponse(updatedVariant[0])
     });
     
   } catch (error) {
@@ -1645,7 +2041,7 @@ router.put('/:id/variants/:variantId/toggle-status', authenticate, authorize('ad
       success: true,
       message: `Product variant ${newStatus ? 'activated' : 'deactivated'} successfully`,
       message_ar: `تم ${newStatus ? 'تفعيل' : 'إلغاء تفعيل'} متغير المنتج بنجاح`,
-      data: updatedVariant[0]
+      data: mapVariantResponse(updatedVariant[0])
     });
     
   } catch (error) {
@@ -1679,7 +2075,7 @@ router.get('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
     
     res.json({
       success: true,
-      data: variantResult[0]
+      data: mapVariantResponse(variantResult[0])
     });
     
   } catch (error) {
@@ -1785,31 +2181,23 @@ router.put('/:id/stock', authenticate, authorize('admin', 'staff'), validateId, 
     const productId = req.params.id;
     const { stock_quantity } = req.body;
 
-    // Validate stock_quantity
-    if (stock_quantity === undefined || stock_quantity === null) {
-      return res.status(400).json({
-        success: false,
-        message: 'Stock quantity is required',
-        message_ar: 'كمية المخزون مطلوبة'
-      });
-    }
-
-    const stockQuantityNum = parseInt(stock_quantity);
-    if (isNaN(stockQuantityNum) || stockQuantityNum < 0) {
+    const stockQuantityResult = normalizeIntegerInput(stock_quantity, { allowNull: false, min: 0 });
+    if (stockQuantityResult.error) {
       return res.status(400).json({
         success: false,
         message: 'Stock quantity must be a non-negative number',
         message_ar: 'كمية المخزون يجب أن تكون رقماً غير سالب'
       });
     }
+    const stockQuantityNum = stockQuantityResult.value;
 
     // Check if product exists
-    const productExists = await executeQuery(
-      'SELECT id FROM products WHERE id = ?',
+    const productRows = await executeQuery(
+      'SELECT id, stock_status FROM products WHERE id = ?',
       [productId]
     );
 
-    if (!productExists || productExists.length === 0) {
+    if (!productRows || productRows.length === 0) {
       return res.status(404).json({
         success: false,
         message: 'Product not found',
@@ -1817,10 +2205,30 @@ router.put('/:id/stock', authenticate, authorize('admin', 'staff'), validateId, 
       });
     }
 
+    const product = productRows[0];
+
+    let nextStockStatus = product.stock_status;
+    if (stockQuantityNum === 0 && product.stock_status !== 'out_of_stock') {
+      nextStockStatus = 'out_of_stock';
+    } else if (stockQuantityNum > 0 && product.stock_status === 'out_of_stock') {
+      nextStockStatus = 'in_stock';
+    }
+
+    const updateFields = ['stock_quantity = ?'];
+    const updateParams = [stockQuantityNum];
+
+    if (nextStockStatus !== product.stock_status) {
+      updateFields.push('stock_status = ?');
+      updateParams.push(nextStockStatus);
+    }
+
+    updateFields.push('updated_at = CURRENT_TIMESTAMP');
+    updateParams.push(productId);
+
     // Update product stock quantity
     const updateResult = await executeQuery(
-      'UPDATE products SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [stockQuantityNum, productId]
+      `UPDATE products SET ${updateFields.join(', ')} WHERE id = ?`,
+      updateParams
     );
 
     if (updateResult.affectedRows === 0) {

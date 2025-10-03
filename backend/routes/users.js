@@ -121,6 +121,34 @@ const validatePassword = (req, res, next) => {
   next();
 };
 
+const validateAdminPasswordReset = (req, res, next) => {
+  const { new_password, confirm_password } = req.body;
+  const errors = [];
+
+  if (!new_password || new_password.trim().length < 8) {
+    errors.push('New password must be at least 8 characters');
+  }
+
+  if (new_password && !/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(new_password)) {
+    errors.push('Password must contain at least one lowercase letter, one uppercase letter, and one number');
+  }
+
+  if (confirm_password !== undefined && new_password !== confirm_password) {
+    errors.push('Password confirmation does not match');
+  }
+
+  if (errors.length > 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Password validation failed',
+      message_ar: 'فشل في التحقق من كلمة المرور',
+      errors
+    });
+  }
+
+  next();
+};
+
 /**
  * Validate admin password change (doesn't require current password)
  */
@@ -1068,6 +1096,42 @@ router.get('/:id/point-transactions', authenticate, validateId, validatePaginati
       pagination: result.pagination
     });
 
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PUT /api/users/:id/password
+ * @desc    Reset user password without current password (admin/staff only)
+ * @access  Private (Admin/Staff)
+ */
+router.put('/:id/password', authenticate, validateId, authorize('admin'), validateAdminPasswordReset, async (req, res, next) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const { new_password } = req.body;
+
+    const [targetUser] = await executeQuery('SELECT id, user_type FROM users WHERE id = ?', [userId]);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+        message_ar: 'المستخدم غير موجود'
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(new_password, 12);
+
+    await executeQuery(
+      'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?',
+      [hashedPassword, userId]
+    );
+
+    res.json({
+      success: true,
+      message: 'Password reset successfully',
+      message_ar: 'تم إعادة تعيين كلمة المرور بنجاح'
+    });
   } catch (error) {
     next(error);
   }

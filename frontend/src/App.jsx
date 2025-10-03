@@ -13,7 +13,7 @@ import Categories from './pages/Categories'
 import Orders from './pages/Orders'
 import Profile from './pages/Profile'
 import Customers from './pages/Customers'
-import PromoCodes from './pages/PromoCodes'
+// import PromoCodes from './pages/PromoCodes'
 import Notifications from './pages/Notifications'
 import Support from './pages/Support'
 import InvoiceManagement from './pages/InvoiceManagement'
@@ -23,7 +23,7 @@ import ShippingZoneManagement from './pages/ShippingZoneManagement'
 import NotificationTestPage from './pages/NotificationTestPage'
 import Branches from './pages/Branches'
 import URLGeneratorDemo from './pages/URLGeneratorDemo'
-import OffersManagement from './pages/OffersManagement'
+// import OffersManagement from './pages/OffersManagement'
 import WebClientConfiguration from './pages/WebClientConfiguration'
 import LocationManagement from './pages/LocationManagement'
 import PaymentReturn from './pages/PaymentReturn'
@@ -33,6 +33,42 @@ import MPGSCheckout from './pages/MPGSCheckout'
 // Placeholder pages
 const Inventory = () => <div>Inventory Page - Coming Soon</div>
 const Reports = () => <div>Reports Page - Coming Soon</div>
+
+const PromoCodes = () => (
+  <div style={{ 
+    display: 'flex', 
+    flexDirection: 'column',
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    height: '70vh',
+    textAlign: 'center'
+  }}>
+    <h1 style={{ fontSize: '48px', marginBottom: '16px' }}>🎫</h1>
+    <h2 style={{ fontSize: '24px', marginBottom: '8px' }}>Promo Codes</h2>
+    <p style={{ fontSize: '16px', color: '#999' }}>Coming Soon</p>
+    <p style={{ fontSize: '14px', color: '#666', maxWidth: '400px', marginTop: '16px' }}>
+      We're building a powerful promo code management system. Stay tuned!
+    </p>
+  </div>
+)
+
+const OffersManagement = () => (
+  <div style={{ 
+    display: 'flex', 
+    flexDirection: 'column',
+    alignItems: 'center', 
+    justifyContent: 'center', 
+    height: '70vh',
+    textAlign: 'center'
+  }}>
+    <h1 style={{ fontSize: '48px', marginBottom: '16px' }}>🎁</h1>
+    <h2 style={{ fontSize: '24px', marginBottom: '8px' }}>Offers & Promotions</h2>
+    <p style={{ fontSize: '16px', color: '#999' }}>Coming Soon</p>
+    <p style={{ fontSize: '14px', color: '#666', maxWidth: '400px', marginTop: '16px' }}>
+      We're working on bringing you an advanced offers and promotions management system. Stay tuned!
+    </p>
+  </div>
+)
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
