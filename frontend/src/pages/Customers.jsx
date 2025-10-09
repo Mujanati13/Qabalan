@@ -161,8 +161,8 @@ const Customers = () => {
   // Filtering and searching state
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState({
-    is_active: 'all',
-    is_verified: 'all'
+    is_active: [],
+    is_verified: []
   });
   const [pagination, setPagination] = useState({
     current: 1,
@@ -198,8 +198,12 @@ const Customers = () => {
         limit: 100, // Use maximum allowed limit
         search: searchTerm,
         user_type: 'customer', // Always filter for customers only
-        is_active: filters.is_active !== 'all' ? filters.is_active : undefined,
-        is_verified: filters.is_verified !== 'all' ? filters.is_verified : undefined,
+        is_active: Array.isArray(filters.is_active) && filters.is_active.length > 0 
+          ? filters.is_active.join(',') 
+          : undefined,
+        is_verified: Array.isArray(filters.is_verified) && filters.is_verified.length > 0 
+          ? filters.is_verified.join(',') 
+          : undefined,
         ...params
       });
       
@@ -1167,40 +1171,46 @@ const Customers = () => {
           </Col>
           <Col xs={12} sm={8} lg={5}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder={t('customers.filterByStatus')}
               value={filters.is_active}
               onChange={(value) => handleFilterChange('is_active', value)}
+              allowClear
+              maxTagCount="responsive"
             >
-              <Option value="all">{t('customers.allStatuses')}</Option>
               <Option value="true">{t('customers.showActive')}</Option>
               <Option value="false">{t('customers.showInactive')}</Option>
             </Select>
           </Col>
           <Col xs={12} sm={8} lg={5}>
             <Select
+              mode="multiple"
               style={{ width: '100%' }}
               placeholder={t('customers.isVerified')}
               value={filters.is_verified}
               onChange={(value) => handleFilterChange('is_verified', value)}
+              allowClear
+              maxTagCount="responsive"
             >
-              <Option value="all">{t('customers.allStatuses')}</Option>
               <Option value="true">{t('customers.showVerified')}</Option>
               <Option value="false">{t('customers.showUnverified')}</Option>
             </Select>
           </Col>
-          <Col xs={24} lg={4}>
+          <Col xs={12} lg={3}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={() => setCreateVisible(true)}
+              style={{ width: '100%' }}
+            >
+              {t('customers.create')}
+            </Button>
+          </Col>
+          <Col xs={12} lg={3}>
             <Dropdown
               overlay={
                 <Menu>
-                  <Menu.Item 
-                    key="create"
-                    icon={<PlusOutlined />}
-                    onClick={() => setCreateVisible(true)}
-                  >
-                    {t('customers.create')}
-                  </Menu.Item>
-                  <Menu.Divider />
                   <Menu.Item 
                     key="clear"
                     icon={<ClearOutlined />}
@@ -1214,7 +1224,6 @@ const Customers = () => {
               placement="bottomRight"
             >
               <Button 
-                type="primary" 
                 icon={<MoreOutlined />}
                 style={{ width: '100%' }}
               >

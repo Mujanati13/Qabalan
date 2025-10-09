@@ -1,0 +1,122 @@
+.toast-container {
+  position: fixed;
+  top: 100px;
+  right: 20px;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast {
+  background: linear-gradient(135deg, #16A2A3 0%, #128e8f 100%);
+  color: white;
+  padding: 16px 24px;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(22, 162, 163, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 300px;
+  max-width: 400px;
+  pointer-events: auto;
+  animation: slideIn 0.3s ease-out, fadeOut 0.3s ease-in 1.7s forwards;
+  transform-origin: right center;
+}
+
+.toast-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  animation: scaleIn 0.4s ease-out;
+}
+
+.toast-content {
+  flex: 1;
+}
+
+.toast-title {
+  font-weight: 600;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.toast-message {
+  font-size: 14px;
+  opacity: 0.95;
+  line-height: 1.4;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(20px) scale(0.95);
+  }
+}
+
+@keyframes scaleIn {
+  0% {
+    transform: scale(0);
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Success variant */
+.toast.success {
+  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  box-shadow: 0 8px 24px rgba(76, 175, 80, 0.3);
+}
+
+/* Error variant */
+.toast.error {
+  background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+  box-shadow: 0 8px 24px rgba(244, 67, 54, 0.3);
+}
+
+/* Info variant */
+.toast.info {
+  background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+  box-shadow: 0 8px 24px rgba(33, 150, 243, 0.3);
+}
+
+/* Warning variant */
+.toast.warning {
+  background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+  box-shadow: 0 8px 24px rgba(255, 152, 0, 0.3);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+  .toast-container {
+    top: 80px;
+    right: 10px;
+    left: 10px;
+    align-items: center;
+  }
+
+  .toast {
+    min-width: auto;
+    width: 100%;
+    max-width: calc(100vw - 20px);
+  }
+}

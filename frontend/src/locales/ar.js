@@ -306,6 +306,17 @@ export const ar = {
     variantName: 'نوع المتغير',
     variantValue: 'قيمة المتغير',
     priceModifier: 'تعديل السعر',
+  priceBehavior: 'سلوك السعر',
+  priceBehaviorHelp: 'حدد ما إذا كان هذا الخيار يستبدل السعر الأساسي أو يُضاف إليه.',
+  priceBehaviorOverrideLabel: 'يستبدل السعر الأساسي',
+  priceBehaviorAddLabel: 'يُضاف إلى السعر الأساسي',
+  priceBehaviorOverrideShort: 'استبدال',
+  priceBehaviorAddShort: 'إضافة',
+  overridePriority: 'أولوية الاستبدال',
+  overridePriorityHelp: 'الأرقام الأقل تعني أولوية أعلى عند وجود أكثر من خيار استبدال.',
+  overridePriorityPlaceholder: 'مثال: 0',
+  notApplicableShort: 'غير متاح',
+  noPriority: 'غير محدد',
     variantSku: 'رمز المتغير',
     variantNameRequired: 'نوع المتغير مطلوب',
     variantValueRequired: 'قيمة المتغير مطلوبة',
@@ -856,6 +867,14 @@ export const ar = {
     order_details: 'تفاصيل الطلب',
     
     // Item Management
+    item: 'عنصر',
+    incomplete_item: 'غير مكتمل',
+    product: 'المنتج',
+    select_product: 'اختر المنتج',
+    variant: 'المتغير',
+    select_variant: 'اختر المتغير (اختياري)',
+    quantity: 'الكمية',
+    unit_price: 'سعر الوحدة',
     add_item: 'إضافة عنصر',
     remove_item: 'إزالة العنصر',
     duplicate_item: 'تكرار العنصر',
@@ -1164,6 +1183,18 @@ export const ar = {
     detailsPlaceholder: 'معلم مرجعي، تعليمات خاصة، إلخ.',
     details: 'تفاصيل إضافية',
     deliveryFee: 'رسوم التوصيل',
+    
+    // GPS Coordinates
+    gpsCoordinates: 'إحداثيات GPS',
+    latitude: 'خط العرض',
+    longitude: 'خط الطول',
+    latitudeTooltip: 'إحداثيات خط العرض (-90 إلى 90). يمكن الحصول عليها من الخريطة أو إدخالها يدويًا.',
+    longitudeTooltip: 'إحداثيات خط الطول (-180 إلى 180). يمكن الحصول عليها من الخريطة أو إدخالها يدويًا.',
+    invalidLatitude: 'خط العرض غير صحيح (-90 إلى 90)',
+    invalidLongitude: 'خط الطول غير صحيح (-180 إلى 180)',
+    coordinatesSet: 'تم تعيين الإحداثيات',
+    coordinatesHelp: 'استخدم علامة تبويب الخريطة لاختيار الإحداثيات تلقائيًا، أو أدخلها يدويًا هنا (مثلاً من خرائط جوجل)',
+    locationDataRequired: 'مطلوب نوع واحد على الأقل من بيانات الموقع (مدينة/منطقة/شارع، إحداثيات، أو تفاصيل العنوان)',
     
     // Orders
     orderHistory: 'تاريخ الطلبات',
@@ -1784,6 +1815,7 @@ export const ar = {
     selectLocationFirst: 'اختر الموقع على الخريطة أولاً',
     selectLocationForDeliveryFee: 'اختر الموقع على الخريطة لحساب رسوم التوصيل بدقة',
     manualEntryNote: 'يمكنك الاستمرار في إدخال معلومات العنوان يدوياً في تبويب تفاصيل العنوان.',
+    manualCoordinatesInfo: 'يمكنك استخدام علامة تبويب الخريطة لاختيار موقع، أو إدخال إحداثيات خط العرض والطول يدويًا أدناه إذا كانت خدمات الخرائط غير متاحة.',
     
     // Search functionality
     searchLocation: 'البحث عن موقع',

@@ -169,6 +169,21 @@ const EnhancedAddressForm = ({
         </div>
       )}
 
+      {/* Info message about manual coordinate entry */}
+      {!autoFilledAddress && (
+        <div style={{ 
+          marginBottom: 16, 
+          padding: 12, 
+          backgroundColor: '#e6f7ff', 
+          border: '1px solid #91d5ff',
+          borderRadius: 6 
+        }}>
+          <div style={{ fontSize: '13px', color: '#0050b3' }}>
+            💡 <strong>Tip:</strong> {t ? t('map.manualCoordinatesInfo') : 'You can use the Map tab to select a location, or manually enter latitude and longitude coordinates below if map services are unavailable.'}
+          </div>
+        </div>
+      )}
+
       <Form.Item
         label={t ? t('customers.addressName') : 'Address Name'}
         name="name"
@@ -180,13 +195,97 @@ const EnhancedAddressForm = ({
         <Input placeholder={t ? t('customers.addressName') : 'e.g., Home, Office'} />
       </Form.Item>
 
-      {/* Coordinates (hidden but required for validation) */}
-      <Form.Item name="latitude" hidden>
-        <Input />
+      <Form.Item
+        label={t ? t('customers.phone') : 'Phone Number'}
+        name="phone"
+        rules={[
+          { required: true, message: t ? t('customers.phone_required') : 'Phone number is required' }
+        ]}
+      >
+        <Input placeholder={t ? t('customers.phone_placeholder') : 'e.g., 0791234567'} />
       </Form.Item>
-      <Form.Item name="longitude" hidden>
-        <Input />
-      </Form.Item>
+
+      {/* Coordinates - Now visible and editable */}
+      <div style={{ 
+        marginBottom: 16, 
+        padding: 16, 
+        backgroundColor: '#fafafa', 
+        border: '1px solid #d9d9d9',
+        borderRadius: 6 
+      }}>
+        <div style={{ marginBottom: 12, fontWeight: 500, color: '#262626' }}>
+          <EnvironmentOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+          {t ? t('customers.gpsCoordinates') : 'GPS Coordinates'}
+          {selectedLocation && selectedLocation.lat && selectedLocation.lng && (
+            <span style={{ marginLeft: 8, fontSize: '12px', color: '#52c41a' }}>
+              ✓ {t ? t('customers.coordinatesSet') : 'Coordinates set'}
+            </span>
+          )}
+        </div>
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item 
+              label={t ? t('customers.latitude') : 'Latitude'}
+              name="latitude"
+              rules={[
+                { 
+                  pattern: /^-?([0-8]?[0-9]|90)(\.\d+)?$/, 
+                  message: t ? t('customers.invalidLatitude') : 'Invalid latitude (-90 to 90)' 
+                }
+              ]}
+              tooltip={t ? t('customers.latitudeTooltip') : 'Latitude coordinate (-90 to 90). Can be obtained from map or entered manually.'}
+            >
+              <Input 
+                placeholder="e.g., 31.9539" 
+                type="number"
+                step="0.000001"
+                prefix={<span style={{ color: '#999', fontSize: '12px' }}>Lat:</span>}
+                onChange={(e) => {
+                  const lat = parseFloat(e.target.value);
+                  if (!isNaN(lat)) {
+                    const lng = form.getFieldValue('longitude');
+                    if (lng) {
+                      setSelectedLocation({ lat, lng: parseFloat(lng) });
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item 
+              label={t ? t('customers.longitude') : 'Longitude'}
+              name="longitude"
+              rules={[
+                { 
+                  pattern: /^-?((1[0-7][0-9])|([0-9]?[0-9]))(\.\d+)?$/, 
+                  message: t ? t('customers.invalidLongitude') : 'Invalid longitude (-180 to 180)' 
+                }
+              ]}
+              tooltip={t ? t('customers.longitudeTooltip') : 'Longitude coordinate (-180 to 180). Can be obtained from map or entered manually.'}
+            >
+              <Input 
+                placeholder="e.g., 35.9106" 
+                type="number"
+                step="0.000001"
+                prefix={<span style={{ color: '#999', fontSize: '12px' }}>Lng:</span>}
+                onChange={(e) => {
+                  const lng = parseFloat(e.target.value);
+                  if (!isNaN(lng)) {
+                    const lat = form.getFieldValue('latitude');
+                    if (lat) {
+                      setSelectedLocation({ lat: parseFloat(lat), lng });
+                    }
+                  }
+                }}
+              />
+            </Form.Item>
+          </Col>
+        </Row>
+        <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: -8 }}>
+          💡 {t ? t('customers.coordinatesHelp') : 'Use the Map tab to auto-select coordinates, or enter them manually here (e.g., from Google Maps)'}
+        </div>
+      </div>
 
       <Row gutter={16}>
         <Col span={8}>

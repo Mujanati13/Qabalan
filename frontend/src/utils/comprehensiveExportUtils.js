@@ -414,7 +414,7 @@ export const exportCustomersToExcel = async (customers, options = {}) => {
     const customersData = customers.map(customer => {
       const registrationDate = customer.created_at ? new Date(customer.created_at) : null;
       const lastLogin = customer.last_login_at ? new Date(customer.last_login_at) : null;
-      const dateOfBirth = customer.date_of_birth ? new Date(customer.date_of_birth) : null;
+      const dateOfBirth = customer.birth_date ? new Date(customer.birth_date) : null;
 
       // Calculate order statistics
       const totalOrders = customer.total_orders || customer.orders_count || 0;

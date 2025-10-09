@@ -31,6 +31,13 @@ async function ensurePaymentSchema() {
         console.log('[SCHEMA] Adding orders.payment_success_indicator column');
         await executeQuery(`ALTER TABLE orders ADD COLUMN payment_success_indicator VARCHAR(64) NULL AFTER payment_session_id`);
       }
+      
+      // Check for payment_transaction_id column
+      const checkTransactionCol = await executeQuery(`SELECT COUNT(*) AS cnt FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name='orders' AND column_name='payment_transaction_id'`);
+      if (!checkTransactionCol[0].cnt) {
+        console.log('[SCHEMA] Adding orders.payment_transaction_id column');
+        await executeQuery(`ALTER TABLE orders ADD COLUMN payment_transaction_id VARCHAR(128) NULL AFTER payment_success_indicator`);
+      }
       // Check for index on payment_session_id
       const idxSession = await executeQuery(`SHOW INDEX FROM orders WHERE Key_name='idx_orders_payment_session'`);
       if (!idxSession.length) {

@@ -60,7 +60,7 @@ router.get('/', validatePagination, async (req, res, next) => {
         c.created_at, c.updated_at,
         parent.title_ar as parent_title_ar, parent.title_en as parent_title_en,
         f.title_ar as flavour_title_ar, f.title_en as flavour_title_en,
-        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1) as products_count
+        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
       FROM categories c
       LEFT JOIN categories parent ON c.parent_id = parent.id
       LEFT JOIN flavours f ON c.flavour_id = f.id
@@ -109,7 +109,7 @@ router.get('/tree', async (req, res, next) => {
         c.banner_image, c.banner_mobile, c.sort_order, c.is_active,
         c.created_at, c.updated_at,
         f.title_ar as flavour_title_ar, f.title_en as flavour_title_en,
-        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1) as products_count
+        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
       FROM categories c
       LEFT JOIN flavours f ON c.flavour_id = f.id
       ${whereClause}
@@ -162,7 +162,7 @@ router.get('/:id', validateId, async (req, res, next) => {
         c.*, 
         parent.title_ar as parent_title_ar, parent.title_en as parent_title_en,
         f.title_ar as flavour_title_ar, f.title_en as flavour_title_en,
-        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1) as products_count
+        (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id) as products_count
       FROM categories c
       LEFT JOIN categories parent ON c.parent_id = parent.id
       LEFT JOIN flavours f ON c.flavour_id = f.id
@@ -181,7 +181,7 @@ router.get('/:id', validateId, async (req, res, next) => {
     const subcategories = await executeQuery(`
       SELECT 
         id, title_ar, title_en, slug, image, sort_order, is_active,
-        (SELECT COUNT(*) FROM products p WHERE p.category_id = categories.id AND p.is_active = 1) as products_count
+        (SELECT COUNT(*) FROM products p WHERE p.category_id = categories.id) as products_count
       FROM categories 
       WHERE parent_id = ? AND is_active = 1
       ORDER BY sort_order ASC

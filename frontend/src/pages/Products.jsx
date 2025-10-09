@@ -196,9 +196,9 @@ const Products = () => {
   const [viewingProduct, setViewingProduct] = useState(null);
   const [form] = Form.useForm();
   const [searchText, setSearchText] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState([]);
   const [selectedDepartment, setSelectedDepartment] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // "all", "active", "inactive"
+  const [statusFilter, setStatusFilter] = useState([]); // Array for multi-select: ["active", "inactive"]
   const [switchLoading, setSwitchLoading] = useState({});
   
   // Bulk selection states
@@ -217,6 +217,25 @@ const Products = () => {
   const [editingVariant, setEditingVariant] = useState(null);
   const [isEditVariantModalVisible, setIsEditVariantModalVisible] = useState(false);
   const [editVariantForm] = Form.useForm();
+
+  const getPriceBehaviorLabel = (behavior) => {
+    if (behavior === 'override') {
+      return translatedT('products.priceBehaviorOverrideLabel');
+    }
+    return translatedT('products.priceBehaviorAddLabel');
+  };
+
+  const PriceBehaviorToggle = ({ value = 'add', onChange }) => {
+    const checked = value === 'override';
+    return (
+      <Switch
+        checked={checked}
+        onChange={(checkedValue) => onChange?.(checkedValue ? 'override' : 'add')}
+        checkedChildren={translatedT('products.priceBehaviorOverrideShort')}
+        unCheckedChildren={translatedT('products.priceBehaviorAddShort')}
+      />
+    );
+  };
 
   // Branch-related state
   const [branches, setBranches] = useState([]);
@@ -801,18 +820,18 @@ const Products = () => {
     try {
       const currentPage = pageOverride ?? paginationState.current;
       const currentPageSize = pageSizeOverride ?? paginationState.pageSize;
-      const statusParam =
-        statusFilter === "all"
-          ? undefined
-          : statusFilter === "active"
-          ? "active"
-          : "inactive";
+      // Handle multi-select status filter
+      const statusParam = Array.isArray(statusFilter) && statusFilter.length > 0 
+        ? statusFilter.join(',') 
+        : undefined;
 
       const params = {
         search: searchText || undefined,
-        category_id: selectedCategory || undefined,
+        category_id: Array.isArray(selectedCategory) && selectedCategory.length > 0 
+          ? selectedCategory.join(',') 
+          : undefined,
         department_id: selectedDepartment || undefined,
-        include_inactive: statusFilter !== "active",
+        include_inactive: !statusFilter || statusFilter.length === 0 || statusFilter.includes("inactive"),
         status: statusParam,
         branch_id: selectedBranchFilter || undefined,
         branch_availability: selectedBranchFilter ? branchAvailabilityFilter : undefined,
@@ -1110,16 +1129,34 @@ const Products = () => {
     if (!hasSelected) return;
     
     try {
-      message.loading('Preparing comprehensive products export...', 0);
+      message.loading('Preparing comprehensive products export with variants and branches...', 0);
       
       const selectedProducts = products.filter(product => selectedRowKeys.includes(product.id));
       
+      // Fetch complete product details including variants and branches
+      const productsWithDetails = await Promise.all(
+        selectedProducts.map(async (product) => {
+          try {
+            const detailResponse = await productsService.getProduct(product.id);
+            return {
+              ...product,
+              ...detailResponse.data,
+              variants: detailResponse.data?.variants || [],
+              branch_stock: detailResponse.data?.branch_stock || detailResponse.data?.branches || []
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for product ${product.id}:`, error);
+            return product;
+          }
+        })
+      );
+      
       // Use comprehensive export utility
-      await exportProductsToExcel(selectedProducts, {
+      await exportProductsToExcel(productsWithDetails, {
         includeInventory: true,
         includeVariants: true,
         includeBranches: true,
-        filename: `FECS_Products_Selected_${selectedProducts.length}_Items`,
+        filename: `FECS_Products_Selected_${productsWithDetails.length}_Items`,
         t: t
       });
 
@@ -1140,14 +1177,32 @@ const Products = () => {
         return;
       }
 
-      message.loading('Preparing complete products export...', 0);
+      message.loading('Preparing complete products export with variants and branches...', 0);
+      
+      // Fetch complete product details including variants and branches
+      const productsWithDetails = await Promise.all(
+        products.map(async (product) => {
+          try {
+            const detailResponse = await productsService.getProduct(product.id);
+            return {
+              ...product,
+              ...detailResponse.data,
+              variants: detailResponse.data?.variants || [],
+              branch_stock: detailResponse.data?.branch_stock || detailResponse.data?.branches || []
+            };
+          } catch (error) {
+            console.warn(`Failed to fetch details for product ${product.id}:`, error);
+            return product;
+          }
+        })
+      );
       
       // Use comprehensive export utility for all products
-      await exportProductsToExcel(products, {
+      await exportProductsToExcel(productsWithDetails, {
         includeInventory: true,
         includeVariants: true,
         includeBranches: true,
-        filename: `FECS_Products_Complete_${products.length}_Products`,
+        filename: `FECS_Products_Complete_${productsWithDetails.length}_Products`,
         t: t
       });
 
@@ -1531,7 +1586,16 @@ const Products = () => {
   const loadProductVariants = async (productId) => {
     try {
       const response = await productsService.getProductVariants(productId);
-      setProductVariants(Array.isArray(response.data) ? response.data : []);
+      const variantsArray = Array.isArray(response.data) ? response.data : [];
+      const normalizedVariants = variantsArray.map((variant) => ({
+        ...variant,
+        price_behavior: variant?.price_behavior === 'override' ? 'override' : 'add',
+        override_priority:
+          variant?.override_priority !== undefined && variant?.override_priority !== null
+            ? Number(variant.override_priority)
+            : null,
+      }));
+      setProductVariants(normalizedVariants);
     } catch (error) {
       console.error('Error loading variants:', error);
       // Mock data for demo
@@ -1542,7 +1606,9 @@ const Products = () => {
           variant_value: 'Medium',
           price_modifier: 0,
           stock_quantity: 10,
-          sku: 'SKU-M'
+          sku: 'SKU-M',
+          price_behavior: 'override',
+          override_priority: 0,
         },
         {
           id: 2,
@@ -1550,7 +1616,9 @@ const Products = () => {
           variant_value: 'Red',
           price_modifier: 5,
           stock_quantity: 5,
-          sku: 'SKU-R'
+          sku: 'SKU-R',
+          price_behavior: 'add',
+          override_priority: null,
         }
       ]);
     }
@@ -1566,7 +1634,15 @@ const Products = () => {
     try {
       if (values.variants && values.variants.length > 0) {
         for (const variant of values.variants) {
-          await productsService.createProductVariant(selectedProduct.id, variant);
+          const preparedVariant = {
+            ...variant,
+            price_behavior: variant?.price_behavior === 'override' ? 'override' : 'add',
+            override_priority:
+              variant?.override_priority !== undefined && variant?.override_priority !== null && variant?.override_priority !== ''
+                ? Number(variant.override_priority)
+                : null,
+          };
+          await productsService.createProductVariant(selectedProduct.id, preparedVariant);
         }
         message.success(t('products.variantsAddedSuccess'));
         loadProductVariants(selectedProduct.id);
@@ -1614,10 +1690,17 @@ const Products = () => {
     editVariantForm.setFieldsValue({
       variant_name: variant.variant_name,
       variant_value: variant.variant_value,
+      title_en: variant.title_en,
+      title_ar: variant.title_ar,
       price_modifier: parseFloat(variant.price_modifier) || 0,
       stock_quantity: variant.stock_quantity,
       sku: variant.sku,
-      is_active: !!variant.is_active
+      is_active: !!variant.is_active,
+      price_behavior: variant.price_behavior === 'override' ? 'override' : 'add',
+      override_priority:
+        variant.override_priority !== undefined && variant.override_priority !== null
+          ? Number(variant.override_priority)
+          : null,
     });
     setIsEditVariantModalVisible(true);
   };
@@ -1626,7 +1709,15 @@ const Products = () => {
     if (!editingVariant) return;
     
     try {
-      await productsService.updateProductVariant(selectedProduct.id, editingVariant.id, values);
+      const payload = {
+        ...values,
+        price_behavior: values?.price_behavior === 'override' ? 'override' : 'add',
+        override_priority:
+          values?.override_priority !== undefined && values?.override_priority !== null && values?.override_priority !== ''
+            ? Number(values.override_priority)
+            : null,
+      };
+      await productsService.updateProductVariant(selectedProduct.id, editingVariant.id, payload);
       message.success(t('products.variantUpdatedSuccess'));
       loadProductVariants(selectedProduct.id);
       setIsEditVariantModalVisible(false);
@@ -1663,9 +1754,17 @@ const Products = () => {
     if (!Array.isArray(products)) return [];
     
     return products.filter(product => {
-      // Status filter
-      if (statusFilter === "active" && !product.is_active) return false;
-      if (statusFilter === "inactive" && product.is_active) return false;
+      // Status filter (multi-select)
+      if (Array.isArray(statusFilter) && statusFilter.length > 0) {
+        if (statusFilter.includes("active") && statusFilter.includes("inactive")) {
+          // Both selected, show all
+          return true;
+        } else if (statusFilter.includes("active") && !product.is_active) {
+          return false;
+        } else if (statusFilter.includes("inactive") && product.is_active) {
+          return false;
+        }
+      }
       
       return true;
     });
@@ -2170,15 +2269,17 @@ const Products = () => {
           </Col>
           <Col xs={24} sm={24} md={12} lg={8} xl={6}>
             <Select
+              mode="multiple"
               placeholder={t("products.filterByCategory")}
               style={{ width: "100%" }}
               value={selectedCategory}
               onChange={(value) => {
                 setSelectedCategory(value);
                 setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
-                updateUrlParams({ category: value, page: undefined });
+                updateUrlParams({ category: Array.isArray(value) && value.length > 0 ? value.join(',') : undefined, page: undefined });
               }}
               allowClear
+              maxTagCount="responsive"
               size="middle"
               optionFilterProp="children"
               showSearch
@@ -2195,6 +2296,7 @@ const Products = () => {
           </Col>
           <Col xs={24} sm={12} md={8} lg={6} xl={4}>
             <Select
+              mode="multiple"
               placeholder={t("products.filterByStatus")}
               style={{ width: "100%" }}
               value={statusFilter}
@@ -2202,13 +2304,14 @@ const Products = () => {
                 setStatusFilter(value);
                 setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
                 updateUrlParams({
-                  status: value === "all" ? undefined : value,
+                  status: Array.isArray(value) && value.length > 0 ? value.join(',') : undefined,
                   page: undefined,
                 });
               }}
+              allowClear
+              maxTagCount="responsive"
               size="middle"
             >
-              <Option value="all">{t("common.all")}</Option>
               <Option value="active">{t("products.active")}</Option>
               <Option value="inactive">{t("products.inactive")}</Option>
             </Select>
@@ -2264,7 +2367,18 @@ const Products = () => {
               <Option value="all">{translatedT("branches.availabilityAll")}</Option>
             </Select>
           </Col>
-          <Col xs={24} sm={12} md={8} lg={6} xl={4}>
+          <Col xs={12} sm={8} md={6} lg={4} xl={3}>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              size="middle"
+              onClick={handleAdd}
+              style={{ width: "100%" }}
+            >
+              {t("products.add")}
+            </Button>
+          </Col>
+          <Col xs={12} sm={8} md={6} lg={4} xl={3}>
             <Dropdown
               overlay={
                 <Menu>
@@ -2274,13 +2388,6 @@ const Products = () => {
                     onClick={handleAddBranch}
                   >
                     {translatedT("branches.manageBranches")}
-                  </Menu.Item>
-                  <Menu.Item 
-                    key="add-product" 
-                    icon={<PlusOutlined />}
-                    onClick={handleAdd}
-                  >
-                    {t("products.add")}
                   </Menu.Item>
                   <Menu.SubMenu key="export" title={
                     <Space>
@@ -3228,6 +3335,26 @@ const Products = () => {
                             <Input placeholder={t("products.variantValuePlaceholder")} />
                           </Form.Item>
                         </Col>
+                        <Col xs={24} sm={6} md={5}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'title_en']}
+                            label="English Name"
+                            rules={[{ required: true, message: "English name is required" }]}
+                          >
+                            <Input placeholder="e.g., Large, Red, Cotton" />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={6} md={5}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'title_ar']}
+                            label="Arabic Name"
+                            rules={[{ required: true, message: "Arabic name is required" }]}
+                          >
+                            <Input placeholder="مثال: كبير، أحمر، قطن" style={{ direction: 'rtl' }} />
+                          </Form.Item>
+                        </Col>
                         <Col xs={24} sm={4} md={3}>
                           <Form.Item
                             {...restField}
@@ -3239,6 +3366,31 @@ const Products = () => {
                               placeholder="0.00"
                               precision={2}
                               addonBefore="JOD"
+                            />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={6} md={4}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'price_behavior']}
+                            label={t("products.priceBehavior")}
+                            initialValue="add"
+                            tooltip={t("products.priceBehaviorHelp")}
+                          >
+                            <PriceBehaviorToggle />
+                          </Form.Item>
+                        </Col>
+                        <Col xs={24} sm={6} md={3}>
+                          <Form.Item
+                            {...restField}
+                            name={[name, 'override_priority']}
+                            label={t("products.overridePriority")}
+                            tooltip={t("products.overridePriorityHelp")}
+                          >
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              min={0}
+                              placeholder={t("products.overridePriorityPlaceholder")}
                             />
                           </Form.Item>
                         </Col>
@@ -3333,6 +3485,18 @@ const Products = () => {
                   key: "variant_name",
                 },
                 {
+                  title: "English Title",
+                  dataIndex: "title_en",
+                  key: "title_en",
+                  render: (value) => value || '-',
+                },
+                {
+                  title: "Arabic Title",
+                  dataIndex: "title_ar",
+                  key: "title_ar",
+                  render: (value) => value ? <span style={{ direction: 'rtl' }}>{value}</span> : '-',
+                },
+                {
                   title: t("products.variantValue"),
                   dataIndex: "variant_value",
                   key: "variant_value",
@@ -3342,6 +3506,30 @@ const Products = () => {
                   dataIndex: "price_modifier",
                   key: "price_modifier",
                   render: (value) => value ? `${Number(value).toFixed(2)} JOD` : '0.00 JOD',
+                },
+                {
+                  title: t("products.priceBehavior"),
+                  dataIndex: "price_behavior",
+                  key: "price_behavior",
+                  render: (value) => (
+                    <Tag color={value === 'override' ? 'blue' : 'green'}>
+                      {getPriceBehaviorLabel(value)}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: t("products.overridePriority"),
+                  dataIndex: "override_priority",
+                  key: "override_priority",
+                  render: (value, record) => {
+                    if (record.price_behavior !== 'override') {
+                      return <Text type="secondary">{t("products.notApplicableShort")}</Text>;
+                    }
+                    if (value === null || value === undefined || value === '') {
+                      return <Text type="secondary">{t("products.noPriority")}</Text>;
+                    }
+                    return value;
+                  },
                 },
                 {
                   title: t("products.stock"),
@@ -3467,6 +3655,27 @@ const Products = () => {
           </Row>
 
           <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="title_en"
+                label="English Name"
+                rules={[{ required: true, message: "English name is required" }]}
+              >
+                <Input placeholder="e.g., Large, Red, Cotton" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="title_ar"
+                label="Arabic Name"
+                rules={[{ required: true, message: "Arabic name is required" }]}
+              >
+                <Input placeholder="مثال: كبير، أحمر، قطن" style={{ direction: 'rtl' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
             <Col xs={24} sm={8}>
               <Form.Item
                 name="price_modifier"
@@ -3499,6 +3708,32 @@ const Products = () => {
                 label={t("products.variantSku")}
               >
                 <Input placeholder={t("products.variantSkuPlaceholder")} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="price_behavior"
+                label={t("products.priceBehavior")}
+                tooltip={t("products.priceBehaviorHelp")}
+                initialValue="add"
+              >
+                <PriceBehaviorToggle />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="override_priority"
+                label={t("products.overridePriority")}
+                tooltip={t("products.overridePriorityHelp")}
+              >
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={0}
+                  placeholder={t("products.overridePriorityPlaceholder")}
+                />
               </Form.Item>
             </Col>
           </Row>

@@ -69,6 +69,8 @@ class ShippingService {
    */
   async findShippingZone(distance, branchId = null) {
     try {
+      console.log('🔍 Finding zone for:', { distance: distance.toFixed(2) + ' km', branchId });
+      
       // Get zones with potential branch overrides
       const query = `
         SELECT 
@@ -90,6 +92,7 @@ class ShippingService {
       const [zone] = await executeQuery(query, [branchId, distance, distance]);
 
       if (!zone) {
+        console.log('❌ No zone found, using default');
         // No zone found, use default/fallback
         return {
           id: null,
@@ -247,13 +250,39 @@ class ShippingService {
       // Clamp distance for pricing calculations
       const effectiveDistance = this.clampDistance(rawDistance);
 
+      console.log('🚚 SHIPPING DEBUG:', {
+        customerCoords: { lat: customerLat, lon: customerLon },
+        branchCoords: { lat: branch.latitude, lon: branch.longitude },
+        rawDistance: rawDistance.toFixed(2) + ' km',
+        effectiveDistance: effectiveDistance.toFixed(2) + ' km'
+      });
+
   // Do not hard-fail on out-of-range distances; compute cost and flag
 
       // Find appropriate shipping zone
       const zone = await this.findShippingZone(effectiveDistance, branchId);
+      
+      console.log('🎯 MATCHED ZONE:', {
+        zoneId: zone.id,
+        zoneName: zone.name_en,
+        zoneRange: `${zone.min_distance_km}-${zone.max_distance_km} km`,
+        basePrice: zone.base_price + ' JOD',
+        pricePerKm: zone.price_per_km + ' JOD/km',
+        freeThreshold: zone.free_shipping_threshold + ' JOD'
+      });
 
       // Calculate shipping cost
       const shippingCalculation = this.calculateShippingCost(effectiveDistance, zone, orderAmount);
+      
+      console.log('💰 SHIPPING COST:', {
+        effectiveDistance: effectiveDistance.toFixed(2) + ' km',
+        baseCost: zone.base_price + ' JOD',
+        distanceCost: (effectiveDistance * zone.price_per_km).toFixed(2) + ' JOD',
+        totalBeforeFree: shippingCalculation.cost + ' JOD',
+        orderAmount: orderAmount + ' JOD',
+        freeShippingApplied: shippingCalculation.free_shipping_applied,
+        finalCost: shippingCalculation.cost + ' JOD'
+      });
       const roundedRawDistance = parseFloat(rawDistance.toFixed(2));
 
       // Return complete calculation

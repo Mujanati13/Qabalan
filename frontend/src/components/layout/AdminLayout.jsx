@@ -8,6 +8,7 @@ import {
   Space,
   Switch,
   Breadcrumb,
+  Tag,
 } from "antd";
 import {
   DashboardOutlined,
@@ -234,7 +235,7 @@ const AdminLayout = ({ children }) => {
     // MARKETING SECTION
     const marketingChildren = [];
 
-    // Promo codes - Coming Soon (Disabled)
+    // Promo codes
     if (
       user?.user_type === "admin" ||
       hasAnyPermission([
@@ -373,12 +374,16 @@ const AdminLayout = ({ children }) => {
     //   });
     // }
 
-    // Web Client Configuration - Only for admins
+    // Web Client Configuration - Coming Soon
     if (user?.user_type === "admin") {
       configChildren.push({
         key: "/web-client-config",
         icon: <GlobalOutlined />,
-        label: <Link to="/web-client-config">Web Client Config</Link>,
+        label: (
+          <Link to="/web-client-config">
+            Web Client Config <Tag color="orange" style={{ marginLeft: 8, fontSize: 10 }}>Soon</Tag>
+          </Link>
+        ),
       });
     }
 

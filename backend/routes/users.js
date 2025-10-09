@@ -299,16 +299,28 @@ router.get('/', authenticate, authorize('admin', 'staff'), validatePagination, v
       queryParams.push(user_type);
     }
 
-    // Filter by active status
+    // Filter by active status - support multi-select
     if (is_active !== undefined) {
-      whereConditions.push('u.is_active = ?');
-      queryParams.push(is_active === 'true' ? 1 : 0);
+      const activeArray = String(is_active).includes(',') 
+        ? String(is_active).split(',').map(s => s.trim()) 
+        : [String(is_active)];
+      const activeValues = activeArray.map(val => val === 'true' ? 1 : 0);
+      if (activeValues.length > 0) {
+        whereConditions.push(`u.is_active IN (${activeValues.map(() => '?').join(',')})`);
+        queryParams.push(...activeValues);
+      }
     }
 
-    // Filter by verification status
+    // Filter by verification status - support multi-select
     if (is_verified !== undefined) {
-      whereConditions.push('u.is_verified = ?');
-      queryParams.push(is_verified === 'true' ? 1 : 0);
+      const verifiedArray = String(is_verified).includes(',') 
+        ? String(is_verified).split(',').map(s => s.trim()) 
+        : [String(is_verified)];
+      const verifiedValues = verifiedArray.map(val => val === 'true' ? 1 : 0);
+      if (verifiedValues.length > 0) {
+        whereConditions.push(`u.is_verified IN (${verifiedValues.map(() => '?').join(',')})`);
+        queryParams.push(...verifiedValues);
+      }
     }
 
     // Search filter
@@ -328,7 +340,7 @@ router.get('/', authenticate, authorize('admin', 'staff'), validatePagination, v
     const query = `
       SELECT 
         u.id, u.email, u.phone, u.first_name, u.last_name, u.user_type, u.avatar,
-        u.is_verified, u.is_active, u.last_login_at, u.created_at,
+        u.is_verified, u.is_active, u.last_login_at, u.created_at, u.birth_date,
         (SELECT COUNT(*) FROM user_addresses WHERE user_id = u.id AND is_active = 1) as addresses_count,
         (SELECT COUNT(*) FROM orders WHERE user_id = u.id) as orders_count
       FROM users u

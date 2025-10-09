@@ -277,9 +277,9 @@ router.get('/mpgs/payment/success', async (req, res) => {
       return res.status(400).json({ error: 'orders_id parameter required' });
     }
 
-    // Get current order state
+    // Get current order state with payment session ID
     const currentOrderRows = await executeQuery(
-      'SELECT payment_status, order_status FROM orders WHERE id = ? LIMIT 1',
+      'SELECT payment_status, order_status, payment_session_id, total_amount, currency FROM orders WHERE id = ? LIMIT 1',
       [orderId]
     );
 
@@ -288,14 +288,69 @@ router.get('/mpgs/payment/success', async (req, res) => {
     }
 
     const currentOrder = currentOrderRows[0];
+    const sessionId = currentOrder.payment_session_id;
 
-    // Update order as paid
-    const updateResult = await executeQuery(
-      'UPDATE orders SET payment_status = ?, payment_success_indicator = ?, updated_at = NOW() WHERE id = ?',
-      ['paid', resultIndicator || 'SUCCESS', orderId]
-    );
+    // CRITICAL FIX: Verify payment with MPGS before marking as paid
+    let paymentVerified = false;
+    let transactionId = null;
+    
+    if (sessionId) {
+      try {
+        const auth = resolveMpgsAuthToken();
+        const retrieveOrderUrl = `${MPGS_CONFIG.gateway}/api/rest/version/${MPGS_CONFIG.apiVersion}/merchant/${MPGS_CONFIG.merchantId}/order/${orderId}`;
+        
+        console.log(`Verifying payment for order ${orderId} with session ${sessionId}`);
+        
+        const verifyResponse = await fetch(retrieveOrderUrl, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/json'
+          }
+        });
 
-    if (updateResult.affectedRows > 0) {
+        if (verifyResponse.ok) {
+          const orderData = await verifyResponse.json();
+          console.log('MPGS Order Verification Response:', JSON.stringify(orderData, null, 2));
+          
+          // Check if payment was actually successful
+          if (orderData.result === 'SUCCESS' || 
+              orderData.status === 'CAPTURED' ||
+              (orderData.transaction && orderData.transaction[0]?.result === 'SUCCESS')) {
+            paymentVerified = true;
+            transactionId = orderData.transaction?.[0]?.id || orderData.id || sessionId;
+            console.log(`✓ Payment verified successfully for order ${orderId}, transaction: ${transactionId}`);
+          } else {
+            console.error(`✗ Payment verification failed for order ${orderId}:`, orderData.result || orderData.status);
+          }
+        } else {
+          const errorData = await verifyResponse.json();
+          console.error('Payment verification API error:', errorData);
+        }
+      } catch (verifyError) {
+        console.error('Payment verification exception:', verifyError);
+        // Don't fail the entire flow, but log the issue
+      }
+    }
+
+    // Only update order as paid if payment is verified OR if already marked as paid
+    let updateResult;
+    if (paymentVerified || currentOrder.payment_status === 'paid') {
+      updateResult = await executeQuery(
+        'UPDATE orders SET payment_status = ?, payment_success_indicator = ?, payment_transaction_id = ?, updated_at = NOW() WHERE id = ?',
+        ['paid', resultIndicator || 'SUCCESS', transactionId, orderId]
+      );
+    } else {
+      // Payment not verified - keep as pending or failed
+      console.warn(`Payment not verified for order ${orderId}, not marking as paid`);
+      updateResult = await executeQuery(
+        'UPDATE orders SET payment_status = ?, payment_success_indicator = ?, updated_at = NOW() WHERE id = ?',
+        ['failed', resultIndicator || 'UNVERIFIED', orderId]
+      );
+    }
+
+    if (updateResult.affectedRows > 0 && paymentVerified) {
+      // Log payment status change
       if (currentOrder.payment_status !== 'paid') {
         await executeQuery(
           `INSERT INTO order_status_history (order_id, status, note, changed_by)
@@ -303,7 +358,7 @@ router.get('/mpgs/payment/success', async (req, res) => {
           [
             orderId,
             currentOrder.order_status,
-            'Payment status automatically updated to paid via MPGS callback',
+            `Payment verified and updated to paid via MPGS callback. Transaction ID: ${transactionId}`,
             null
           ]
         );
@@ -339,6 +394,36 @@ router.get('/mpgs/payment/success', async (req, res) => {
       // Redirect to home with success message
       const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
       res.redirect(`${homeUrl}/home?thanks=1&order_id=${orderId}`);
+    } else if (!paymentVerified) {
+      // Payment verification failed - show error page
+      if (isMobile) {
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Payment Verification Failed</title>
+    <style>
+      body { font-family: 'Segoe UI', Arial, sans-serif; background: #fef2f2; color: #991b1b; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+      .card { background: white; border-radius: 16px; box-shadow: 0 12px 40px rgba(153, 27, 27, 0.12); padding: 32px 28px; text-align: center; max-width: 360px; border: 2px solid #fecaca; }
+      h1 { margin-bottom: 12px; font-size: 24px; color: #dc2626; }
+      p { margin: 0 0 24px; line-height: 1.5; color: #7f1d1d; }
+      button { background: #dc2626; color: #fff; border: none; border-radius: 10px; padding: 14px 20px; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; }
+      button:active { transform: translateY(1px); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>⚠️ Payment Verification Failed</h1>
+      <p>We could not verify your payment for order <strong>#${orderId}</strong>. Please contact support or try again.</p>
+      <button onclick="window.location.href='fecs://payment-failed?orderId=${orderId}';">Return to App</button>
+    </div>
+  </body>
+</html>`);
+        return;
+      }
+      const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
+      res.redirect(`${homeUrl}/payment-failed?orderId=${orderId}`);
     } else {
       res.status(404).json({ error: 'Order not found or update failed' });
     }

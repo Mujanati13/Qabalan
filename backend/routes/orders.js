@@ -641,6 +641,7 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
       throw new Error(`Product with ID ${product_id} not found or inactive`);
     }
     
+    // Allow in_stock and limited status, only block out_of_stock
     if (product.stock_status === 'out_of_stock') {
       throw new Error(`Product "${product.title_en}" is out of stock`);
     }
@@ -720,7 +721,11 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
       unit_price: resolvedUnitPrice,
       total_price: totalPrice,
       points_earned: itemPointsEarned,
-      special_instructions: special_instructions || null
+      special_instructions: special_instructions || null,
+      // Snapshot fields for product deletion handling
+      product_name_en: product.title_en,
+      product_name_ar: product.title_ar,
+      product_sku: product.sku || null
     });
     
     subtotal += totalPrice;
@@ -959,26 +964,38 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
       queryParams.push(user_id);
     }
 
-    // Status filters
+    // Status filters - support both single values and comma-separated arrays
     if (status) {
-      whereConditions.push('o.order_status = ?');
-      queryParams.push(status);
+      const statusArray = status.includes(',') ? status.split(',').map(s => s.trim()) : [status];
+      if (statusArray.length > 0) {
+        whereConditions.push(`o.order_status IN (${statusArray.map(() => '?').join(',')})`);
+        queryParams.push(...statusArray);
+      }
     }
 
     if (payment_status) {
-      whereConditions.push('o.payment_status = ?');
-      queryParams.push(payment_status);
+      const paymentStatusArray = payment_status.includes(',') ? payment_status.split(',').map(s => s.trim()) : [payment_status];
+      if (paymentStatusArray.length > 0) {
+        whereConditions.push(`o.payment_status IN (${paymentStatusArray.map(() => '?').join(',')})`);
+        queryParams.push(...paymentStatusArray);
+      }
     }
 
     if (order_type) {
-      whereConditions.push('o.order_type = ?');
-      queryParams.push(order_type);
+      const orderTypeArray = order_type.includes(',') ? order_type.split(',').map(s => s.trim()) : [order_type];
+      if (orderTypeArray.length > 0) {
+        whereConditions.push(`o.order_type IN (${orderTypeArray.map(() => '?').join(',')})`);
+        queryParams.push(...orderTypeArray);
+      }
     }
 
-    // Payment method filter
+    // Payment method filter - support multi-select
     if (payment_method) {
-      whereConditions.push('o.payment_method = ?');
-      queryParams.push(payment_method);
+      const paymentMethodArray = payment_method.includes(',') ? payment_method.split(',').map(s => s.trim()) : [payment_method];
+      if (paymentMethodArray.length > 0) {
+        whereConditions.push(`o.payment_method IN (${paymentMethodArray.map(() => '?').join(',')})`);
+        queryParams.push(...paymentMethodArray);
+      }
     }
 
     if (branch_id) {
@@ -1044,7 +1061,41 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
 
     const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
 
-    // Transform the data to structure delivery address properly
+    // Fetch order items for all orders in the result
+    const orderIds = result.data.map(order => order.id);
+    let allOrderItems = [];
+    
+    if (orderIds.length > 0) {
+      const placeholders = orderIds.map(() => '?').join(',');
+      allOrderItems = await executeQuery(`
+        SELECT 
+          oi.*,
+          COALESCE(p.title_ar, oi.product_name_ar, '[Deleted Product]') as product_title_ar,
+          COALESCE(p.title_en, oi.product_name_en, '[Deleted Product]') as product_title_en,
+          p.main_image as product_image,
+          COALESCE(p.sku, oi.product_sku) as product_sku,
+          COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
+          COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+          pv.variant_name,
+          pv.variant_value
+        FROM order_items oi
+        LEFT JOIN products p ON oi.product_id = p.id
+        LEFT JOIN product_variants pv ON oi.variant_id = pv.id
+        WHERE oi.order_id IN (${placeholders})
+        ORDER BY oi.order_id, oi.id ASC
+      `, orderIds);
+    }
+
+    // Group order items by order_id for efficient lookup
+    const orderItemsMap = {};
+    allOrderItems.forEach(item => {
+      if (!orderItemsMap[item.order_id]) {
+        orderItemsMap[item.order_id] = [];
+      }
+      orderItemsMap[item.order_id].push(item);
+    });
+
+    // Transform the data to structure delivery address properly and attach order items
     const transformedData = result.data.map(order => {
       const transformed = { ...order };
       
@@ -1135,6 +1186,9 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
       delete transformed.area_title_en;
       delete transformed.guest_delivery_address;
       
+      // Attach order items to this order
+      transformed.order_items = orderItemsMap[order.id] || [];
+      
       return transformed;
     });
 
@@ -1205,14 +1259,21 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
       });
     }
 
-    // Get order items
+    // Get order items with fallback to snapshot fields for deleted products
     const orderItems = await executeQuery(`
       SELECT 
         oi.*,
-        p.title_ar as product_title_ar, p.title_en as product_title_en,
-        p.main_image as product_image, p.sku as product_sku
+        COALESCE(p.title_ar, oi.product_name_ar, '[Deleted Product]') as product_title_ar,
+        COALESCE(p.title_en, oi.product_name_en, '[Deleted Product]') as product_title_en,
+        p.main_image as product_image,
+        COALESCE(p.sku, oi.product_sku) as product_sku,
+        COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
+        COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+        pv.variant_name,
+        pv.variant_value
       FROM order_items oi
       LEFT JOIN products p ON oi.product_id = p.id
+      LEFT JOIN product_variants pv ON oi.variant_id = pv.id
       WHERE oi.order_id = ?
       ORDER BY oi.id ASC
     `, [req.params.id]);
@@ -1884,7 +1945,47 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     // Calculate delivery fee using enhanced shipping system
     let deliveryCalculation = { delivery_fee: 0, calculation_method: 'pickup', free_shipping_applied: false };
     
-  if (isDeliveryOrder && addressAreaId) {
+  if (isDeliveryOrder) {
+      // For guest orders with delivery address coordinates
+      if (isGuestOrder && guest_delivery_address) {
+        let guestCoordinates = null;
+        
+        // Parse guest_delivery_address (can be string or object)
+        if (typeof guest_delivery_address === 'string') {
+          try {
+            const parsed = JSON.parse(guest_delivery_address);
+            if (parsed.latitude && parsed.longitude) {
+              guestCoordinates = {
+                latitude: Number(parsed.latitude),
+                longitude: Number(parsed.longitude),
+                branch_id: branch_id
+              };
+            }
+          } catch (e) {
+            console.log('⚠️ Could not parse guest_delivery_address as JSON, using default delivery fee');
+          }
+        } else if (typeof guest_delivery_address === 'object') {
+          if (guest_delivery_address.latitude && guest_delivery_address.longitude) {
+            guestCoordinates = {
+              latitude: Number(guest_delivery_address.latitude),
+              longitude: Number(guest_delivery_address.longitude),
+              branch_id: branch_id
+            };
+          }
+        }
+        
+        if (guestCoordinates) {
+          console.log('📍 Calculating delivery fee for guest with coordinates:', guestCoordinates);
+          deliveryCalculation = await calculateDeliveryFee(guestCoordinates, order_type, subtotal);
+          console.log('💰 Guest delivery fee calculated:', deliveryCalculation);
+        } else {
+          // Fallback: use default delivery fee for branch
+          console.log('⚠️ No coordinates for guest, using default delivery fee');
+          deliveryCalculation = await calculateDeliveryFee({ branch_id: branch_id }, order_type, subtotal);
+        }
+      }
+      // For authenticated users with delivery address
+      else if (!isGuestOrder && addressAreaId) {
       // Try to get coordinates from the address
   const userIdForAddress = isGuestOrder ? null : (isAdminOrder ? customerIdForOrder : req.user.id);
       const [addressDetails] = await executeQuery(`
@@ -1910,6 +2011,7 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         };
         deliveryCalculation = await calculateDeliveryFee(customerData, order_type, subtotal);
       }
+    }
     }
 
     const originalDeliveryFee = Number(deliveryCalculation.delivery_fee || 0);
@@ -2092,8 +2194,8 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         query: `
           INSERT INTO order_items (
             order_id, product_id, variant_id, quantity, unit_price, total_price,
-            points_earned, special_instructions
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            points_earned, special_instructions, product_name_en, product_name_ar, product_sku
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           orderId, // Use the actual order ID instead of LAST_INSERT_ID()
@@ -2103,7 +2205,10 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
           item.unit_price,
           item.total_price, 
           nullifyUndefined(item.points_earned), 
-          nullifyUndefined(item.special_instructions)
+          nullifyUndefined(item.special_instructions),
+          item.product_name_en,
+          item.product_name_ar,
+          nullifyUndefined(item.product_sku)
         ]
       });
     });
@@ -2528,6 +2633,55 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
       }
     }
 
+    // Calculate delivery fee based on order type change
+    let deliveryFee = currentOrder.delivery_fee;
+    let recalculateTotal = false;
+    
+    if (order_type && order_type !== currentOrder.order_type) {
+      if (order_type === 'pickup') {
+        // Set delivery fee to 0 when changing to pickup
+        deliveryFee = 0;
+        recalculateTotal = true;
+        console.log(`Order ${req.params.id}: Changed to pickup, setting delivery_fee to 0`);
+      } else if (order_type === 'delivery' && delivery_address_id) {
+        // Recalculate delivery fee when changing to delivery
+        try {
+          const [address] = await executeQuery(
+            'SELECT latitude, longitude, area_id FROM user_addresses WHERE id = ?',
+            [delivery_address_id]
+          );
+          
+          if (address) {
+            const deliveryCalc = await calculateDeliveryFee(
+              {
+                latitude: address.latitude,
+                longitude: address.longitude,
+                area_id: address.area_id,
+                branch_id: currentOrder.branch_id
+              },
+              'delivery',
+              currentOrder.subtotal
+            );
+            deliveryFee = deliveryCalc.delivery_fee;
+            recalculateTotal = true;
+            console.log(`Order ${req.params.id}: Changed to delivery, recalculated delivery_fee: ${deliveryFee}`);
+          }
+        } catch (error) {
+          console.error('Error recalculating delivery fee:', error);
+        }
+      }
+    }
+
+    // Recalculate total amount if delivery fee changed
+    let finalTotalAmount = total_amount;
+    if (recalculateTotal && !total_amount) {
+      const finalSubtotal = subtotal || currentOrder.subtotal;
+      const taxAmount = currentOrder.tax_amount || 0;
+      const discountAmount = currentOrder.discount_amount || 0;
+      finalTotalAmount = Number(finalSubtotal) + Number(deliveryFee) + Number(taxAmount) - Number(discountAmount);
+      console.log(`Order ${req.params.id}: Recalculated total: ${finalTotalAmount} (subtotal: ${finalSubtotal}, delivery: ${deliveryFee}, tax: ${taxAmount}, discount: ${discountAmount})`);
+    }
+
     // Update order
     await executeQuery(`
       UPDATE orders SET
@@ -2538,30 +2692,54 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
         estimated_delivery_time = COALESCE(?, estimated_delivery_time),
         delivery_address_id = COALESCE(?, delivery_address_id),
         order_type = COALESCE(?, order_type),
+        delivery_fee = ?,
         subtotal = COALESCE(?, subtotal),
         total_amount = COALESCE(?, total_amount),
         updated_at = NOW()
       WHERE id = ?
-    `, [customer_name, customer_phone, customer_email, special_instructions, estimated_delivery_time, delivery_address_id, order_type, subtotal, total_amount, req.params.id]);
+    `, [
+      customer_name, 
+      customer_phone, 
+      customer_email, 
+      special_instructions, 
+      estimated_delivery_time, 
+      delivery_address_id, 
+      order_type, 
+      deliveryFee,
+      subtotal, 
+      finalTotalAmount, 
+      req.params.id
+    ]);
 
     // Update order items if provided
     if (items && Array.isArray(items)) {
       // Delete existing order items
       await executeQuery('DELETE FROM order_items WHERE order_id = ?', [req.params.id]);
       
-      // Insert new order items
+      // Insert new order items with product snapshot
       for (const item of items) {
         if (item.product_id && item.quantity && item.unit_price) {
+          // Fetch product details for snapshot
+          const [product] = await executeQuery(
+            'SELECT title_en, title_ar, sku FROM products WHERE id = ?',
+            [item.product_id]
+          );
+          
           await executeQuery(`
             INSERT INTO order_items (
-              order_id, product_id, quantity, unit_price, total_price
-            ) VALUES (?, ?, ?, ?, ?)
+              order_id, product_id, variant_id, quantity, unit_price, total_price,
+              product_name_en, product_name_ar, product_sku
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `, [
             req.params.id,
             item.product_id,
+            item.variant_id || null,
             item.quantity,
             item.unit_price,
-            item.total_price || (item.quantity * item.unit_price)
+            item.total_price || (item.quantity * item.unit_price),
+            product?.title_en || item.product_name_en,
+            product?.title_ar || item.product_name_ar,
+            product?.sku || item.product_sku || null
           ]);
         }
       }

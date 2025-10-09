@@ -1,0 +1,104 @@
+.privacy-page {
+  min-height: 100vh;
+}
+
+.page-hero {
+  background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)),
+    url('/assets/images/120.png') center/cover;
+  padding: 80px 20px;
+  text-align: center;
+  color: #fff;
+}
+
+.home-title {
+  font-size: 3rem;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.2;
+}
+
+.home-title span {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 400;
+  color: #fbc433;
+  margin-bottom: 10px;
+}
+
+.subheading {
+  font-size: 1.2rem;
+  margin-top: 1rem;
+  opacity: 0.9;
+}
+
+.privacy-content {
+  background: #fff;
+  padding: 60px 0;
+}
+
+.p-t-4 {
+  padding-top: 2rem;
+}
+
+.about-h1 {
+  color: #16A2A3;
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.about-h1:first-child {
+  margin-top: 0;
+}
+
+.component-title {
+  color: #555;
+  font-size: 1.1rem;
+  line-height: 1.8;
+  margin-bottom: 1.5rem;
+  text-align: justify;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .home-title {
+    font-size: 2rem;
+  }
+
+  .home-title span {
+    font-size: 1.2rem;
+  }
+
+  .about-h1 {
+    font-size: 1.5rem;
+  }
+
+  .component-title {
+    font-size: 1rem;
+  }
+
+  .page-hero {
+    padding: 60px 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .home-title {
+    font-size: 1.5rem;
+  }
+
+  .home-title span {
+    font-size: 1rem;
+  }
+
+  .about-h1 {
+    font-size: 1.3rem;
+  }
+
+  .component-title {
+    font-size: 0.95rem;
+  }
+}

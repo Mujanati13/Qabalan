@@ -1,85 +1,67 @@
-import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { ConfigProvider } from 'antd';
-import { CartProvider } from './contexts/CartContext';
-import { OrderProvider } from './contexts/OrderContext';
-import { SettingsProvider, useSettings } from './contexts/SettingsContext';
-import { TranslationProvider, useTranslation } from './contexts/TranslationContext';
-import HomePage from './components/HomePage';
-import OffersPageNew from './components/OffersPageNew';
-import ProductPageNew from './components/ProductPageNew';
-import ProductsPage from './components/ProductsPage';
-import CheckoutPage from './components/CheckoutPage';
-import OrdersPage from './components/OrdersPage';
-import ContactPage from './components/ContactPage';
-import LocationsPage from './components/LocationsPage';
-import CartDrawer from './components/CartDrawer';
-import NotFound from './components/NotFound';
-import './index.css';
-
-// Main App Content Component
-const AppContent = () => {
-  const { getThemeConfig, settings } = useSettings();
-  const { isRTL } = useTranslation();
-
-  // Apply custom CSS if provided
-  useEffect(() => {
-    const customCSS = settings.theme?.customCSS;
-    if (customCSS) {
-      const styleElement = document.getElementById('custom-styles');
-      if (styleElement) {
-        styleElement.textContent = customCSS;
-      } else {
-        const newStyleElement = document.createElement('style');
-        newStyleElement.id = 'custom-styles';
-        newStyleElement.textContent = customCSS;
-        document.head.appendChild(newStyleElement);
-      }
-    }
-
-    // Apply animation speed CSS variables
-    const animationSpeed = settings.theme?.animationSpeed || 0.3;
-    document.documentElement.style.setProperty('--animation-speed', `${animationSpeed}s`);
-
-    // Apply RTL direction
-    document.documentElement.dir = isRTL ? 'rtl' : 'ltr';
-    document.documentElement.lang = isRTL ? 'ar' : 'en';
-  }, [settings.theme, isRTL]);
-
-  return (
-    <ConfigProvider theme={getThemeConfig()}>
-      <CartProvider>
-        <OrderProvider>
-          <Router>
-            <div className="App min-h-screen bg-gray-50">
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/offers" element={<OffersPageNew />} />
-                <Route path="/products" element={<ProductsPage />} />
-                <Route path="/product/:productId" element={<ProductPageNew />} />
-                <Route path="/checkout" element={<CheckoutPage />} />
-                <Route path="/orders" element={<OrdersPage />} />
-                <Route path="/contact" element={<ContactPage />} />
-                <Route path="/locations" element={<LocationsPage />} />
-                <Route path="/find-us" element={<LocationsPage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-              <CartDrawer />
-            </div>
-          </Router>
-        </OrderProvider>
-      </CartProvider>
-    </ConfigProvider>
-  );
-};
+import { AuthProvider } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
+import { useState } from 'react';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import Home from './pages/Home';
+import Shop from './pages/Shop';
+import ProductDetail from './pages/ProductDetail';
+import Story from './pages/Story';
+import Recipes from './pages/Recipes';
+import News from './pages/News';
+import Contact from './pages/Contact';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Cart from './pages/Cart';
+import Checkout from './pages/Checkout';
+import OrderConfirmation from './pages/OrderConfirmation';
+import Terms from './pages/Terms';
+import Privacy from './pages/Privacy';
+import Account from './pages/Account';
+import './App.css';
 
 function App() {
+  const [language, setLanguage] = useState('en');
+
+  const handleLanguageChange = (lang) => {
+    setLanguage(lang);
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+  };
+
   return (
-    <SettingsProvider>
-      <TranslationProvider>
-        <AppContent />
-      </TranslationProvider>
-    </SettingsProvider>
+    <Router>
+      <AuthProvider>
+        <CartProvider>
+          <div className="App">
+            <Header />
+            <main className="main-content">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/shop" element={<Shop />} />
+                <Route path="/products" element={<Shop />} />
+                <Route path="/product/:id" element={<ProductDetail />} />
+                <Route path="/story" element={<Story />} />
+                <Route path="/recipes" element={<Recipes />} />
+                <Route path="/news" element={<News />} />
+                <Route path="/contact" element={<Contact />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
+                <Route path="/account" element={<Account />} />
+                <Route path="/cart" element={<Cart />} />
+                <Route path="/checkout" element={<Checkout />} />
+                <Route path="/order-confirmation/:orderId" element={<OrderConfirmation />} />
+                <Route path="/orders/:orderId" element={<OrderConfirmation />} />
+                <Route path="/terms" element={<Terms />} />
+                <Route path="/privacy" element={<Privacy />} />
+              </Routes>
+            </main>
+            <Footer />
+          </div>
+        </CartProvider>
+      </AuthProvider>
+    </Router>
   );
 }
 

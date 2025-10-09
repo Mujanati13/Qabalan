@@ -302,6 +302,17 @@ export const en = {
     variantName: 'Variant Type',
     variantValue: 'Variant Value',
     priceModifier: 'Price Modifier',
+  priceBehavior: 'Price Behavior',
+  priceBehaviorHelp: 'Decide whether this option replaces the base price or adds on top of it.',
+  priceBehaviorOverrideLabel: 'Overrides base price',
+  priceBehaviorAddLabel: 'Adds to base price',
+  priceBehaviorOverrideShort: 'Override',
+  priceBehaviorAddShort: 'Add',
+  overridePriority: 'Override Priority',
+  overridePriorityHelp: 'Lower numbers take precedence when multiple override variants apply.',
+  overridePriorityPlaceholder: 'e.g., 0',
+  notApplicableShort: 'N/A',
+  noPriority: 'None set',
     variantSku: 'Variant SKU',
     variantNameRequired: 'Variant type is required',
     variantValueRequired: 'Variant value is required',
@@ -754,6 +765,8 @@ export const en = {
     incomplete_item: 'Incomplete',
     product: 'Product',
     select_product: 'Select Product',
+    variant: 'Variant',
+    select_variant: 'Select Variant (Optional)',
     quantity: 'Quantity',
     unit_price: 'Unit Price',
     item_total: 'Item Total',
@@ -1190,6 +1203,18 @@ export const en = {
     detailsPlaceholder: 'Landmark, special instructions, etc.',
     details: 'Additional Details',
     deliveryFee: 'Delivery Fee',
+    
+    // GPS Coordinates
+    gpsCoordinates: 'GPS Coordinates',
+    latitude: 'Latitude',
+    longitude: 'Longitude',
+    latitudeTooltip: 'Latitude coordinate (-90 to 90). Can be obtained from map or entered manually.',
+    longitudeTooltip: 'Longitude coordinate (-180 to 180). Can be obtained from map or entered manually.',
+    invalidLatitude: 'Invalid latitude (-90 to 90)',
+    invalidLongitude: 'Invalid longitude (-180 to 180)',
+    coordinatesSet: 'Coordinates set',
+    coordinatesHelp: 'Use the Map tab to auto-select coordinates, or enter them manually here (e.g., from Google Maps)',
+    locationDataRequired: 'At least one form of location data is required (city/area/street, coordinates, or address details)',
     
     // Orders
     orderHistory: 'Order History',
@@ -1808,6 +1833,7 @@ export const en = {
     selectLocationFirst: 'Select location on map first',
     selectLocationForDeliveryFee: 'Select location on map for accurate delivery fee',
     manualEntryNote: 'You can still manually enter address information in the Address Details tab.',
+    manualCoordinatesInfo: 'You can use the Map tab to select a location, or manually enter latitude and longitude coordinates below if map services are unavailable.',
     
     // Search functionality
     searchLocation: 'Search Location',

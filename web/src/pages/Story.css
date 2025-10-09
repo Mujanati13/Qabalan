@@ -1,0 +1,277 @@
+.story-page {
+  min-height: 100vh;
+}
+
+/* Hero Section */
+.story-hero {
+  background: url('/assets/uploads/6555daed532d9.jpg') center/cover;
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  position: relative;
+}
+
+.story-hero-content {
+  text-align: center;
+}
+
+.story-hero h1 {
+  font-size: 3rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.story-hero h1 span {
+  display: block;
+  font-size: 1.5rem;
+  font-weight: 400;
+  text-transform: lowercase;
+}
+
+.story-hero .subheading {
+  font-size: 1.2rem;
+  font-weight: 300;
+}
+
+/* Main Story Grid */
+.story-content {
+  padding: 0;
+}
+
+.story-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  margin: 0;
+}
+
+.story-col-left,
+.story-col-right {
+  display: flex;
+  flex-direction: column;
+}
+
+.story-text-box {
+  padding: 2rem;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.story-text-box h2 {
+  font-size: 1.8rem;
+  margin-bottom: 1.5rem;
+  font-weight: 700;
+}
+
+.story-text-box p {
+  font-size: 1rem;
+  line-height: 1.8;
+  margin-bottom: 1rem;
+}
+
+.story-text-box img {
+  width: 100%;
+  margin-top: 1rem;
+}
+
+.teal-bg {
+  background: #16A2A3;
+}
+
+.orange-bg {
+  background: #D67D24;
+}
+
+.beige-bg {
+  background: #C0B69B;
+}
+
+.story-row-top,
+.story-row-bottom {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+}
+
+.story-row-top img,
+.story-row-bottom img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Welcome Section */
+.story-welcome {
+  background: url('/assets/images/117.png');
+  padding: 4rem 0;
+  text-align: center;
+}
+
+.story-ya {
+  font-size: 2rem;
+  color: #16A2A3;
+  font-style: italic;
+  margin-bottom: 1rem;
+}
+
+.story-ya-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 2rem;
+}
+
+.welcome-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+  text-align: left;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.welcome-text p {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: #333;
+}
+
+.welcome-image img {
+  width: 100%;
+  border-radius: 10px;
+}
+
+/* Timeline Section */
+.story-timeline {
+  padding: 4rem 0;
+  background: #f9f9f9;
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.section-header h2 {
+  font-size: 2.5rem;
+  color: #333;
+}
+
+.section-header h2 span {
+  color: #16A2A3;
+}
+
+.section-header p {
+  font-size: 1.2rem;
+  color: #666;
+}
+
+.timeline-slider {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.timeline-item {
+  background: #fff;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.timeline-item img {
+  width: 100%;
+  height: 250px;
+  object-fit: cover;
+}
+
+.timeline-content {
+  padding: 1.5rem;
+}
+
+.timeline-year {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #16A2A3;
+  margin-bottom: 0.5rem;
+}
+
+.timeline-item h3 {
+  font-size: 1.2rem;
+  color: #333;
+  margin-bottom: 1rem;
+}
+
+.timeline-item p {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: #666;
+}
+
+/* Events CTA Section */
+.story-events {
+  padding: 4rem 0;
+  text-align: center;
+  background: #fff;
+}
+
+.story-events h2 {
+  font-size: 2rem;
+  color: #333;
+  margin-bottom: 2rem;
+}
+
+.button-regular {
+  display: inline-block;
+  padding: 1rem 2rem;
+  background: #16A2A3;
+  color: #fff;
+  text-decoration: none;
+  border-radius: 5px;
+  font-weight: 600;
+  transition: background 0.3s;
+}
+
+.button-regular:hover {
+  background: #138687;
+}
+
+@media (max-width: 768px) {
+  .story-hero h1 {
+    font-size: 2rem;
+  }
+
+  .story-hero h1 span {
+    font-size: 1rem;
+  }
+
+  .story-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .story-row-top,
+  .story-row-bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .timeline-slider {
+    grid-template-columns: 1fr;
+  }
+
+  .story-ya-title {
+    font-size: 1.8rem;
+  }
+
+  .section-header h2 {
+    font-size: 2rem;
+  }
+}

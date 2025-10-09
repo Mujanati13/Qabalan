@@ -1,0 +1,42 @@
+/* Reuse login modal styles for register */
+@import './Login.css';
+
+/* Success message styling */
+.success-message {
+  background-color: #d4edda;
+  border: 1px solid #c3e6cb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 20px;
+}
+
+.success-message p {
+  color: #155724;
+  margin: 0;
+  font-size: 14px;
+  text-align: center;
+}
+
+/* Two-column layout for first/last name */
+.form-row {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 0;
+}
+
+.form-half {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Responsive: Stack on mobile */
+@media screen and (max-width: 768px) {
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+  
+  .form-half {
+    width: 100%;
+  }
+}

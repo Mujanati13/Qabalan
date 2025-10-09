@@ -521,9 +521,9 @@ const Orders = () => {
   const [streets, setStreets] = useState([]);
 
   const [filters, setFilters] = useState({
-    status: "all",
-    order_type: "all",
-    payment_method: "all",
+    status: [],
+    order_type: [],
+    payment_method: [],
     date_range: "all",
     custom_date_range: null,
     search: "",
@@ -637,18 +637,19 @@ const Orders = () => {
 
     return orders.filter((order) => {
       // Payment method filter
-      if (filters.payment_method && filters.payment_method !== "all") {
-        if (order.payment_method !== filters.payment_method) return false;
+      // Payment method filter (multi-select)
+      if (filters.payment_method && Array.isArray(filters.payment_method) && filters.payment_method.length > 0) {
+        if (!filters.payment_method.includes(order.payment_method)) return false;
       }
 
-      // Status filter
-      if (filters.status && filters.status !== "all") {
-        if (order.order_status !== filters.status) return false;
+      // Status filter (multi-select)
+      if (filters.status && Array.isArray(filters.status) && filters.status.length > 0) {
+        if (!filters.status.includes(order.order_status)) return false;
       }
 
-      // Order type filter
-      if (filters.order_type && filters.order_type !== "all") {
-        if (order.order_type !== filters.order_type) return false;
+      // Order type filter (multi-select)
+      if (filters.order_type && Array.isArray(filters.order_type) && filters.order_type.length > 0) {
+        if (!filters.order_type.includes(order.order_type)) return false;
       }
 
       // Date range filter
@@ -976,8 +977,8 @@ const Orders = () => {
           style: { marginTop: "10vh" },
         });
 
-        // Add the new order to the beginning of the list if on pending filter or all
-        if (filters.status === "all" || filters.status === "pending") {
+        // Add the new order to the beginning of the list if status filter is empty or includes pending
+        if (!filters.status || filters.status.length === 0 || filters.status.includes("pending")) {
           setOrders((prevOrders) => {
             // Create a new order object with the received data
             const newOrder = {
@@ -1213,15 +1214,15 @@ const Orders = () => {
       setLoading(true);
       const params = {};
 
-      // Apply filters properly
-      if (filters.status && filters.status !== "all") {
-        params.status = filters.status;
+      // Apply filters properly - handle multi-select arrays
+      if (filters.status && Array.isArray(filters.status) && filters.status.length > 0) {
+        params.status = filters.status.join(',');
       }
-      if (filters.order_type && filters.order_type !== "all") {
-        params.order_type = filters.order_type;
+      if (filters.order_type && Array.isArray(filters.order_type) && filters.order_type.length > 0) {
+        params.order_type = filters.order_type.join(',');
       }
-      if (filters.payment_method && filters.payment_method !== "all") {
-        params.payment_method = filters.payment_method;
+      if (filters.payment_method && Array.isArray(filters.payment_method) && filters.payment_method.length > 0) {
+        params.payment_method = filters.payment_method.join(',');
       }
       if (filters.search && filters.search.trim()) {
         params.search = filters.search.trim();
@@ -1475,7 +1476,7 @@ const Orders = () => {
 
   const fetchProducts = async () => {
     try {
-      const response = await api.get("/products");
+      const response = await api.get("/products", { params: { limit: 1000 } });
       const products = response.data.data || [];
       console.log("Raw API response:", response.data);
       console.log("Products array from API:", products);
@@ -1498,10 +1499,24 @@ const Orders = () => {
           }))
         );
 
-        console.log("Using API products:", products);
-        setAvailableProducts(products);
-        setProducts(products);
-        return products;
+        // Fetch variants for each product
+        const productsWithVariants = await Promise.all(
+          products.map(async (product) => {
+            try {
+              const variantsResponse = await api.get(`/products/${product.id}/variants`);
+              const variants = variantsResponse.data.data || [];
+              return { ...product, variants };
+            } catch (error) {
+              console.warn(`Failed to fetch variants for product ${product.id}:`, error);
+              return { ...product, variants: [] };
+            }
+          })
+        );
+
+        console.log("Products with variants loaded:", productsWithVariants);
+        setAvailableProducts(productsWithVariants);
+        setProducts(productsWithVariants);
+        return productsWithVariants;
       } else {
         console.warn("No products returned from API, using fallback mock data");
         // Only use mock data if API returns empty array
@@ -2350,6 +2365,7 @@ const Orders = () => {
         delivery_fee: deliveryFee,
         items: editOrderItems.map((item) => ({
           product_id: item.product_id,
+          variant_id: item.variant_id || null,
           quantity: item.quantity,
           unit_price: item.unit_price,
           total_price: item.total_price,
@@ -2554,19 +2570,37 @@ const Orders = () => {
     }
   };
 
-  const handlePrintInvoice = (order) => {
-    const printWindow = window.open("", "_blank");
-    const invoiceHtml = generateInvoiceHTML(order);
+  const handlePrintInvoice = async (order) => {
+    try {
+      // Fetch the latest order data to ensure we have updated info
+      const response = await ordersService.getOrder(order.id);
+      let completeOrder = order;
+      
+      if (response.success && response.data) {
+        const { order: orderDetails, items } = response.data;
+        completeOrder = {
+          ...order,
+          ...orderDetails,
+          items: items || order.items || [],
+        };
+      }
+      
+      const printWindow = window.open("", "_blank");
+      const invoiceHtml = generateInvoiceHTML(completeOrder);
 
-    printWindow.document.write(invoiceHtml);
-    printWindow.document.close();
-    printWindow.focus();
+      printWindow.document.write(invoiceHtml);
+      printWindow.document.close();
+      printWindow.focus();
 
-    // Wait for content to load, then print
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 250);
+      // Wait for content to load, then print
+      setTimeout(() => {
+        printWindow.print();
+        printWindow.close();
+      }, 250);
+    } catch (error) {
+      console.error("Error generating invoice:", error);
+      message.error("Failed to generate invoice");
+    }
   };
 
   const generateInvoiceHTML = (order) => {
@@ -2607,7 +2641,7 @@ const Orders = () => {
     </head>
     <body>
         <div class="header">
-            <div class="company-name">FECS Restaurant</div>
+            <div class="company-name">Qabalan Restaurant</div>
             <div class="invoice-title">INVOICE</div>
         </div>
         
@@ -2683,10 +2717,16 @@ const Orders = () => {
                           const unitPrice = Number(
                             item?.unit_price || item?.price || 0
                           );
+                          
+                          // Get variant info
+                          const variantInfo =
+                            item?.variant_name && item?.variant_value
+                              ? ` (${item.variant_name}: ${item.variant_value})`
+                              : "";
 
                           return `
                     <tr>
-                        <td>${productName}</td>
+                        <td>${productName}${variantInfo}</td>
                         <td class="qty-col">${quantity}</td>
                         <td class="price-col">${formatPrice(unitPrice)}</td>
                         <td class="price-col">${formatPrice(
@@ -2710,21 +2750,7 @@ const Orders = () => {
                     )}</td>
                 </tr>
         ${
-          order.delivery_fee_original &&
-          Number(order.delivery_fee_original) > Number(order.delivery_fee || 0)
-            ? `
-        <tr>
-          <td>Delivery Fee (Original):</td>
-          <td style="text-align: right;">${formatPrice(
-            order.delivery_fee_original
-          )}</td>
-        </tr>
-        `
-            : ""
-        }
-        ${
-          Number(order.delivery_fee || 0) > 0 ||
-          Number(order.shipping_discount_amount || 0) > 0
+          Number(order.delivery_fee || 0) > 0
             ? `
                 <tr>
                     <td>Delivery Fee:</td>
@@ -2965,6 +2991,7 @@ const Orders = () => {
         orderItems.map((item) => ({
           id: item.id || Date.now() + Math.random(),
           product_id: item.product_id,
+          variant_id: item.variant_id || null,
           product_name:
             item.product_name ||
             item.product_title_en ||
@@ -3287,6 +3314,7 @@ const Orders = () => {
       const newItem = {
         id: Date.now() + Math.random(),
         product_id: null,
+        variant_id: null,
         product_name: "",
         quantity: 1,
         unit_price: 0,
@@ -3344,6 +3372,9 @@ const Orders = () => {
                       selectedProduct.title_ar ||
                       selectedProduct.name;
 
+                // Reset variant when product changes
+                updatedItem.variant_id = null;
+
                 // Check multiple possible price fields - Updated for correct backend fields
                 const productPrice =
                   selectedProduct.final_price || // Backend calculated price (preferred)
@@ -3398,6 +3429,33 @@ const Orders = () => {
                 console.log("Updated item with product:", updatedItem);
               } else {
                 console.warn("Product not found with ID:", value);
+              }
+            }
+
+            // Update variant info and price when variant is selected
+            if (field === "variant_id" && value && item.product_id) {
+              const selectedProduct = products.find((p) => p.id === item.product_id);
+              if (selectedProduct && selectedProduct.variants) {
+                const selectedVariant = selectedProduct.variants.find((v) => v.id === value);
+                if (selectedVariant) {
+                  // Calculate variant price based on price_behavior
+                  const basePrice = Number(selectedProduct.final_price || selectedProduct.sale_price || selectedProduct.base_price || 0);
+                  const modifier = Number(selectedVariant.price_modifier || 0);
+                  const behavior = selectedVariant.price_behavior || 'add';
+                  
+                  let variantPrice;
+                  if (behavior === 'override') {
+                    // Override: use modifier as the final price
+                    variantPrice = modifier;
+                  } else {
+                    // Add: add modifier to base price
+                    variantPrice = basePrice + modifier;
+                  }
+                  
+                  updatedItem.unit_price = Number(variantPrice);
+                  updatedItem.total_price = Number(updatedItem.quantity) * Number(variantPrice);
+                  console.log("Updated item with variant:", { variantPrice, behavior, modifier, basePrice });
+                }
               }
             }
 
@@ -3893,8 +3951,7 @@ const Orders = () => {
       );
 
       // Use the comprehensive export utility
-      await exportOrders;
-      ToExcel(ordersWithDetails, {
+      await exportOrdersToExcel(ordersWithDetails, {
         includeItems: true,
         includeStatusHistory: true,
         filename: `FECS_Orders_Export_${selectedRowKeys.length}_Orders`,
@@ -4237,16 +4294,6 @@ const Orders = () => {
         "discountAmount",
         "discount_value",
         "discountValue",
-        "discount_total",
-        "discountTotal",
-        "total_discount",
-        "totalDiscount",
-        "total_discount_amount",
-        "totalDiscountAmount",
-        "total_discount_value",
-        "totalDiscountValue",
-        "total_discounts",
-        "totalDiscounts",
         "order_discount",
         "orderDiscount",
         "promo_discount",
@@ -4426,14 +4473,6 @@ const Orders = () => {
       parseAmount(order?.discount),
       parseAmount(order?.discount_value),
       parseAmount(order?.discountValue),
-      parseAmount(order?.discount_total),
-      parseAmount(order?.discountTotal),
-      parseAmount(order?.total_discount),
-      parseAmount(order?.totalDiscount),
-      parseAmount(order?.total_discount_amount),
-      parseAmount(order?.totalDiscountAmount),
-      parseAmount(order?.total_discount_value),
-      parseAmount(order?.totalDiscountValue),
       parseAmount(order?.order_discount),
       parseAmount(order?.orderDiscount),
       parseAmount(order?.promo_discount),
@@ -5178,15 +5217,6 @@ const Orders = () => {
             value: deliveryValue,
             color: hasDeliveryFee ? "#fa8c16" : "#8c8c8c",
           });
-
-          if (shippingDiscount > 0.009) {
-            breakdownRows.push({
-              key: "shipping-discount",
-              label: shippingLabel,
-              value: shippingDiscountValue,
-              color: "#13c2c2",
-            });
-          }
         }
 
         breakdownRows.push({
@@ -5830,12 +5860,14 @@ const Orders = () => {
             </Col>
             <Col xs={24} sm={6} md={4}>
               <Select
+                mode="multiple"
                 style={{ width: "100%" }}
                 placeholder={t("orders.filter_status")}
                 value={filters.status}
                 onChange={(value) => setFilters({ ...filters, status: value })}
+                allowClear
+                maxTagCount="responsive"
               >
-                <Option value="all">{t("common.all")}</Option>
                 <Option value="pending">{t("orders.status_pending")}</Option>
                 <Option value="confirmed">
                   {t("orders.status_confirmed")}
@@ -5857,28 +5889,32 @@ const Orders = () => {
             </Col>
             <Col xs={24} sm={6} md={3}>
               <Select
+                mode="multiple"
                 style={{ width: "100%" }}
                 placeholder={t("orders.filter_type")}
                 value={filters.order_type}
                 onChange={(value) =>
                   setFilters({ ...filters, order_type: value })
                 }
+                allowClear
+                maxTagCount="responsive"
               >
-                <Option value="all">{t("common.all")}</Option>
                 <Option value="delivery">{t("orders.delivery")}</Option>
                 <Option value="pickup">{t("orders.pickup")}</Option>
               </Select>
             </Col>
             <Col xs={24} sm={6} md={3}>
               <Select
+                mode="multiple"
                 style={{ width: "100%" }}
                 placeholder={t("orders.filter_payment")}
                 value={filters.payment_method}
                 onChange={(value) =>
                   setFilters({ ...filters, payment_method: value })
                 }
+                allowClear
+                maxTagCount="responsive"
               >
-                <Option value="all">{t("common.all")}</Option>
                 <Option value="cash">{t("orders.payment_cash")}</Option>
                 <Option value="card">{t("orders.payment_card")}</Option>
                 <Option value="online">{t("orders.payment_online")}</Option>
@@ -6067,8 +6103,7 @@ const Orders = () => {
               key="edit-status"
               icon={<EditOutlined />}
               onClick={() => {
-                setStatusModalVisible(true);
-                setSelectedOrder(selectedOrder);
+                setStatusUpdateVisible(true);
                 setSelectedStatus(selectedOrder?.order_status || "");
                 setStatusNotes("");
               }}
@@ -8302,6 +8337,81 @@ const Orders = () => {
                             })}
                           </Select>
                         </Col>
+
+                        {/* Variant Selector - Show only if product is selected and has variants */}
+                        {item.product_id && (() => {
+                          const selectedProduct = products.find((p) => p.id === item.product_id);
+                          const hasVariants = selectedProduct?.variants && selectedProduct.variants.length > 0;
+                          
+                          if (hasVariants) {
+                            return (
+                              <Col xs={24} md={8}>
+                                <div style={{ marginBottom: 8 }}>
+                                  <Text
+                                    strong
+                                    style={{ fontSize: "12px", color: "#666" }}
+                                  >
+                                    {t("orders.variant") || "Variant"}
+                                  </Text>
+                                </div>
+                                <Select
+                                  style={{ width: "100%" }}
+                                  placeholder={
+                                    t("orders.select_variant") || "Select Variant (Optional)"
+                                  }
+                                  value={item.variant_id}
+                                  onChange={(value) => {
+                                    updateOrderItem(item.id, "variant_id", value);
+                                  }}
+                                  allowClear
+                                  notFoundContent="No variants available"
+                                >
+                                  {selectedProduct.variants.map((variant) => {
+                                    const basePrice = Number(selectedProduct.final_price || selectedProduct.sale_price || selectedProduct.base_price || 0);
+                                    const modifier = Number(variant.price_modifier || 0);
+                                    const behavior = variant.price_behavior || 'add';
+                                    const variantPrice = behavior === 'override' ? modifier : (basePrice + modifier);
+                                    const priceDisplay = modifier === 0 
+                                      ? formatPrice(basePrice)
+                                      : behavior === 'override'
+                                      ? formatPrice(variantPrice)
+                                      : `${formatPrice(basePrice)} + ${formatPrice(modifier)} = ${formatPrice(variantPrice)}`;
+                                    
+                                    return (
+                                      <Option key={variant.id} value={variant.id}>
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            width: "100%",
+                                          }}
+                                        >
+                                          <span style={{ flex: 1 }}>
+                                            {variant.variant_name && variant.variant_value
+                                              ? `${variant.variant_name}: ${variant.variant_value}`
+                                              : variant.variant_name || variant.variant_value || `Variant ${variant.id}`}
+                                          </span>
+                                          <span
+                                            style={{
+                                              color: modifier > 0 ? "#ff7875" : modifier < 0 ? "#52c41a" : "#666",
+                                              fontWeight: "bold",
+                                              marginLeft: "8px",
+                                              fontSize: "11px",
+                                            }}
+                                          >
+                                            {priceDisplay}
+                                          </span>
+                                        </div>
+                                      </Option>
+                                    );
+                                  })}
+                                </Select>
+                              </Col>
+                            );
+                          }
+                          return null;
+                        })()}
 
                         <Col xs={12} md={4}>
                           <div style={{ marginBottom: 8 }}>

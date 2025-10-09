@@ -1,0 +1,25 @@
+<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <rect width="400" height="400" fill="#f8f9fa"/>
+  
+  <!-- Border -->
+  <rect x="10" y="10" width="380" height="380" fill="none" stroke="#dee2e6" stroke-width="2" stroke-dasharray="10,5"/>
+  
+  <!-- Image Icon -->
+  <g transform="translate(200, 160)">
+    <circle r="50" fill="#e9ecef"/>
+    <circle cx="-15" cy="-10" r="6" fill="#adb5bd"/>
+    <circle cx="15" cy="-10" r="6" fill="#adb5bd"/>
+    <path d="M -20 10 Q 0 25 20 10" fill="none" stroke="#adb5bd" stroke-width="4" stroke-linecap="round"/>
+  </g>
+  
+  <!-- Text -->
+  <text x="200" y="260" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" fill="#6c757d" font-weight="600">
+    No Image Available
+  </text>
+  
+  <!-- Subtext -->
+  <text x="200" y="285" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#adb5bd">
+    Qabalan Bakery
+  </text>
+</svg>

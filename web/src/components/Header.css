@@ -1,0 +1,286 @@
+.site-header {
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  padding: 1rem 2rem;
+}
+
+.site-header-flex-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1400px;
+  margin: 0 auto;
+  gap: 2rem;
+}
+
+.header-logo {
+  flex-shrink: 0;
+}
+
+.header-logo img {
+  height: 60px;
+  width: auto;
+  display: block;
+}
+
+.site-menu-toggle {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem;
+}
+
+.hamburger-box {
+  width: 30px;
+  height: 24px;
+  display: inline-block;
+  position: relative;
+}
+
+.hamburger-inner {
+  display: block;
+  top: 50%;
+  margin-top: -2px;
+}
+
+.hamburger-inner,
+.hamburger-inner::before,
+.hamburger-inner::after {
+  width: 30px;
+  height: 3px;
+  background-color: #333;
+  border-radius: 4px;
+  position: absolute;
+  transition: transform 0.15s ease;
+}
+
+.hamburger-inner::before,
+.hamburger-inner::after {
+  content: "";
+  display: block;
+}
+
+.hamburger-inner::before {
+  top: -8px;
+}
+
+.hamburger-inner::after {
+  bottom: -8px;
+}
+
+.mobile-menu-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 3rem;
+  flex: 1;
+}
+
+.primary-navigation {
+  display: flex;
+  flex: 1;
+}
+
+.primary-navigation:first-of-type {
+  justify-content: flex-start;
+}
+
+.primary-navigation:last-of-type {
+  justify-content: flex-end;
+}
+
+.menu-primary {
+  display: flex;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.menu-item {
+  position: relative;
+}
+
+.menu-item a {
+  text-decoration: none;
+  color: #333;
+  font-size: 1rem;
+  font-weight: 500;
+  padding: 0.5rem 0.75rem;
+  transition: color 0.3s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.menu-item a:hover {
+  color: #16A2A3;
+}
+
+.menu-secondary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.menu-item-icon {
+  display: flex;
+  align-items: center;
+}
+
+.cart-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+}
+
+.cart-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: #16A2A3;
+  color: #fff;
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: bold;
+}
+
+.language-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  color: #333;
+  display: flex;
+  align-items: center;
+  transition: color 0.3s;
+}
+
+.language-toggle:hover {
+  color: #16A2A3;
+}
+
+.auth-button {
+  background: #16A2A3;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 25px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background 0.3s;
+  white-space: nowrap;
+}
+
+.auth-button:hover {
+  background: #138d8e;
+}
+
+@media (max-width: 1200px) {
+  .menu-primary {
+    gap: 1rem;
+  }
+
+  .menu-item a {
+    font-size: 0.9rem;
+    padding: 0.5rem;
+  }
+
+  .header-logo img {
+    height: 55px;
+  }
+
+  .mobile-menu-wrapper {
+    gap: 2rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .site-header {
+    padding: 0.75rem 1rem;
+  }
+
+  .site-menu-toggle {
+    display: block;
+  }
+
+  .site-header-flex-wrap {
+    position: relative;
+  }
+
+  .header-logo {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+
+  .header-logo img {
+    height: 50px;
+  }
+
+  .menu-secondary {
+    margin-left: auto;
+  }
+
+  .auth-button {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+  }
+
+  .mobile-menu-wrapper {
+    display: none;
+    position: fixed;
+    top: 75px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #fff;
+    overflow-y: auto;
+    padding: 2rem;
+    flex-direction: column;
+    gap: 2rem;
+    z-index: 999;
+  }
+
+  .mobile-menu-wrapper.active {
+    display: flex;
+  }
+
+  .primary-navigation {
+    width: 100%;
+    justify-content: center !important;
+  }
+
+  .menu-primary {
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
+  .menu-item {
+    width: 100%;
+    text-align: center;
+  }
+
+  .menu-item a,
+  .cart-link,
+  .language-toggle {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 1rem;
+    width: 100%;
+  }
+}

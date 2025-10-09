@@ -876,11 +876,12 @@ const Categories = () => {
       responsive: ['sm'],
       ...getColumnSortProps('products_count', 'number'),
       render: (count, record) => (
-        <Tooltip title={`${count} products will be ${record.is_active ? 'available' : 'hidden'} in branches`}>
+        <Tooltip title={`${count || 0} product${count !== 1 ? 's' : ''} in this category (${record.is_active ? 'Category Active' : 'Category Disabled'})`}>
           <Badge 
-            count={count} 
+            count={count || 0}
+            showZero
             style={{ 
-              backgroundColor: record.is_active ? '#52c41a' : '#ff4d4f',
+              backgroundColor: record.is_active ? '#52c41a' : '#8c8c8c',
               cursor: 'help'
             }} 
           />

@@ -66,6 +66,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   const [products, setProducts] = useState([]);
   const [selectedProducts, setSelectedProducts] = useState([]);
   const [searchingProducts, setSearchingProducts] = useState(false);
+  const [branchInventory, setBranchInventory] = useState({}); // Store branch inventory by product_id
   
   // Order preferences
   const [paymentMethod, setPaymentMethod] = useState('cash');
@@ -98,7 +99,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       currency: 'JOD',
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-      currencyDisplay: 'narrowSymbol'
+      currencyDisplay: 'code'
     }).format(numPrice);
   };
 
@@ -151,6 +152,13 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     calculateOrderTotals();
   }, [selectedProducts, selectedAddress, useNewAddress, selectedBranch]);
 
+  // Reload products when branch is selected to get branch-specific inventory
+  useEffect(() => {
+    if (selectedBranch && visible) {
+      loadProductsForBranch(selectedBranch.id);
+    }
+  }, [selectedBranch?.id, visible]);
+
   useEffect(() => {
     if (useNewAddress) {
       // Recalculate when address form changes (debounced)
@@ -188,11 +196,15 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     try {
       setSearchingProducts(true);
       const response = await productsService.getProducts({ 
-        limit: 100,
-        include_inactive: false
+        limit: 1000,
+        include_inactive: false,
+        include_branch_inventory: true // Request branch inventory data
       });
       const productsData = response.data || [];
       console.log('Loaded products in CreateOrderModal:', productsData.length);
+      
+      // If the API doesn't return branch_inventory, we need to fetch it separately for each product
+      // For now, we'll use the products as-is and the UI will show status based on what's available
       setProducts(productsData);
       
       // If no products loaded, try again with a simpler request
@@ -213,6 +225,40 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         console.log('Using cached products as fallback:', existingProducts.length);
         setProducts(existingProducts);
       }
+    } finally {
+      setSearchingProducts(false);
+    }
+  };
+
+  const loadProductsForBranch = async (branchId) => {
+    if (!branchId) return;
+    
+    try {
+      setSearchingProducts(true);
+      const response = await productsService.getProducts({ 
+        limit: 1000,
+        include_inactive: false,
+        branch_id: branchId,
+        branch_availability: 'all' // Get all products, including unavailable ones
+      });
+      const productsData = response.data || [];
+      console.log(`Loaded ${productsData.length} products for branch ${branchId}`);
+      
+      // Store branch inventory info
+      const inventory = {};
+      productsData.forEach(product => {
+        inventory[product.id] = {
+          is_available: product.branch_is_available,
+          stock_quantity: product.branch_stock_quantity || 0,
+          stock_status: product.branch_stock_status
+        };
+      });
+      setBranchInventory(inventory);
+      
+      // Update products list
+      setProducts(productsData);
+    } catch (error) {
+      console.error('Error loading products for branch:', error);
     } finally {
       setSearchingProducts(false);
     }
@@ -367,6 +413,8 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       const addressPayload = {
         ...addressData,
         user_id: selectedCustomer.id,
+        // Ensure phone is provided (required by backend)
+        phone: addressData.phone || selectedCustomer.phone || '',
         // Ensure address_name is provided and at least 2 characters
         address_name: addressData.address_name || 'New Address',
         // Provide fallback values for location if not selected from dropdowns
@@ -695,6 +743,19 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       }
     } catch (error) {
       console.error('Error calculating order totals:', error);
+      
+      // Check if it's a product availability error
+      const errorMessage = error.response?.data?.message || error.message || '';
+      if (errorMessage.includes('not available at branch')) {
+        const branchName = selectedBranch?.name || `Branch ${selectedBranch?.id || ''}`;
+        message.warning({
+          content: `Some products are not available at ${branchName}. Please ensure all products are added to this branch's inventory or select a different branch.`,
+          duration: 5
+        });
+      } else {
+        message.error('Failed to calculate order totals: ' + errorMessage);
+      }
+      
       // Fallback to basic calculation
       const subtotal = calculateTotal();
       const finalDeliveryFee = customDeliveryFee || 0;
@@ -786,7 +847,8 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
           const addressValues = await addressForm.validateFields();
           const addressResponse = await customersService.createAddress({
             ...addressValues,
-            user_id: selectedCustomer.id
+            user_id: selectedCustomer.id,
+            phone: addressValues.phone || selectedCustomer.phone || ''
           });
           addressData = addressResponse.data;
         }
@@ -896,7 +958,24 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         errorMessage = error.message;
       }
       
-      message.error(errorMessage);
+      // Check if it's a product availability error
+      if (errorMessage.includes('not available at branch')) {
+        const branchName = selectedBranch?.name || `Branch ${selectedBranch?.id || ''}`;
+        message.error({
+          content: (
+            <div>
+              <strong>Product Availability Issue</strong>
+              <br />
+              Some products are not available at {branchName}.
+              <br />
+              Please ensure all products are added to this branch's inventory or select a different branch.
+            </div>
+          ),
+          duration: 6
+        });
+      } else {
+        message.error(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -935,7 +1014,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       title: t ? t('orders.price') : 'Price',
       dataIndex: 'price',
       key: 'price',
-      render: (price) => `$${price.toFixed(2)}`
+      render: (price) => `${price.toFixed(2)} JOD`
     },
     {
       title: t ? t('orders.quantity') : 'Quantity',
@@ -954,7 +1033,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       title: t ? t('orders.total') : 'Total',
       dataIndex: 'total',
       key: 'total',
-      render: (total) => <Text strong>${total.toFixed(2)}</Text>
+      render: (total) => <Text strong>{total.toFixed(2)} JOD</Text>
     },
     {
       title: t ? t('common.actions') : 'Actions',
@@ -972,98 +1051,6 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
 
   const renderCustomerStep = () => (
     <div>
-      <Form.Item 
-        label={t ? t('orders.selectBranch') : 'Select Branch'}
-        required
-        style={{ marginBottom: 16 }}
-      >
-        <Select
-          placeholder={t ? t('orders.selectBranchPlaceholder') : 'Select a branch...'}
-          value={selectedBranch?.id}
-          onChange={(branchId) => {
-            const branch = branches.find(b => b.id === branchId);
-            setSelectedBranch(branch);
-          }}
-          showSearch
-          optionFilterProp="children"
-          optionLabelProp="label"
-          filterOption={(input, option) => {
-            const branch = branches.find(b => b.id === option.value);
-            if (!branch) return false;
-            const searchText = `${branch.title_en || ''} ${branch.title_ar || ''} ${branch.address_en || ''} ${branch.address_ar || ''}`.toLowerCase();
-            return searchText.includes(input.toLowerCase());
-          }}
-        >
-          {branches.map(branch => (
-            <Option 
-              key={branch.id} 
-              value={branch.id}
-              label={branch.title_en || branch.title_ar || `Branch ${branch.id}`}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ 
-                    fontWeight: '500',
-                    whiteSpace: 'normal',
-                    wordWrap: 'break-word',
-                    lineHeight: '1.4'
-                  }}>
-                    {branch.title_en || branch.title_ar || `Branch ${branch.id}`}
-                  </div>
-                  {(branch.address_en || branch.address_ar) && (
-                    <div style={{ 
-                      fontSize: '12px', 
-                      color: '#666', 
-                      marginTop: '2px',
-                      whiteSpace: 'normal',
-                      wordWrap: 'break-word',
-                      lineHeight: '1.3'
-                    }}>
-                      {branch.address_en || branch.address_ar}
-                    </div>
-                  )}
-                </div>
-                <Tag color={branch.is_active ? 'green' : 'red'} size="small">
-                  {branch.is_active ? (t ? t('common.active') : 'Active') : (t ? t('common.inactive') : 'Inactive')}
-                </Tag>
-              </div>
-            </Option>
-          ))}
-        </Select>
-        {branches.length > 0 && (
-          <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
-            {t ? t('orders.branchesAvailable') : `${branches.length} branches available`}
-          </div>
-        )}
-      </Form.Item>
-
-      {selectedBranch && (
-        <Card size="small" style={{ marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <ShopOutlined />
-            <Text strong>{selectedBranch.title_en || selectedBranch.title_ar || `Branch ${selectedBranch.id}`}</Text>
-            <Tag color={selectedBranch.is_active ? 'green' : 'red'} size="small">
-              {selectedBranch.is_active ? (t ? t('common.active') : 'Active') : (t ? t('common.inactive') : 'Inactive')}
-            </Tag>
-          </div>
-          {(selectedBranch.address_en || selectedBranch.address_ar) && (
-            <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
-              <EnvironmentOutlined /> {selectedBranch.address_en || selectedBranch.address_ar}
-            </div>
-          )}
-          {selectedBranch.phone && (
-            <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
-              📞 {selectedBranch.phone}
-            </div>
-          )}
-          {selectedBranch.email && (
-            <div style={{ fontSize: '12px', color: '#666' }}>
-              ✉️ {selectedBranch.email}
-            </div>
-          )}
-        </Card>
-      )}
-
       <Form.Item 
         label={t ? t('orders.selectCustomer') : 'Select Customer'}
         required
@@ -1318,6 +1305,98 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
 
   const renderProductsStep = () => (
     <div>
+      <Form.Item 
+        label={t ? t('orders.selectBranch') : 'Select Branch'}
+        required
+        style={{ marginBottom: 16 }}
+      >
+        <Select
+          placeholder={t ? t('orders.selectBranchPlaceholder') : 'Select a branch...'}
+          value={selectedBranch?.id}
+          onChange={(branchId) => {
+            const branch = branches.find(b => b.id === branchId);
+            setSelectedBranch(branch);
+          }}
+          showSearch
+          optionFilterProp="children"
+          optionLabelProp="label"
+          filterOption={(input, option) => {
+            const branch = branches.find(b => b.id === option.value);
+            if (!branch) return false;
+            const searchText = `${branch.title_en || ''} ${branch.title_ar || ''} ${branch.address_en || ''} ${branch.address_ar || ''}`.toLowerCase();
+            return searchText.includes(input.toLowerCase());
+          }}
+        >
+          {branches.map(branch => (
+            <Option 
+              key={branch.id} 
+              value={branch.id}
+              label={branch.title_en || branch.title_ar || `Branch ${branch.id}`}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ 
+                    fontWeight: '500',
+                    whiteSpace: 'normal',
+                    wordWrap: 'break-word',
+                    lineHeight: '1.4'
+                  }}>
+                    {branch.title_en || branch.title_ar || `Branch ${branch.id}`}
+                  </div>
+                  {(branch.address_en || branch.address_ar) && (
+                    <div style={{ 
+                      fontSize: '12px', 
+                      color: '#666', 
+                      marginTop: '2px',
+                      whiteSpace: 'normal',
+                      wordWrap: 'break-word',
+                      lineHeight: '1.3'
+                    }}>
+                      {branch.address_en || branch.address_ar}
+                    </div>
+                  )}
+                </div>
+                <Tag color={branch.is_active ? 'green' : 'red'} size="small">
+                  {branch.is_active ? (t ? t('common.active') : 'Active') : (t ? t('common.inactive') : 'Inactive')}
+                </Tag>
+              </div>
+            </Option>
+          ))}
+        </Select>
+        {branches.length > 0 && (
+          <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
+            {t ? t('orders.branchesAvailable') : `${branches.length} branches available`}
+          </div>
+        )}
+      </Form.Item>
+
+      {selectedBranch && (
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <ShopOutlined />
+            <Text strong>{selectedBranch.title_en || selectedBranch.title_ar || `Branch ${selectedBranch.id}`}</Text>
+            <Tag color={selectedBranch.is_active ? 'green' : 'red'} size="small">
+              {selectedBranch.is_active ? (t ? t('common.active') : 'Active') : (t ? t('common.inactive') : 'Inactive')}
+            </Tag>
+          </div>
+          {(selectedBranch.address_en || selectedBranch.address_ar) && (
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
+              <EnvironmentOutlined /> {selectedBranch.address_en || selectedBranch.address_ar}
+            </div>
+          )}
+          {selectedBranch.phone && (
+            <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
+              📞 {selectedBranch.phone}
+            </div>
+          )}
+          {selectedBranch.email && (
+            <div style={{ fontSize: '12px', color: '#666' }}>
+              ✉️ {selectedBranch.email}
+            </div>
+          )}
+        </Card>
+      )}
+
       <Row gutter={16}>
         <Col span={12}>
           <Card title={t ? t('orders.addProducts') : 'Add Products'} size="small">
@@ -1347,25 +1426,56 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
                        sku.includes(searchText);
               }}
             >
-              {products.map(product => (
-                <Option 
-                  key={product.id} 
-                  value={product.id}
-                  label={`${product.title_en || product.name} ${product.sku || ''}`}
-                >
-                  <div>
-                    <div style={{ fontWeight: 'bold' }}>
-                      {product.title_en || product.name}
+              {products.map(product => {
+                // Check if product is available at selected branch
+                const inventory = branchInventory[product.id] || product;
+                const isAvailableAtBranch = selectedBranch ? (
+                  inventory.branch_is_available === 1 || inventory.is_available === 1
+                ) : true;
+                const stockQuantity = selectedBranch ? (
+                  inventory.branch_stock_quantity || inventory.stock_quantity || 0
+                ) : (product.stock_quantity || 0);
+                const stockStatus = selectedBranch ? (
+                  inventory.branch_stock_status || inventory.stock_status || 'unknown'
+                ) : (product.stock_status || 'unknown');
+                
+                return (
+                  <Option 
+                    key={product.id} 
+                    value={product.id}
+                    label={`${product.title_en || product.name} ${product.sku || ''}`}
+                    disabled={selectedBranch && !isAvailableAtBranch}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 'bold' }}>
+                          {product.title_en || product.name}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#666', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>{product.sku ? `SKU: ${product.sku}` : ''}</span>
+                          <span style={{ fontWeight: 'bold', color: '#52c41a' }}>
+                            {formatPrice(parseFloat(product.base_price || product.sale_price || product.price || 0))}
+                          </span>
+                        </div>
+                      </div>
+                      {selectedBranch && (
+                        <div style={{ marginLeft: 8 }}>
+                          {isAvailableAtBranch ? (
+                            <Tag color={stockQuantity > 0 ? 'green' : 'orange'} size="small">
+                              {stockStatus === 'in_stock' ? `Stock: ${stockQuantity}` : 
+                               stockStatus === 'low_stock' ? `Low: ${stockQuantity}` :
+                               stockStatus === 'out_of_stock' ? 'Out of Stock' :
+                               'Available'}
+                            </Tag>
+                          ) : (
+                            <Tag color="red" size="small">Not at Branch</Tag>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div style={{ fontSize: '12px', color: '#666', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>{product.sku ? `SKU: ${product.sku}` : ''}</span>
-                      <span style={{ fontWeight: 'bold', color: '#52c41a' }}>
-                        {formatPrice(parseFloat(product.base_price || product.sale_price || product.price || 0))}
-                      </span>
-                    </div>
-                  </div>
-                </Option>
-              ))}
+                  </Option>
+                );
+              })}
             </Select>
             
             <div style={{ fontSize: '12px', color: '#666' }}>
@@ -1473,7 +1583,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>{t ? t('orders.selectedProducts') : 'Selected Products'}</span>
                 <div style={{ fontSize: '14px', textAlign: 'right' }}>
-                  <div>{t ? t('orders.subtotal') : 'Subtotal'}: ${orderTotals.subtotal.toFixed(2)}</div>
+                  <div>{t ? t('orders.subtotal') : 'Subtotal'}: {orderTotals.subtotal.toFixed(2)} JOD</div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
                     <span>{t ? t('orders.deliveryFee') : 'Delivery Fee'}:</span>
                     {isDeliveryFeeEditing ? (
@@ -1512,12 +1622,12 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
                         }}
                         title={t ? t('orders.clickToEditDeliveryFee') : 'Click to edit delivery fee'}
                       >
-                        ${orderTotals.delivery_fee.toFixed(2)}
+                        {orderTotals.delivery_fee.toFixed(2)} JOD
                       </span>
                     )}
                   </div>
                   <div style={{ fontSize: '16px', fontWeight: 'bold', borderTop: '1px solid #d9d9d9', paddingTop: '4px', marginTop: '4px' }}>
-                    {t ? t('orders.total') : 'Total'}: ${orderTotals.total_amount.toFixed(2)}
+                    {t ? t('orders.total') : 'Total'}: {orderTotals.total_amount.toFixed(2)} JOD
                   </div>
                 </div>
               </div>
@@ -1544,7 +1654,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   const getSteps = () => {
     const allSteps = [
       {
-        title: t ? t('orders.branchAndCustomer') : 'Branch & Customer',
+        title: t ? t('orders.customer') : 'Customer',
         icon: <UserOutlined />,
         content: renderCustomerStep()
       },

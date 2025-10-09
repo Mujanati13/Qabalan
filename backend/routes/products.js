@@ -11,15 +11,21 @@ const mapVariantResponse = (variant) => {
     return variant;
   }
 
-  const hasTitleAr = Object.prototype.hasOwnProperty.call(variant, 'title_ar');
-  const hasTitleEn = Object.prototype.hasOwnProperty.call(variant, 'title_en');
   const hasPrice = Object.prototype.hasOwnProperty.call(variant, 'price');
+  const normalizedPriceBehavior = variant.price_behavior === 'override' ? 'override' : 'add';
+  const rawPriority = variant.override_priority;
+  const normalizedPriority = rawPriority === null || rawPriority === undefined || rawPriority === ''
+    ? null
+    : Number(rawPriority);
 
   return {
     ...variant,
-    ...(hasTitleAr ? {} : { title_ar: variant.variant_name || variant.variant_value || null }),
-    ...(hasTitleEn ? {} : { title_en: variant.variant_value || variant.variant_name || null }),
-    ...(hasPrice ? {} : { price: null })
+    // Keep title_ar and title_en as-is from database (don't mix with variant_name/variant_value)
+    title_ar: variant.title_ar || null,
+    title_en: variant.title_en || null,
+    ...(hasPrice ? {} : { price: null }),
+    price_behavior: normalizedPriceBehavior,
+    override_priority: Number.isFinite(normalizedPriority) ? normalizedPriority : null,
   };
 };
 
@@ -166,20 +172,26 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
     let shouldIncludeInactive = include_inactive === 'true' || include_inactive === true || include_inactive === '1';
     console.log('Products API - include_inactive parameter:', include_inactive, 'status parameter:', status);
 
-    let statusFilterValue = null;
+    // Handle multi-select status filter
     if (status !== undefined && status !== null) {
-      const statusNormalized = String(status).toLowerCase();
-      if (['1', 'true', 'active'].includes(statusNormalized)) {
-        statusFilterValue = 1;
-      } else if (['0', 'false', 'inactive'].includes(statusNormalized)) {
-        statusFilterValue = 0;
+      const statusArray = String(status).includes(',') 
+        ? String(status).split(',').map(s => s.trim().toLowerCase()) 
+        : [String(status).toLowerCase()];
+      
+      const statusValues = [];
+      for (const s of statusArray) {
+        if (['1', 'true', 'active'].includes(s)) {
+          statusValues.push(1);
+        } else if (['0', 'false', 'inactive'].includes(s)) {
+          statusValues.push(0);
+        }
       }
-    }
-
-    if (statusFilterValue !== null) {
-      shouldIncludeInactive = true; // Explicit status filter overrides default active-only behaviour
-      whereConditions.push('p.is_active = ?');
-      whereParams.push(statusFilterValue);
+      
+      if (statusValues.length > 0) {
+        shouldIncludeInactive = true; // Explicit status filter overrides default active-only behaviour
+        whereConditions.push(`p.is_active IN (${statusValues.map(() => '?').join(',')})`);
+        whereParams.push(...statusValues);
+      }
     } else if (!shouldIncludeInactive) {
       whereConditions.push('p.is_active = 1');
     }
@@ -191,10 +203,13 @@ router.get('/', optionalAuth, validatePagination, async (req, res, next) => {
       ? normalizedBranchAvailability
       : (shouldIncludeBranchInactive ? 'all' : 'available');
 
-    // Category filter
+    // Category filter - support multi-select
     if (category_id) {
-      whereConditions.push('p.category_id = ?');
-      whereParams.push(category_id);
+      const categoryArray = category_id.includes(',') ? category_id.split(',').map(c => c.trim()) : [category_id];
+      if (categoryArray.length > 0) {
+        whereConditions.push(`p.category_id IN (${categoryArray.map(() => '?').join(',')})`);
+        whereParams.push(...categoryArray);
+      }
     }
 
     // Department filter
@@ -534,7 +549,7 @@ router.post('/', authenticate, authorize('admin', 'staff'), uploadSingle('main_i
         slug, sku, base_price, sale_price, loyalty_points, weight, weight_unit,
         main_image, is_featured, stock_status, is_active, stock_quantity,
         is_home_top, is_home_new
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       category_id, 
       title_ar, 
@@ -916,34 +931,49 @@ router.delete('/:id', authenticate, authorize('admin', 'staff'), validateId, asy
       });
     }
 
+    // Note: Foreign key constraint will automatically set product_id to NULL in order_items
+    // when the product is deleted (ON DELETE SET NULL)
+    
     // Get all product images before deletion
     const productImages = await executeQuery(
       'SELECT image_url FROM product_images WHERE product_id = ?',
       [req.params.id]
     );
 
-    // Soft delete the product
-    await executeQuery(
-      'UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [req.params.id]
-    );
-
-    // Optionally, for hard delete (uncomment if needed):
-    // await executeQuery('DELETE FROM product_images WHERE product_id = ?', [req.params.id]);
-    // await executeQuery('DELETE FROM products WHERE id = ?', [req.params.id]);
+    // Hard delete - remove all related records
+    // Delete product images records
+    await executeQuery('DELETE FROM product_images WHERE product_id = ?', [req.params.id]);
     
-    // Clean up images for hard delete (uncomment if doing hard delete):
-    // if (product.main_image) {
-    //   await deleteImage(product.main_image, 'products');
-    // }
-    // for (const img of productImages) {
-    //   await deleteImage(img.image_url, 'products');
-    // }
+    // Delete product variants (will cascade to branch_inventory)
+    await executeQuery('DELETE FROM product_variants WHERE product_id = ?', [req.params.id]);
+    
+    // Delete branch inventory assignments
+    await executeQuery('DELETE FROM branch_inventory WHERE product_id = ?', [req.params.id]);
+    
+    // Delete the product itself
+    await executeQuery('DELETE FROM products WHERE id = ?', [req.params.id]);
+    
+    // Clean up image files from filesystem
+    if (product.main_image) {
+      try {
+        await deleteImage(product.main_image, 'products');
+      } catch (err) {
+        console.error('Failed to delete main image:', err);
+      }
+    }
+    
+    for (const img of productImages) {
+      try {
+        await deleteImage(img.image_url, 'products');
+      } catch (err) {
+        console.error('Failed to delete product image:', err);
+      }
+    }
 
     res.json({
       success: true,
-      message: 'Product deleted successfully',
-      message_ar: 'تم حذف المنتج بنجاح'
+      message: 'Product permanently deleted successfully',
+      message_ar: 'تم حذف المنتج نهائياً بنجاح'
     });
 
   } catch (error) {
@@ -1676,7 +1706,11 @@ router.get('/:id/variants', optionalAuth, validateId, async (req, res, next) => 
         pv.product_id,
         pv.variant_name,
         pv.variant_value,
+        pv.title_en,
+        pv.title_ar,
         pv.price_modifier,
+        pv.price_behavior,
+        pv.override_priority,
         pv.stock_quantity,
   ${includeBranchStock ? 'bi.stock_quantity AS branch_stock_quantity,' : 'NULL AS branch_stock_quantity,'}
   ${includeBranchStock ? '(bi.stock_quantity - COALESCE(bi.reserved_quantity, 0)) AS branch_available_quantity,' : 'NULL AS branch_available_quantity,'}
@@ -1687,13 +1721,14 @@ router.get('/:id/variants', optionalAuth, validateId, async (req, res, next) => 
         pv.is_active,
         pv.created_at,
         pv.updated_at,
-        COALESCE(pv.variant_name, pv.variant_value) AS title_ar,
-        COALESCE(pv.variant_value, pv.variant_name) AS title_en,
         NULL AS price
       FROM product_variants pv
       ${branchJoin}
       ${whereClause}
-      ORDER BY COALESCE(pv.variant_value, pv.variant_name) ASC
+      ORDER BY 
+        CASE WHEN pv.price_behavior = 'override' THEN 0 ELSE 1 END,
+        COALESCE(pv.override_priority, 9999),
+        COALESCE(pv.variant_value, pv.variant_name) ASC
     `, queryParams);
     const mappedVariants = variants.map(mapVariantResponse);
 
@@ -1725,8 +1760,18 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
       price_modifier,
       stock_quantity,
       sku,
-      is_active
+      is_active,
+      price_behavior,
+      override_priority
     } = req.body;
+
+    // DEBUG: Log received values
+    console.log('🔍 CREATE VARIANT - Received data:', {
+      variant_name,
+      variant_value,
+      title_en,
+      title_ar
+    });
 
     const sanitizeNumber = (value, fallback = null) => {
       if (value === undefined || value === null || value === '') {
@@ -1741,6 +1786,11 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
       : 0;
     const sanitizedSku = sku !== undefined && sku !== '' ? sku : null;
     const sanitizedIsActive = is_active !== undefined ? (is_active ? 1 : 0) : 1;
+    const normalizedPriceBehavior = price_behavior === 'override' ? 'override' : 'add';
+    const parsedPriority = override_priority === undefined || override_priority === null || override_priority === ''
+      ? null
+      : parseInt(override_priority, 10);
+    const normalizedOverridePriority = Number.isNaN(parsedPriority) ? null : parsedPriority;
 
     const productResult = await executeQuery(
       'SELECT id, base_price, sale_price FROM products WHERE id = ?',
@@ -1761,12 +1811,11 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
       ? parsePriceValue(product.sale_price)
       : parsePriceValue(product.base_price);
 
-  const finalVariantName = (variant_name || title_ar || title_en || variant_value || '').toString().trim();
-  const finalVariantValue = (variant_value || title_en || title_ar || variant_name || '').toString().trim();
-  const normalizedVariantName = finalVariantName || null;
-  const normalizedVariantValue = finalVariantValue || null;
+  // Keep variant_name and variant_value separate from title_en/title_ar
+  const normalizedVariantName = variant_name ? variant_name.toString().trim() : null;
+  const normalizedVariantValue = variant_value ? variant_value.toString().trim() : null;
 
-    if (!finalVariantName && !finalVariantValue) {
+    if (!normalizedVariantName && !normalizedVariantValue && !title_en && !title_ar) {
       return res.status(400).json({
         success: false,
         message: 'A variant label is required',
@@ -1797,22 +1846,58 @@ router.post('/:id/variants', authenticate, authorize('admin', 'staff'), validate
       });
     }
 
+    // DEBUG: Log values being inserted
+    console.log('💾 CREATE VARIANT - Inserting into DB:', {
+      variant_name: normalizedVariantName,
+      variant_value: normalizedVariantValue,
+      title_en: title_en || null,
+      title_ar: title_ar || null
+    });
+
     const result = await executeQuery(`
       INSERT INTO product_variants 
-      (product_id, variant_name, variant_value, price_modifier, stock_quantity, sku, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-  `, [productId, normalizedVariantName, normalizedVariantValue, finalPriceModifier, sanitizedStockQuantity, sanitizedSku, sanitizedIsActive]);
+      (product_id, variant_name, variant_value, title_en, title_ar, price_modifier, price_behavior, override_priority, stock_quantity, sku, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+      productId,
+      normalizedVariantName,
+      normalizedVariantValue,
+      title_en || null,
+      title_ar || null,
+      finalPriceModifier,
+      normalizedPriceBehavior,
+      normalizedOverridePriority,
+      sanitizedStockQuantity,
+      sanitizedSku,
+      sanitizedIsActive
+    ]);
 
     const newVariant = await executeQuery(
       'SELECT * FROM product_variants WHERE id = ?',
       [result.insertId]
     );
 
+    // DEBUG: Log what was retrieved from DB
+    console.log('✅ CREATE VARIANT - Retrieved from DB:', {
+      variant_name: newVariant[0]?.variant_name,
+      variant_value: newVariant[0]?.variant_value,
+      title_en: newVariant[0]?.title_en,
+      title_ar: newVariant[0]?.title_ar
+    });
+
+    const mappedResponse = mapVariantResponse(newVariant[0]);
+    console.log('📤 CREATE VARIANT - Sending to frontend:', {
+      variant_name: mappedResponse?.variant_name,
+      variant_value: mappedResponse?.variant_value,
+      title_en: mappedResponse?.title_en,
+      title_ar: mappedResponse?.title_ar
+    });
+
     res.status(201).json({
       success: true,
       message: 'Product variant created successfully',
       message_ar: 'تم إنشاء متغير المنتج بنجاح',
-      data: mapVariantResponse(newVariant[0])
+      data: mappedResponse
     });
 
   } catch (error) {
@@ -1838,7 +1923,9 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
       price_modifier,
       stock_quantity,
       sku,
-      is_active
+      is_active,
+      price_behavior,
+      override_priority
     } = req.body;
 
     const sanitizeNumber = (value, fallback = null) => {
@@ -1865,16 +1952,24 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
     let updateFields = [];
     let updateValues = [];
 
-    if (variant_name !== undefined || title_ar !== undefined) {
-      const updatedName = (variant_name || title_ar || '').toString().trim();
+    if (variant_name !== undefined) {
       updateFields.push('variant_name = ?');
-      updateValues.push(updatedName || null);
+      updateValues.push(variant_name || null);
     }
 
-    if (variant_value !== undefined || title_en !== undefined) {
-      const updatedValue = (variant_value || title_en || '').toString().trim();
+    if (variant_value !== undefined) {
       updateFields.push('variant_value = ?');
-      updateValues.push(updatedValue || null);
+      updateValues.push(variant_value || null);
+    }
+
+    if (title_en !== undefined) {
+      updateFields.push('title_en = ?');
+      updateValues.push(title_en || null);
+    }
+
+    if (title_ar !== undefined) {
+      updateFields.push('title_ar = ?');
+      updateValues.push(title_ar || null);
     }
 
     if (price_modifier !== undefined) {
@@ -1922,6 +2017,23 @@ router.put('/:id/variants/:variantId', authenticate, authorize('admin', 'staff')
     if (is_active !== undefined) {
       updateFields.push('is_active = ?');
       updateValues.push(is_active ? 1 : 0);
+    }
+
+    if (price_behavior !== undefined) {
+      const normalizedBehavior = price_behavior === 'override' ? 'override' : 'add';
+      updateFields.push('price_behavior = ?');
+      updateValues.push(normalizedBehavior);
+    }
+
+    if (override_priority !== undefined) {
+      if (override_priority === null || override_priority === '') {
+        updateFields.push('override_priority = ?');
+        updateValues.push(null);
+      } else {
+        const parsedPriority = parseInt(override_priority, 10);
+        updateFields.push('override_priority = ?');
+        updateValues.push(Number.isNaN(parsedPriority) ? null : parsedPriority);
+      }
     }
 
     if (updateFields.length === 0) {
