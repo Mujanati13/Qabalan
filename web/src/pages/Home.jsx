@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { categoriesAPI, branchesAPI } from '../services/api';
+import { categoriesAPI, branchesAPI, getCategoryImageUrl } from '../services/api';
 import './Home.css';
 
 const Home = () => {
@@ -42,11 +42,7 @@ const Home = () => {
         const formattedCategories = categoriesData.slice(0, 3).map(cat => ({
           id: cat.id,
           name: cat.title_en || cat.title_ar || cat.name || 'Category',
-          image: cat.image_url 
-            ? (cat.image_url.startsWith('http') ? cat.image_url : `http://localhost:3015${cat.image_url}`)
-            : cat.image
-            ? (cat.image.startsWith('http') ? cat.image : `http://localhost:3015/uploads/categories/${cat.image}`)
-            : '/assets/images/placeholder.svg',
+          image: getCategoryImageUrl(cat.image_url || cat.image) || '/assets/images/placeholder.svg',
           link: `/shop?category=${cat.id}`
         }));
         

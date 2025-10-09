@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { productsAPI } from '../services/api';
+import { productsAPI, getImageUrl } from '../services/api';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 import './ProductDetail.css';
@@ -138,15 +138,7 @@ const ProductDetail = () => {
   };
 
   const getProductImage = (image) => {
-    if (!image) return '/assets/images/placeholder.svg';
-    // If it's a full URL, use as is
-    if (image.startsWith('http')) return image;
-    // If it starts with /, it's already a path from backend
-    if (image.startsWith('/')) {
-      return `http://localhost:3015${image}`;
-    }
-    // Otherwise construct the full path
-    return `http://localhost:3015/uploads/products/${image}`;
+    return getImageUrl(image) || '/assets/images/placeholder.svg';
   };
 
   const calculatePrice = () => {

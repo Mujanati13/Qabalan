@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useEffect } from 'react';
+import { getImageUrl } from '../services/api';
 import './Cart.css';
 
 const Cart = () => {
@@ -30,31 +31,8 @@ const Cart = () => {
 
   // Get product image with fallback
   const getProductImage = (item) => {
-    // Check for main_image first
-    if (item.main_image) {
-      // If it starts with http, use as is
-      if (item.main_image.startsWith('http')) {
-        return item.main_image;
-      }
-      // If it starts with /, it's already a path from backend
-      if (item.main_image.startsWith('/')) {
-        return `http://localhost:3015${item.main_image}`;
-      }
-      // Otherwise construct the full path
-      return `http://localhost:3015/uploads/products/${item.main_image}`;
-    }
-    // Check for image field
-    if (item.image) {
-      if (item.image.startsWith('http')) {
-        return item.image;
-      }
-      if (item.image.startsWith('/')) {
-        return `http://localhost:3015${item.image}`;
-      }
-      return `http://localhost:3015/uploads/products/${item.image}`;
-    }
-    // Fallback to placeholder
-    return '/assets/images/placeholder.svg';
+    // Use the helper function from api.js
+    return getImageUrl(item.main_image || item.image) || '/assets/images/placeholder.svg';
   };
 
   // Parse numeric values safely - match mobile implementation

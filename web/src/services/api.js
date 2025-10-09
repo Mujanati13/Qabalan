@@ -2,6 +2,25 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3015/api';
 
+// Extract base server URL (without /api)
+const BASE_SERVER_URL = API_URL.replace('/api', '');
+
+// Helper function to get image URL
+export const getImageUrl = (path) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  if (path.startsWith('/')) return `${BASE_SERVER_URL}${path}`;
+  return `${BASE_SERVER_URL}/uploads/products/${path}`;
+};
+
+// Helper function to get category image URL
+export const getCategoryImageUrl = (path) => {
+  if (!path) return '';
+  if (path.startsWith('http')) return path;
+  if (path.startsWith('/')) return `${BASE_SERVER_URL}${path}`;
+  return `${BASE_SERVER_URL}/uploads/categories/${path}`;
+};
+
 const api = axios.create({
   baseURL: API_URL,
   headers: {

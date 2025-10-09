@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { productsAPI, categoriesAPI, branchesAPI } from '../services/api';
+import { productsAPI, categoriesAPI, branchesAPI, getImageUrl } from '../services/api';
 import { useCart } from '../context/CartContext';
 import Toast from '../components/Toast';
 import './Shop.css';
@@ -122,31 +122,7 @@ const Shop = () => {
   };
 
   const getProductImage = (product) => {
-    // Check for main_image first (from backend API)
-    if (product.main_image) {
-      // If it's a full URL, use as is
-      if (product.main_image.startsWith('http')) {
-        return product.main_image;
-      }
-      // If it starts with /, it's already a path from backend
-      if (product.main_image.startsWith('/')) {
-        return `http://localhost:3015${product.main_image}`;
-      }
-      // Otherwise construct the full path
-      return `http://localhost:3015/uploads/products/${product.main_image}`;
-    }
-    // Fallback to image field
-    if (product.image) {
-      if (product.image.startsWith('http')) {
-        return product.image;
-      }
-      if (product.image.startsWith('/')) {
-        return `http://localhost:3015${product.image}`;
-      }
-      return `http://localhost:3015/uploads/products/${product.image}`;
-    }
-    // Fallback to default placeholder
-    return '/assets/images/placeholder.svg';
+    return getImageUrl(product.main_image || product.image) || '/assets/images/placeholder.svg';
   };
 
   return (
