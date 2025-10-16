@@ -217,7 +217,7 @@ const Account = () => {
                             </div>
                             <div className="order-body">
                               <div className="order-info">
-                                <p><strong>{t('date')}:</strong> {new Date(order.created_at).toLocaleDateString(isArabic ? 'ar-SA' : 'en-US', { 
+                                <p><strong>{t('date')}:</strong> {new Date(order.created_at).toLocaleDateString('en-US', { 
                                   year: 'numeric', 
                                   month: 'long', 
                                   day: 'numeric',

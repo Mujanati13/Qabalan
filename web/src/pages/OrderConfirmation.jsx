@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ordersAPI, paymentsAPI } from '../services/api';
+import { ordersAPI, paymentsAPI, getImageUrl } from '../services/api';
 import './OrderConfirmation.css';
 
 const OrderConfirmation = () => {
@@ -154,9 +154,18 @@ const OrderConfirmation = () => {
   }
 
   const getPaymentStatusDisplay = () => {
-    // For cash/COD orders, don't show payment status
+    // For cash/COD orders, show COD confirmation
     if (order?.payment_method === 'cash' || order?.payment_method === 'cod') {
-      return null;
+      return (
+        <div className="payment-status cash">
+          <div className="status-icon">💵</div>
+          <h3>Cash on Delivery</h3>
+          <p>Please prepare the exact amount: <strong>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</strong></p>
+          <p className="helper-text">
+            <i className="fa fa-info-circle"></i> Payment will be collected upon delivery or pickup
+          </p>
+        </div>
+      );
     }
 
     // Check paymentStatus from API first, then fall back to order.payment_status
@@ -168,6 +177,40 @@ const OrderConfirmation = () => {
           <div className="status-icon">✓</div>
           <h3>Payment Successful</h3>
           <p>Your payment has been processed successfully.</p>
+          {paymentStatus?.transaction_id && (
+            <div className="transaction-details">
+              <div className="transaction-row">
+                <span className="label">Transaction ID:</span>
+                <span className="value">{paymentStatus.transaction_id}</span>
+              </div>
+              {paymentStatus?.authorization_code && (
+                <div className="transaction-row">
+                  <span className="label">Authorization Code:</span>
+                  <span className="value">{paymentStatus.authorization_code}</span>
+                </div>
+              )}
+              {paymentStatus?.card_last4 && (
+                <div className="transaction-row">
+                  <span className="label">Card:</span>
+                  <span className="value">**** **** **** {paymentStatus.card_last4}</span>
+                </div>
+              )}
+              {paymentStatus?.payment_date && (
+                <div className="transaction-row">
+                  <span className="label">Payment Date:</span>
+                  <span className="value">
+                    {new Date(paymentStatus.payment_date).toLocaleString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       );
     } else if (status === 'FAILED' || status === 'failed') {
@@ -176,6 +219,11 @@ const OrderConfirmation = () => {
           <div className="status-icon">✗</div>
           <h3>Payment Failed</h3>
           <p>Your payment could not be processed. Please try again.</p>
+          {paymentStatus?.failure_reason && (
+            <p className="failure-reason">
+              <strong>Reason:</strong> {paymentStatus.failure_reason}
+            </p>
+          )}
           {order.payment_method === 'card' && (
             <button onClick={handleRetryPayment} className="retry-payment-btn">
               🔄 Retry Payment
@@ -189,6 +237,9 @@ const OrderConfirmation = () => {
           <div className="status-icon">⏳</div>
           <h3>Payment Pending</h3>
           <p>We're processing your payment. This may take a few moments.</p>
+          <p className="helper-text">
+            <i className="fa fa-info-circle"></i> Please do not refresh or close this page
+          </p>
           {order.payment_method === 'card' && (
             <button onClick={handleRetryPayment} className="retry-payment-btn">
               🔄 Retry Payment
@@ -284,6 +335,106 @@ const OrderConfirmation = () => {
                 </span>
               </div>
             )}
+
+            {/* Customer Information */}
+            {order.customer_name && (
+              <div className="detail-row">
+                <span className="label">Customer Name:</span>
+                <span className="value">{order.customer_name}</span>
+              </div>
+            )}
+
+            {order.customer_phone && (
+              <div className="detail-row">
+                <span className="label">Phone:</span>
+                <span className="value">{order.customer_phone}</span>
+              </div>
+            )}
+
+            {order.customer_email && (
+              <div className="detail-row">
+                <span className="label">Email:</span>
+                <span className="value">{order.customer_email}</span>
+              </div>
+            )}
+
+            {/* Delivery Address for Delivery Orders */}
+            {order.order_type === 'delivery' && (
+              <>
+                {order.delivery_address && typeof order.delivery_address === 'object' && (
+                  <>
+                    {order.delivery_address.address_line && (
+                      <div className="detail-row address-row">
+                        <span className="label">Street Address:</span>
+                        <span className="value">{order.delivery_address.address_line}</span>
+                      </div>
+                    )}
+                    {(order.delivery_address.area || order.delivery_address.area_ar) && (
+                      <div className="detail-row">
+                        <span className="label">Area:</span>
+                        <span className="value">
+                          {order.delivery_address.area || order.delivery_address.area_ar}
+                        </span>
+                      </div>
+                    )}
+                    {(order.delivery_address.city || order.delivery_address.city_ar) && (
+                      <div className="detail-row">
+                        <span className="label">City:</span>
+                        <span className="value">
+                          {order.delivery_address.city || order.delivery_address.city_ar}
+                        </span>
+                      </div>
+                    )}
+                    {(order.delivery_address.governorate || order.delivery_address.governorate_ar) && (
+                      <div className="detail-row">
+                        <span className="label">Governorate:</span>
+                        <span className="value">
+                          {order.delivery_address.governorate || order.delivery_address.governorate_ar}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+                {order.delivery_address && typeof order.delivery_address === 'string' && (
+                  <div className="detail-row address-row">
+                    <span className="label">Delivery Address:</span>
+                    <span className="value">{order.delivery_address}</span>
+                  </div>
+                )}
+                {order.delivery_city && (
+                  <div className="detail-row">
+                    <span className="label">City:</span>
+                    <span className="value">{order.delivery_city}</span>
+                  </div>
+                )}
+                {order.building_no && (
+                  <div className="detail-row">
+                    <span className="label">Building:</span>
+                    <span className="value">{order.building_no}</span>
+                  </div>
+                )}
+                {(order.floor_no || order.apartment_no) && (
+                  <div className="detail-row">
+                    <span className="label">Apt/Floor:</span>
+                    <span className="value">
+                      {order.floor_no && `Floor ${order.floor_no}`}
+                      {order.floor_no && order.apartment_no && ', '}
+                      {order.apartment_no && `Apt ${order.apartment_no}`}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Promo Code Information */}
+            {order.promo_code && (
+              <div className="detail-row promo-row">
+                <span className="label">Promo Code:</span>
+                <span className="value promo-code">
+                  <i className="fa fa-ticket"></i> {order.promo_code}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="order-summary">
@@ -328,17 +479,60 @@ const OrderConfirmation = () => {
               <div className="order-items-list">
                 {orderItems.map((item, index) => (
                   <div key={index} className="order-item">
-                    <div className="item-info">
-                      <div className="item-name">
-                        {item.product_name_en || item.product_name_ar || 'Product'}
-                        {item.variant_title && (
-                          <span className="item-variant"> - {item.variant_title}</span>
-                        )}
-                      </div>
-                      <div className="item-quantity">Qty: {item.quantity}</div>
+                    {/* Product Image */}
+                    <div className="item-image">
+                      {item.product_image ? (
+                        <img 
+                          src={getImageUrl(item.product_image)} 
+                          alt={item.product_name_en || item.product_title_en || 'Product'} 
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = '/assets/images/placeholder.svg';
+                          }}
+                        />
+                      ) : (
+                        <div className="placeholder-image">
+                          <i className="fa fa-image"></i>
+                        </div>
+                      )}
                     </div>
-                    <div className="item-price">
-                      {safeParseFloat(item.total_price).toFixed(2)} JOD
+
+                    {/* Product Details */}
+                    <div className="item-details">
+                      <div className="item-name">
+                        {item.product_title_en || item.product_name_en || item.product_title_ar || item.product_name_ar || 'Product'}
+                      </div>
+                      
+                      {/* Variant Information */}
+                      {(item.variant_title_en || item.variant_title_ar || item.variant_name || item.variant_value) && (
+                        <div className="item-variant">
+                          <i className="fa fa-tag"></i>
+                          {item.variant_title_en || item.variant_title_ar || `${item.variant_name || ''}: ${item.variant_value || ''}`}
+                        </div>
+                      )}
+
+                      {/* SKU */}
+                      {item.product_sku && (
+                        <div className="item-sku">
+                          <span className="sku-label">SKU:</span> {item.product_sku}
+                        </div>
+                      )}
+
+                      {/* Unit Price */}
+                      <div className="item-unit-price">
+                        Price: {safeParseFloat(item.unit_price).toFixed(2)} JOD
+                      </div>
+                    </div>
+
+                    {/* Quantity and Total */}
+                    <div className="item-quantity-price">
+                      <div className="item-quantity">
+                        <span className="quantity-label">Qty:</span>
+                        <span className="quantity-value">{item.quantity}</span>
+                      </div>
+                      <div className="item-total-price">
+                        {safeParseFloat(item.total_price).toFixed(2)} JOD
+                      </div>
                     </div>
                   </div>
                 ))}

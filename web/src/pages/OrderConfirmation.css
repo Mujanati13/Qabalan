@@ -150,6 +150,11 @@
   border: 2px solid #ffc107;
 }
 
+.payment-status.cash {
+  background: #e8f5f5;
+  border: 2px solid #16A2A3;
+}
+
 .status-icon {
   font-size: 3rem;
   font-weight: bold;
@@ -167,14 +172,39 @@
   color: #ffc107;
 }
 
+.payment-status.cash .status-icon {
+  color: #16A2A3;
+}
+
 .payment-status h3 {
   margin: 0;
   font-size: 1.5rem;
 }
 
 .payment-status p {
-  margin: 0;
+  margin: 0.5rem 0;
   color: #666;
+}
+
+.payment-status strong {
+  color: #16A2A3;
+  font-size: 1.2rem;
+}
+
+.payment-status .helper-text {
+  font-size: 0.9rem;
+  color: #777;
+  font-style: italic;
+  margin-top: 0.5rem;
+}
+
+.payment-status .failure-reason {
+  background: rgba(220, 53, 69, 0.1);
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+  color: #721c24;
+  font-size: 0.95rem;
 }
 
 .payment-status .retry-payment-btn {
@@ -194,6 +224,39 @@
   background: #f57c00;
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(255, 152, 0, 0.3);
+}
+
+/* Transaction Details */
+.transaction-details {
+  width: 100%;
+  background: rgba(40, 167, 69, 0.05);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 1rem;
+  text-align: left;
+}
+
+.transaction-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(40, 167, 69, 0.1);
+  font-size: 0.95rem;
+}
+
+.transaction-row:last-child {
+  border-bottom: none;
+}
+
+.transaction-row .label {
+  color: #555;
+  font-weight: 500;
+}
+
+.transaction-row .value {
+  color: #333;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
 }
 
 /* Order Details */
@@ -231,10 +294,29 @@
 .detail-row .label {
   font-weight: 600;
   color: #555;
+  min-width: 150px;
 }
 
 .detail-row .value {
   color: #333;
+  text-align: right;
+  flex: 1;
+}
+
+.detail-row.address-row .value {
+  text-align: right;
+  line-height: 1.6;
+}
+
+.detail-row.promo-row .promo-code {
+  background: linear-gradient(135deg, #16A2A3 0%, #128e8f 100%);
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .status-badge {
@@ -436,41 +518,170 @@
 
 .order-item {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
+  gap: 1.25rem;
+  padding: 1.25rem;
   background: #f8f9fa;
-  border-radius: 8px;
+  border-radius: 10px;
   border: 1px solid #e8e8e8;
+  transition: box-shadow 0.2s ease;
 }
 
-.item-info {
+.order-item:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Product Image */
+.item-image {
+  flex-shrink: 0;
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: white;
+  border: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.item-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.placeholder-image {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f5f5;
+  color: #999;
+  font-size: 2rem;
+}
+
+/* Product Details */
+.item-details {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
   text-align: left;
 }
 
 .item-name {
   font-weight: 600;
   color: #333;
-  margin-bottom: 0.25rem;
+  font-size: 1.05rem;
+  line-height: 1.4;
 }
 
 .item-variant {
-  color: #666;
-  font-weight: 400;
+  color: #16A2A3;
+  font-weight: 500;
   font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.item-variant i {
+  font-size: 0.85rem;
+}
+
+.item-sku {
+  color: #777;
+  font-size: 0.85rem;
+  font-family: 'Courier New', monospace;
+}
+
+.sku-label {
+  font-weight: 600;
+  color: #555;
+}
+
+.item-unit-price {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+/* Quantity and Price */
+.item-quantity-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.75rem;
+  min-width: 120px;
 }
 
 .item-quantity {
-  color: #666;
-  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: white;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
 }
 
-.item-price {
+.quantity-label {
+  color: #777;
+  font-size: 0.85rem;
+}
+
+.quantity-value {
   font-weight: 600;
+  color: #333;
+  font-size: 1rem;
+}
+
+.item-total-price {
+  font-weight: 700;
   color: #16A2A3;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   white-space: nowrap;
-  margin-left: 1rem;
+}
+
+/* Responsive Styles for Order Items */
+@media (max-width: 768px) {
+  .order-item {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .item-image {
+    width: 100%;
+    height: 180px;
+  }
+
+  .item-details {
+    text-align: center;
+  }
+
+  .item-variant {
+    justify-content: center;
+  }
+
+  .item-quantity-price {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .item-total-price {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .item-image {
+    height: 150px;
+  }
+
+  .item-name {
+    font-size: 1rem;
+  }
 }
 

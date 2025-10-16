@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { categoriesAPI, branchesAPI, offersAPI, getCategoryImageUrl, getImageUrl } from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
@@ -6,6 +6,19 @@ import './Home.css';
 
 const Home = () => {
   const { t, isArabic } = useLanguage();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
+  // Check if redirected from payment callback
+  useEffect(() => {
+    const thanks = searchParams.get('thanks');
+    const orderId = searchParams.get('order_id');
+    
+    if (thanks === '1' && orderId) {
+      // Redirect to order confirmation page
+      navigate(`/order-confirmation/${orderId}`, { replace: true });
+    }
+  }, [searchParams, navigate]);
   
   // Helper function to get category title based on language
   const getCategoryTitle = (category) => {
