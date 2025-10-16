@@ -138,7 +138,7 @@ const NotificationsDashboardWidget = ({
           >
             {language === 'ar' ? 'تحديث' : 'Refresh'}
           </Button>
-          <Link to="/notifications">
+          <Link to="/notifications?tab=stats">
             <Button 
               type="primary" 
               size="small" 

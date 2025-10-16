@@ -12,7 +12,7 @@ const ProductDetail = () => {
   const { user } = useAuth();
 
   const [product, setProduct] = useState(null);
-  const [selectedVariant, setSelectedVariant] = useState(null);
+  const [selectedVariants, setSelectedVariants] = useState([]);
   const [branchStock, setBranchStock] = useState(null);
   const [variants, setVariants] = useState([]);
   const [loadingVariants, setLoadingVariants] = useState(false);
@@ -72,11 +72,8 @@ const ProductDetail = () => {
         console.log('Normalized variants:', normalizedVariants); // Debug log
         setVariants(normalizedVariants);
         
-        // Auto-select first available variant
-        if (normalizedVariants.length > 0 && !selectedVariant) {
-          const firstAvailable = normalizedVariants.find(v => isVariantAvailable(v));
-          setSelectedVariant(firstAvailable || normalizedVariants[0]);
-        }
+        // Reset selected variants when variants change
+        setSelectedVariants([]);
       } else {
         console.log('No variants data found');
         setVariants([]);
@@ -123,17 +120,20 @@ const ProductDetail = () => {
     return status === 'in_stock' || status === 'low_stock' || status === 'limited';
   };
 
-  // Get variant display price
+  // Get variant display price - matches mobile app logic
   const getVariantDisplayPrice = (variant) => {
     if (!product || !variant) return 0;
     
     const basePrice = parseFloat(branchStock?.final_price || product.sale_price || product.base_price || 0);
+    const variantModifier = parseFloat(variant.price_modifier || variant.price || 0);
+    const behavior = variant.price_behavior || variant.pricing_behavior;
     
-    if (variant.price_behavior === 'override' || variant.pricing_behavior === 'override') {
-      return parseFloat(variant.price || variant.price_modifier || 0);
+    if (behavior === 'override') {
+      // Override: replace base price with variant modifier
+      return variantModifier;
     } else {
-      // Add behavior
-      return basePrice + parseFloat(variant.price || variant.price_modifier || 0);
+      // Add: add variant modifier to base price
+      return basePrice + variantModifier;
     }
   };
 
@@ -144,11 +144,6 @@ const ProductDetail = () => {
   const calculatePrice = () => {
     if (!product) return 0;
     
-    // If variant is selected, use variant price
-    if (selectedVariant) {
-      return getVariantDisplayPrice(selectedVariant);
-    }
-    
     let basePrice = parseFloat(product.sale_price || product.base_price || 0);
     
     // Apply branch price override if available
@@ -158,16 +153,43 @@ const ProductDetail = () => {
       basePrice = parseFloat(branchStock.final_price);
     }
     
+    // If variants are selected, calculate multi-variant price
+    if (selectedVariants.length > 0) {
+      // Separate override and add variants
+      const overrideVariants = selectedVariants.filter(v => v.price_behavior === 'override');
+      const addVariants = selectedVariants.filter(v => v.price_behavior === 'add');
+      
+      // Sort override variants by priority (lower number = higher priority)
+      const sortedOverrides = overrideVariants.sort((a, b) => {
+        const priorityA = a.override_priority !== null && a.override_priority !== undefined ? a.override_priority : Infinity;
+        const priorityB = b.override_priority !== null && b.override_priority !== undefined ? b.override_priority : Infinity;
+        return priorityA - priorityB;
+      });
+      
+      // Apply the first override variant (highest priority)
+      if (sortedOverrides.length > 0) {
+        const winningOverride = sortedOverrides[0];
+        basePrice = parseFloat(winningOverride.price_modifier || 0);
+      }
+      
+      // Add all "add" variants
+      addVariants.forEach(variant => {
+        basePrice += parseFloat(variant.price_modifier || 0);
+      });
+    }
+    
     return basePrice;
   };
 
   const getStockStatus = () => {
-    // If variants exist and one is selected, check variant stock
-    if (variants.length > 0 && selectedVariant) {
-      if (!isVariantAvailable(selectedVariant)) {
+    // If variants exist and some are selected, check their stock
+    if (variants.length > 0 && selectedVariants.length > 0) {
+      const allAvailable = selectedVariants.every(v => isVariantAvailable(v));
+      if (!allAvailable) {
         return { status: 'out', text: 'Out of Stock', class: 'out-of-stock' };
       }
-      if (selectedVariant.stock_status === 'low_stock') {
+      const anyLowStock = selectedVariants.some(v => v.stock_status === 'low_stock');
+      if (anyLowStock) {
         return { status: 'low', text: 'Low Stock', class: 'low-stock' };
       }
       return { status: 'in', text: 'In Stock', class: 'in-stock' };
@@ -209,16 +231,16 @@ const ProductDetail = () => {
   const handleAddToCart = () => {
     if (!product) return;
     
-    // Check if variant selection is required
-    if (variants.length > 0 && !selectedVariant) {
-      alert('Please select an option before adding to cart');
-      return;
-    }
+    // Check if variant selection is required (no check for specific variants selected)
+    // Users can add product with 0 or more variants
     
-    // Check if selected variant is available
-    if (selectedVariant && !isVariantAvailable(selectedVariant)) {
-      alert('The selected option is currently unavailable');
-      return;
+    // Check if selected variants are all available
+    if (selectedVariants.length > 0) {
+      const unavailableVariant = selectedVariants.find(v => !isVariantAvailable(v));
+      if (unavailableVariant) {
+        alert('One or more selected options are currently unavailable');
+        return;
+      }
     }
     
     const stockStatus = getStockStatus();
@@ -229,12 +251,12 @@ const ProductDetail = () => {
 
     const cartItem = {
       ...product,
-      selectedVariant: selectedVariant,
+      selectedVariants: selectedVariants, // Pass array of variants
       price: calculatePrice(),
       quantity: quantity
     };
 
-    addToCart(cartItem, quantity, selectedVariant);
+    addToCart(cartItem, quantity, selectedVariants); // Pass variants array
     alert('Product added to cart!');
   };
 
@@ -320,45 +342,79 @@ const ProductDetail = () => {
               </div>
             </div>
 
-            {/* Variants */}
+            {/* Variants - Multi-Select by Category */}
             {variants.length > 0 && (
               <div className="variants-section">
-                <label>Select Option:</label>
+                <label>
+                  Select Options:
+                  {selectedVariants.length > 0 && ` (${selectedVariants.length} selected)`}
+                </label>
                 {loadingVariants ? (
                   <div className="variants-loading">Loading options...</div>
                 ) : (
-                  <div className="variants-grid">
-                    {variants.map((variant) => {
-                      const isSelected = selectedVariant?.id === variant.id;
-                      const variantAvailable = isVariantAvailable(variant);
-                      const availableQty = variant.available_quantity || 0;
-                      const variantPrice = getVariantDisplayPrice(variant);
-                      
-                      return (
-                        <button
-                          key={variant.id}
-                          className={`variant-option ${isSelected ? 'active' : ''} ${!variantAvailable ? 'unavailable' : ''}`}
-                          onClick={() => variantAvailable && setSelectedVariant(variant)}
-                          disabled={!variantAvailable}
-                        >
-                          <div className="variant-content">
-                            <span className="variant-title">
-                              {variant.title_en || variant.title_ar || variant.variant_value}
-                            </span>
-                            <span className="variant-price">
-                              {variantPrice.toFixed(2)} JOD
-                            </span>
-                            <span className={`variant-availability ${!variantAvailable ? 'unavailable' : ''}`}>
-                              {variantAvailable 
-                                ? `In Stock${availableQty > 0 ? ` (${availableQty})` : ''}`
-                                : 'Out of Stock'
-                              }
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  (() => {
+                    // Group variants by category (variant_name)
+                    const variantsByCategory = {};
+                    variants.forEach(variant => {
+                      const category = variant.variant_name || 'Options';
+                      if (!variantsByCategory[category]) {
+                        variantsByCategory[category] = [];
+                      }
+                      variantsByCategory[category].push(variant);
+                    });
+
+                    return Object.entries(variantsByCategory).map(([categoryName, categoryVariants]) => (
+                      <div key={categoryName} className="variant-category">
+                        <h4 className="variant-category-title">{categoryName}</h4>
+                        <div className="variants-grid">
+                          {categoryVariants.map((variant) => {
+                            const isSelected = selectedVariants.some(v => v.id === variant.id);
+                            const variantAvailable = isVariantAvailable(variant);
+                            const availableQty = variant.available_quantity || 0;
+                            const variantPrice = getVariantDisplayPrice(variant);
+                            
+                            return (
+                              <button
+                                key={variant.id}
+                                className={`variant-option ${isSelected ? 'active' : ''} ${!variantAvailable ? 'unavailable' : ''}`}
+                                onClick={() => {
+                                  if (variantAvailable) {
+                                    // Toggle selection (checkbox behavior)
+                                    if (isSelected) {
+                                      setSelectedVariants(prev => prev.filter(v => v.id !== variant.id));
+                                    } else {
+                                      setSelectedVariants(prev => [...prev, variant]);
+                                    }
+                                  }
+                                }}
+                                disabled={!variantAvailable}
+                              >
+                                {/* Checkbox indicator */}
+                                <div className={`variant-checkbox ${isSelected ? 'checked' : ''}`}>
+                                  {isSelected && <span>✓</span>}
+                                </div>
+                                
+                                <div className="variant-content">
+                                  <span className="variant-title">
+                                    {variant.title_en || variant.title_ar || variant.variant_value}
+                                  </span>
+                                  <span className="variant-price">
+                                    {variantPrice.toFixed(2)} JOD
+                                  </span>
+                                  <span className={`variant-availability ${!variantAvailable ? 'unavailable' : ''}`}>
+                                    {variantAvailable 
+                                      ? `In Stock${availableQty > 0 ? ` (${availableQty})` : ''}`
+                                      : 'Out of Stock'
+                                    }
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ));
+                  })()
                 )}
               </div>
             )}

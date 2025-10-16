@@ -583,6 +583,18 @@ export const en = {
     cancelled_at: 'Cancelled At',
     cancellation_reason: 'Cancellation Reason',
     promo_code: 'Promo Code',
+    enter_promo_code: 'Enter promo code',
+    no_promo_code: 'No promo code applied',
+    promo_code_disabled_edit: 'Promo codes cannot be edited. Remove existing promo to apply a new one.',
+    promo_code_locked_edit: 'Promo codes cannot be changed when editing orders',
+    locked: 'Locked',
+    applied: 'Applied',
+    promo_applied: 'Promo code applied successfully',
+    promo_removed: 'Promo code removed',
+    invalid_promo: 'Invalid promo code',
+    promo_validation_error: 'Failed to validate promo code',
+    free_shipping: 'Free Shipping',
+    order_summary: 'Order Summary',
     delivery_address: 'Delivery Address',
     delivery_address_placeholder: 'Enter delivery address or address ID',
     delivery_address_required: 'Delivery address is required for delivery orders',
@@ -690,6 +702,7 @@ export const en = {
     no_location: 'No location',
     discount: 'Discount',
     discount_label: 'Discount',
+    promo_discount: 'Promo Discount',
     promo_discount_label: 'Promo Discount',
     shipping_discount_label: 'Shipping Discount',
     total_savings_label: 'Total Savings',
@@ -858,6 +871,17 @@ export const en = {
     quantity: 'Quantity',
     total: 'Total',
     
+    // Variant Selection
+    selectVariant: 'Select Product Variant',
+    selectVariantDescription: 'Choose a variant to add to your order, or add the base product without a variant.',
+    addWithoutVariant: 'Add Without Variant',
+    variant: 'Variant',
+    variants: 'Variants',
+    hasVariants: 'Has Variants',
+    noVariants: 'No Variants',
+    variantPrice: 'Variant Price',
+    variantDetails: 'Variant Details',
+    
     // Validation Messages
     selectBranchRequired: 'Please select a branch',
     selectCustomerRequired: 'Please select a customer',
@@ -926,6 +950,7 @@ export const en = {
     add_new_address_with_map: 'Add New Address with Map',
     refresh_addresses: 'Refresh',
     no_saved_addresses: 'No saved addresses found',
+    no_saved_addresses_found: 'No saved addresses list was loaded. This is the order\'s address.',
     edit_address: 'Edit Address',
     add_new_address: 'Add New Address',
     save_address: 'Save Address',
@@ -1619,7 +1644,16 @@ export const en = {
     subtotal: 'Subtotal',
     delivery_fee: 'Delivery Fee',
     tax_amount: 'Tax',
+    discount: 'Discount',
     grand_total: 'Total',
+    items_subtotal: 'Items Subtotal',
+    payment_received: 'Payment Received',
+    last_updated: 'Last Updated',
+    payment_status: 'Payment Status',
+    
+    // Order Modified Warning
+    order_modified_warning: 'This order has been recently modified',
+    order_modified_description: 'Invoice displays the latest order information including any changes made to items, prices, or delivery fees.',
     
     // Pagination
     items_per_page: 'items per page',
@@ -1875,6 +1909,56 @@ export const en = {
     processing: {
       title: 'Processing Payment',
       message: 'Please wait while we process your payment...'
+    }
+  },
+
+  // Staff Management
+  staffManagement: {
+    // Permission Management
+    permissions: {
+      title: 'Permission Management',
+      managePermissions: 'Manage Permissions',
+      description: 'Configure what actions the "{role}" role can perform in each module. Check the permissions you want to grant.',
+      selectAll: 'Select All',
+      clearAll: 'Clear All',
+      quickActions: 'Quick Actions',
+      selectAllPermissions: 'Select All Permissions',
+      clearAllPermissions: 'Clear All Permissions',
+      viewOnlyAllModules: 'View Only (All Modules)',
+      permissionSummary: 'Permission Summary',
+      noPermissionsSelected: 'No permissions selected yet',
+      savePermissions: 'Save Permissions',
+      permissionsUpdated: 'Permissions updated successfully',
+      permissionsFailed: 'Failed to save permissions',
+      loadingPermissions: 'Loading permissions...',
+      
+      // Permission Actions
+      actions: {
+        view: 'View',
+        create: 'Create',
+        edit: 'Edit',
+        delete: 'Delete',
+        export: 'Export',
+        manage: 'Manage'
+      },
+      
+      // Permission Modules
+      modules: {
+        products: 'Products',
+        categories: 'Categories',
+        orders: 'Orders',
+        invoices: 'Invoices',
+        users: 'Users',
+        promos: 'Promo Codes',
+        offers: 'Offers Management',
+        notifications: 'Notifications',
+        support: 'Support',
+        staff: 'Staff Management',
+        roles: 'Role Management',
+        inventory: 'Inventory',
+        reports: 'Reports',
+        settings: 'Settings'
+      }
     }
   }
 };

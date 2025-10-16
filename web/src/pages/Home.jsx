@@ -1,9 +1,16 @@
 import { Link } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { categoriesAPI, branchesAPI, getCategoryImageUrl } from '../services/api';
+import { categoriesAPI, branchesAPI, offersAPI, getCategoryImageUrl, getImageUrl } from '../services/api';
+import { useLanguage } from '../context/LanguageContext';
 import './Home.css';
 
 const Home = () => {
+  const { t, isArabic } = useLanguage();
+  
+  // Helper function to get category title based on language
+  const getCategoryTitle = (category) => {
+    return isArabic ? (category.title_ar || category.title_en || category.name) : (category.title_en || category.title_ar || category.name);
+  };
   const [categories, setCategories] = useState([
     {
       id: 1,
@@ -27,10 +34,13 @@ const Home = () => {
 
   const [branches, setBranches] = useState([]);
   const [selectedBranch, setSelectedBranch] = useState(null);
+  const [featuredOffers, setFeaturedOffers] = useState([]);
+  const [offersError, setOffersError] = useState('');
 
   useEffect(() => {
     fetchCategories();
     fetchBranches();
+    fetchOffers();
   }, []);
 
   const fetchCategories = async () => {
@@ -41,7 +51,8 @@ const Home = () => {
       if (Array.isArray(categoriesData) && categoriesData.length > 0) {
         const formattedCategories = categoriesData.slice(0, 3).map(cat => ({
           id: cat.id,
-          name: cat.title_en || cat.title_ar || cat.name || 'Category',
+          title_en: cat.title_en || cat.name || 'Category',
+          title_ar: cat.title_ar || cat.name || 'الفئة',
           image: getCategoryImageUrl(cat.image_url || cat.image) || '/assets/images/placeholder.svg',
           link: `/shop?category=${cat.id}`
         }));
@@ -60,13 +71,54 @@ const Home = () => {
       const response = await branchesAPI.getAll();
       const branchesData = response.data.data || response.data.branches || response.data || [];
       
-      if (Array.isArray(branchesData) && branchesData.length > 0) {
-        setBranches(branchesData);
-        setSelectedBranch(branchesData[0]); // Select first branch by default
-        console.log('✅ Loaded branches:', branchesData);
+      // Filter to only show active branches
+      const activeBranches = Array.isArray(branchesData) 
+        ? branchesData.filter(branch => branch.is_active === 1 || branch.is_active === true)
+        : [];
+      
+      if (activeBranches.length > 0) {
+        setBranches(activeBranches);
+        setSelectedBranch(activeBranches[0]); // Select first active branch by default
+        console.log('✅ Loaded active branches:', activeBranches);
+      } else {
+        console.warn('⚠️ No active branches found');
       }
     } catch (error) {
       console.error('Error fetching branches:', error);
+    }
+  };
+
+  const fetchOffers = async () => {
+    try {
+      const response = await offersAPI.getAll({ limit: 6, status: 'active' });
+      console.log('📦 Offers API Response:', response);
+      
+      // Backend returns: { success: true, data: { offers: [...], pagination: {...} } }
+      const offersData = response.data?.data?.offers || response.data?.offers || [];
+      console.log('📦 Offers Data:', offersData);
+
+      if (Array.isArray(offersData) && offersData.length > 0) {
+        const mappedOffers = offersData
+          .slice(0, 3)
+          .map((offer) => ({
+            id: offer.id,
+            title: offer.title || 'Special Offer',
+            description: offer.description || '',
+            code: offer.code || '',
+            image: getImageUrl(offer.featured_image || offer.image_url || offer.banner_image),
+            startDate: offer.valid_from || offer.start_date,
+            endDate: offer.valid_until || offer.end_date,
+          }));
+
+        console.log('✅ Mapped Offers:', mappedOffers);
+        setFeaturedOffers(mappedOffers);
+      } else {
+        console.log('⚠️ No offers found or data is not an array');
+        setFeaturedOffers([]);
+      }
+    } catch (error) {
+      console.error('❌ Error fetching offers:', error);
+      setOffersError('Offers are temporarily unavailable.');
     }
   };
 
@@ -127,14 +179,13 @@ const Home = () => {
       <section className="hero-homepage">
         <div className="hero-content">
           <h1 className="home-title">
-            <span>Hello</span> Welcome!
+            {t('heroTitle')}
           </h1>
           <p className="subheading">
-            Welcome to Qabalan bakery! Where every piece of bread is an experience 
-            And our desserts will bring out the child in every one.
+            {t('heroSubtitle')}
           </p>
           <Link to="/story" className="button-regular">
-            Read about our story
+            {t('readOurStory')}
           </Link>
         </div>
         <a href="#whats-new" className="button-round">
@@ -148,22 +199,43 @@ const Home = () => {
       {/* What's New Carousel Section */}
       <section className="carousel-new" id="whats-new">
         <div className="section-header">
-          <h2><span>What's New</span></h2>
+          <h2><span>{t('whatsNew')}</span></h2>
         </div>
         <div className="container">
-          <div className="carousel-grid">
-            {slides.map(slide => (
-              <div key={slide.id} className="carousel-item">
-                <div className="carousel-image">
-                  <img src={slide.image} alt={slide.title} />
-                </div>
-                <div className="carousel-info">
-                  <h3>{slide.title}</h3>
-                  <p>{slide.description}</p>
-                  <Link to={slide.link} className="button-regular">Shop Now</Link>
+          <div className="carousel-grid-new">
+            {/* Large Card - Relax (Left Side) */}
+            <div className="carousel-item-large">
+              <img src={slides[1].image} alt={slides[1].title} />
+              <div className="carousel-overlay">
+                <h3>{slides[1].title}</h3>
+                <p>{slides[1].description}</p>
+                <Link to={slides[1].link} className="button-light">{t('shopNow')}</Link>
+              </div>
+            </div>
+            
+            {/* Small Cards - Right Side */}
+            <div className="carousel-items-small">
+              <div className="carousel-item-small">
+                <img src={slides[0].image} alt={slides[0].title} />
+                <div className="carousel-overlay-small">
+                  <p className="carousel-label">{slides[0].title}</p>
                 </div>
               </div>
-            ))}
+              
+              <div className="carousel-item-small">
+                <img src={slides[2].image} alt={slides[2].title} />
+                <div className="carousel-overlay-small">
+                  <p className="carousel-label">RELAX</p>
+                </div>
+              </div>
+              
+              <div className="carousel-item-small">
+                <img src={slides[2].image} alt={slides[2].title} />
+                <div className="carousel-overlay-small">
+                  <p className="carousel-label">{slides[2].title}</p>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -171,7 +243,7 @@ const Home = () => {
       {/* Categories Section */}
       <section className="categories-section">
         <div className="section-header">
-          <h2><span>Categories</span></h2>
+          <h2><span>{t('shopByCategory')}</span></h2>
         </div>
         <div className="container">
           <div className="categories-grid">
@@ -179,18 +251,18 @@ const Home = () => {
               <div className="category-card">
                 <img 
                   src={categories[0].image} 
-                  alt={categories[0].name}
+                  alt={getCategoryTitle(categories[0])}
                   onError={(e) => {
                     e.target.onerror = null;
                     e.target.src = '/assets/images/placeholder.svg';
                   }}
                 />
-                <p className="category-title">{categories[0].name}</p>
+                <p className="category-title">{getCategoryTitle(categories[0])}</p>
                 <div className="category-overlay">
-                  <h3>{categories[0].name}</h3>
+                  <h3>{getCategoryTitle(categories[0])}</h3>
                   <div className="category-buttons">
-                    <Link to={categories[0].link}>Explore</Link>
-                    <Link to={categories[0].link}>Shop now</Link>
+                    <Link to={categories[0].link}>{t('explore')}</Link>
+                    <Link to={categories[0].link}>{t('shopNow')}</Link>
                   </div>
                 </div>
               </div>
@@ -200,18 +272,18 @@ const Home = () => {
                 <div key={category.id} className="category-card">
                   <img 
                     src={category.image} 
-                    alt={category.name}
+                    alt={getCategoryTitle(category)}
                     onError={(e) => {
                       e.target.onerror = null;
                       e.target.src = '/assets/images/placeholder.svg';
                     }}
                   />
-                  <p className="category-title">{category.name}</p>
+                  <p className="category-title">{getCategoryTitle(category)}</p>
                   <div className="category-overlay">
-                    <h3>{category.name}</h3>
+                    <h3>{getCategoryTitle(category)}</h3>
                     <div className="category-buttons">
-                      <Link to={category.link}>Explore</Link>
-                      <Link to={category.link}>Shop now</Link>
+                      <Link to={category.link}>{t('explore')}</Link>
+                      <Link to={category.link}>{t('shopNow')}</Link>
                     </div>
                   </div>
                 </div>
@@ -240,7 +312,7 @@ const Home = () => {
             ) : (
               <div className="map-placeholder">
                 <i className="fa fa-map-marked-alt"></i>
-                <p>Select a branch to view location</p>
+                <p>{t('selectBranchToViewLocation')}</p>
               </div>
             )}
           </div>
@@ -248,7 +320,7 @@ const Home = () => {
           {/* Floating Branch List Overlay */}
           <div className="branches-list-overlay">
             <div className="branches-list-header">
-              <h2>Find Us</h2>
+              <h2>{t('findUs')}</h2>
             </div>
 
             <div className="branches-list-compact">
@@ -262,8 +334,8 @@ const Home = () => {
                     <i className="fa fa-map-marker-alt"></i>
                   </div>
                   <div className="branch-compact-content">
-                    <h3>{branch.title_en || branch.title_ar || `Branch #${branch.id}`}</h3>
-                    <p>{branch.address_en || branch.address_ar || 'Address not available'}</p>
+                    <h3>{isArabic ? (branch.title_ar || branch.title_en || `${t('branch')} #${branch.id}`) : (branch.title_en || branch.title_ar || `${t('branch')} #${branch.id}`)}</h3>
+                    <p>{isArabic ? (branch.address_ar || branch.address_en || t('addressNotAvailable')) : (branch.address_en || branch.address_ar || t('addressNotAvailable'))}</p>
                   </div>
                 </div>
               ))}
@@ -272,7 +344,7 @@ const Home = () => {
             {branches.length === 0 && (
               <div className="no-branches-placeholder">
                 <i className="fa fa-store"></i>
-                <p>No branches available</p>
+                <p>{t('noBranchesAvailable')}</p>
               </div>
             )}
           </div>
@@ -293,9 +365,9 @@ const Home = () => {
       {/* News & Events Section */}
       <section className="news-section-cover">
         <div className="news-text">
-          <p className="video-title">News & events</p>
+          <p className="video-title">{t('newsAndEvents')}</p>
           <div className="exp-btn">
-            <Link to="/news">Explore all</Link>
+            <Link to="/news">{t('exploreAll')}</Link>
           </div>
         </div>
       </section>

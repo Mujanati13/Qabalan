@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { 
   Card, 
   Tabs, 
@@ -46,8 +47,15 @@ const { Option } = Select
 const Notifications = () => {
   const { t, language, isRTL } = useLanguage()
   const { getNotificationsExportConfig } = useExportConfig()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [searchParams] = useSearchParams()
+  
   const [loading, setLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState('send')
+  
+  // Get active tab from URL query parameter, default to 'send'
+  const tabFromUrl = searchParams.get('tab') || 'send'
+  const [activeTab, setActiveTab] = useState(tabFromUrl)
   
   // Send notification state
   const [sendModalOpen, setSendModalOpen] = useState(false)
@@ -86,7 +94,21 @@ const Notifications = () => {
     total: 0
   })
 
-  // Load data on component mount
+  // Sync active tab with URL parameter
+  useEffect(() => {
+    const tabParam = searchParams.get('tab')
+    if (tabParam && tabParam !== activeTab) {
+      setActiveTab(tabParam)
+    }
+  }, [searchParams])
+
+  // Handle tab change and update URL
+  const handleTabChange = (key) => {
+    setActiveTab(key)
+    navigate(`/notifications?tab=${key}`, { replace: true })
+  }
+
+  // Load data when active tab changes
   useEffect(() => {
     if (activeTab === 'stats') {
       loadStatistics()
@@ -427,7 +449,7 @@ const Notifications = () => {
     <div style={{ padding: '24px' }}>
       <Tabs 
         activeKey={activeTab} 
-        onChange={setActiveTab}
+        onChange={handleTabChange}
         type="card"
         size="middle"
         items={[
@@ -463,7 +485,7 @@ const Notifications = () => {
                     </Button>
                     <Button 
                       size="large"
-                      onClick={() => setActiveTab('stats')}
+                      onClick={() => handleTabChange('stats')}
                     >
                       {language === 'ar' ? 'عرض الإحصائيات' : 'View Statistics'}
                     </Button>

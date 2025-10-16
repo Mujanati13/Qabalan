@@ -682,12 +682,153 @@ router.put('/system/:key', authenticate, authorize('admin'), async (req, res, ne
   }
 });
 
+/**
+ * @route   GET /api/settings/contact-messages
+ * @desc    Get all contact messages (admin only)
+ * @access  Private (Admin)
+ */
+router.get('/contact-messages', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const { status, page = 1, limit = 20 } = req.query;
+    const offset = (page - 1) * limit;
+
+    let whereClause = '';
+    const params = [];
+    
+    if (status) {
+      whereClause = 'WHERE status = ?';
+      params.push(status);
+    }
+
+    // Get total count
+    const countQuery = `SELECT COUNT(*) as total FROM contact_messages ${whereClause}`;
+    const [countResult] = await executeQuery(countQuery, params);
+    const total = countResult.total;
+
+    // Get messages
+    const messagesQuery = `
+      SELECT * FROM contact_messages 
+      ${whereClause}
+      ORDER BY created_at DESC 
+      LIMIT ? OFFSET ?
+    `;
+    params.push(parseInt(limit), parseInt(offset));
+    const messages = await executeQuery(messagesQuery, params);
+
+    res.json({
+      success: true,
+      data: {
+        messages,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   PATCH /api/settings/contact-messages/:id
+ * @desc    Update contact message status (admin only)
+ * @access  Private (Admin)
+ */
+router.patch('/contact-messages/:id', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!['new', 'read', 'replied', 'archived'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid status'
+      });
+    }
+
+    await executeQuery(
+      'UPDATE contact_messages SET status = ? WHERE id = ?',
+      [status, id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Message status updated successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   DELETE /api/settings/contact-messages/:id
+ * @desc    Delete contact message (admin only)
+ * @access  Private (Admin)
+ */
+router.delete('/contact-messages/:id', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    await executeQuery('DELETE FROM contact_messages WHERE id = ?', [id]);
+
+    res.json({
+      success: true,
+      message: 'Message deleted successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
 
-// Contact form submission endpoint
+// Contact form submission endpoint with anti-spam measures
+const contactFormSubmissions = new Map(); // Store IP-based rate limiting
+
 router.post('/contact', async (req, res) => {
   try {
-    const { name, email, subject, message, recipientEmail } = req.body;
+    const { name, email, subject, message, recipientEmail, honeypot } = req.body;
+    const clientIP = req.ip || req.connection.remoteAddress;
+
+    // Anti-spam measure 1: Honeypot field check
+    if (honeypot || req.body.website) {
+      console.warn(`Spam detected from ${clientIP}: honeypot field filled`);
+      // Return success to not alert the bot
+      return res.json({
+        success: true,
+        message: 'Message sent successfully'
+      });
+    }
+
+    // Anti-spam measure 2: Rate limiting (max 3 submissions per IP per hour)
+    const now = Date.now();
+    const submissions = contactFormSubmissions.get(clientIP) || [];
+    const recentSubmissions = submissions.filter(time => now - time < 3600000); // 1 hour
+    
+    if (recentSubmissions.length >= 3) {
+      console.warn(`Rate limit exceeded for ${clientIP}`);
+      return res.status(429).json({
+        success: false,
+        message: 'Too many submissions. Please try again later.'
+      });
+    }
+    
+    // Update submissions log
+    recentSubmissions.push(now);
+    contactFormSubmissions.set(clientIP, recentSubmissions);
+    
+    // Clean up old entries periodically (keep last 2 hours)
+    if (contactFormSubmissions.size > 1000) {
+      for (const [ip, times] of contactFormSubmissions.entries()) {
+        const recent = times.filter(time => now - time < 7200000);
+        if (recent.length === 0) {
+          contactFormSubmissions.delete(ip);
+        }
+      }
+    }
 
     // Validate required fields
     if (!name || !email || !subject || !message) {
@@ -705,6 +846,21 @@ router.post('/contact', async (req, res) => {
         message: 'Invalid email format'
       });
     }
+    
+    // Anti-spam measure 3: Basic content validation
+    if (message.length < 10) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message is too short'
+      });
+    }
+    
+    // Anti-spam measure 4: Check for suspicious patterns
+    const suspiciousPatterns = /\b(viagra|casino|lottery|winner|click here|buy now)\b/i;
+    if (suspiciousPatterns.test(message) || suspiciousPatterns.test(subject)) {
+      console.warn(`Suspicious content detected from ${clientIP}`);
+      // Log but still accept to avoid false positives
+    }
 
     // Create contact_messages table if it doesn't exist
     const createTableQuery = `
@@ -714,8 +870,10 @@ router.post('/contact', async (req, res) => {
         email VARCHAR(255) NOT NULL,
         subject VARCHAR(500) NOT NULL,
         message TEXT NOT NULL,
-        recipient_email VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        status ENUM('new', 'read', 'replied', 'archived') DEFAULT 'new',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_status (status),
+        INDEX idx_created_at (created_at)
       )
     `;
     
@@ -723,16 +881,15 @@ router.post('/contact', async (req, res) => {
 
     // Insert the contact message
     const insertQuery = `
-      INSERT INTO contact_messages (name, email, subject, message, recipient_email, created_at)
-      VALUES (?, ?, ?, ?, ?, NOW())
+      INSERT INTO contact_messages (name, email, subject, message, created_at)
+      VALUES (?, ?, ?, ?, NOW())
     `;
 
     await executeQuery(insertQuery, [
       name, 
       email, 
       subject, 
-      message, 
-      recipientEmail || 'admin@qabalan.com'
+      message
     ]);
 
     // TODO: Implement email sending logic here

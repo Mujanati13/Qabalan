@@ -90,6 +90,7 @@ const Support = () => {
   const [loading, setLoading] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [feedback, setFeedback] = useState([]);
+  const [contactMessages, setContactMessages] = useState([]); // New state for contact messages
   const [statistics, setStatistics] = useState({});
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [ticketDetailsVisible, setTicketDetailsVisible] = useState(false);
@@ -182,6 +183,8 @@ const Support = () => {
       fetchFeedback();
     } else if (activeTab === 'statistics') {
       fetchStatistics();
+    } else if (activeTab === 'contact-messages') {
+      fetchContactMessages();
     }
   }, [activeTab, pagination.current, pagination.pageSize, filters]);
 
@@ -522,6 +525,63 @@ const Support = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch contact messages from Contact Us form
+  const fetchContactMessages = async () => {
+    setLoading(true);
+    try {
+      const params = {
+        page: pagination.current,
+        limit: pagination.pageSize,
+        status: filters.status || undefined
+      };
+
+      const response = await supportService.getContactMessages(params);
+      setContactMessages(response.data.messages);
+      setPagination(prev => ({
+        ...prev,
+        total: response.data.pagination.total
+      }));
+    } catch (error) {
+      console.error('Error fetching contact messages:', error);
+      message.error(error.response?.data?.message || 'Failed to fetch contact messages');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Update contact message status
+  const handleUpdateContactMessageStatus = async (messageId, status) => {
+    try {
+      await supportService.updateContactMessageStatus(messageId, status);
+      message.success('Message status updated successfully');
+      fetchContactMessages();
+    } catch (error) {
+      console.error('Error updating contact message status:', error);
+      message.error(error.response?.data?.message || 'Failed to update message status');
+    }
+  };
+
+  // Delete contact message
+  const handleDeleteContactMessage = async (messageId) => {
+    Modal.confirm({
+      title: 'Delete Message',
+      content: 'Are you sure you want to delete this message? This action cannot be undone.',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await supportService.deleteContactMessage(messageId);
+          message.success('Message deleted successfully');
+          fetchContactMessages();
+        } catch (error) {
+          console.error('Error deleting contact message:', error);
+          message.error(error.response?.data?.message || 'Failed to delete message');
+        }
+      }
+    });
   };
 
   const handleTicketDetails = async (ticket) => {
@@ -1475,9 +1535,9 @@ const Support = () => {
                   <Button 
                     icon={<FilterOutlined />} 
                     onClick={() => setFilters({
-                      status: '',
-                      priority: '',
-                      category: '',
+                      status: [],
+                      priority: [],
+                      category: [],
                       search: '',
                       date_from: '',
                       date_to: ''
@@ -1612,6 +1672,181 @@ const Support = () => {
                 showQuickJumper: true,
                 showTotal: (total, range) =>
                   `${range[0]}-${range[1]} of ${total} feedback`,
+                onChange: (page, pageSize) => {
+                  setPagination(prev => ({
+                    ...prev,
+                    current: page,
+                    pageSize
+                  }));
+                }
+              }}
+            />
+          </Card>
+        </TabPane>
+
+        <TabPane tab="Contact Messages" key="contact-messages">
+          <Card>
+            <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+              <Col xs={24} md={12}>
+                <Title level={4} style={{ margin: 0 }}>Contact Form Messages</Title>
+                <Text type="secondary">Messages from the website contact form</Text>
+              </Col>
+              <Col xs={24} md={12} style={{ textAlign: 'right' }}>
+                <Space>
+                  <Select
+                    placeholder="Filter by Status"
+                    allowClear
+                    style={{ width: 150 }}
+                    value={filters.status || undefined}
+                    onChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
+                  >
+                    <Option value="new">New</Option>
+                    <Option value="read">Read</Option>
+                    <Option value="replied">Replied</Option>
+                    <Option value="archived">Archived</Option>
+                  </Select>
+                  <Button 
+                    icon={<ReloadOutlined />} 
+                    onClick={fetchContactMessages}
+                  >
+                    Refresh
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+
+            <Table
+              columns={[
+                {
+                  title: 'ID',
+                  dataIndex: 'id',
+                  key: 'id',
+                  width: 70,
+                },
+                {
+                  title: 'Name',
+                  dataIndex: 'name',
+                  key: 'name',
+                  width: 150,
+                },
+                {
+                  title: 'Email',
+                  dataIndex: 'email',
+                  key: 'email',
+                  width: 200,
+                  render: (email) => (
+                    <a href={`mailto:${email}`}>{email}</a>
+                  ),
+                },
+                {
+                  title: 'Subject',
+                  dataIndex: 'subject',
+                  key: 'subject',
+                  width: 200,
+                },
+                {
+                  title: 'Message',
+                  dataIndex: 'message',
+                  key: 'message',
+                  ellipsis: true,
+                  render: (text) => (
+                    <Tooltip title={text}>
+                      <span>{text?.substring(0, 100)}{text?.length > 100 ? '...' : ''}</span>
+                    </Tooltip>
+                  ),
+                },
+                {
+                  title: 'Status',
+                  dataIndex: 'status',
+                  key: 'status',
+                  width: 120,
+                  render: (status, record) => (
+                    <Select
+                      value={status}
+                      style={{ width: '100%' }}
+                      onChange={(value) => handleUpdateContactMessageStatus(record.id, value)}
+                      size="small"
+                    >
+                      <Option value="new">
+                        <Badge status="processing" text="New" />
+                      </Option>
+                      <Option value="read">
+                        <Badge status="default" text="Read" />
+                      </Option>
+                      <Option value="replied">
+                        <Badge status="success" text="Replied" />
+                      </Option>
+                      <Option value="archived">
+                        <Badge status="default" text="Archived" />
+                      </Option>
+                    </Select>
+                  ),
+                },
+                {
+                  title: 'Date',
+                  dataIndex: 'created_at',
+                  key: 'created_at',
+                  width: 150,
+                  render: (date) => new Date(date).toLocaleString(),
+                },
+                {
+                  title: 'Actions',
+                  key: 'actions',
+                  width: 100,
+                  fixed: 'right',
+                  render: (_, record) => (
+                    <Space>
+                      <Tooltip title="View Full Message">
+                        <Button
+                          type="link"
+                          icon={<EyeOutlined />}
+                          onClick={() => {
+                            Modal.info({
+                              title: `Message from ${record.name}`,
+                              width: 600,
+                              content: (
+                                <div>
+                                  <p><strong>Email:</strong> <a href={`mailto:${record.email}`}>{record.email}</a></p>
+                                  <p><strong>Subject:</strong> {record.subject}</p>
+                                  <Divider />
+                                  <p style={{ whiteSpace: 'pre-wrap' }}>{record.message}</p>
+                                  <Divider />
+                                  <Text type="secondary">
+                                    Received: {new Date(record.created_at).toLocaleString()}
+                                  </Text>
+                                  {record.ip_address && (
+                                    <><br /><Text type="secondary">IP: {record.ip_address}</Text></>
+                                  )}
+                                </div>
+                              ),
+                            });
+                          }}
+                        />
+                      </Tooltip>
+                      <Tooltip title="Delete">
+                        <Button
+                          type="link"
+                          danger
+                          icon={<CloseCircleOutlined />}
+                          onClick={() => handleDeleteContactMessage(record.id)}
+                        />
+                      </Tooltip>
+                    </Space>
+                  ),
+                },
+              ]}
+              dataSource={contactMessages}
+              rowKey="id"
+              loading={loading}
+              scroll={{ x: 1200 }}
+              pagination={{
+                current: pagination.current,
+                pageSize: pagination.pageSize,
+                total: pagination.total,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total, range) =>
+                  `${range[0]}-${range[1]} of ${total} messages`,
                 onChange: (page, pageSize) => {
                   setPagination(prev => ({
                     ...prev,

@@ -382,12 +382,38 @@ class NotificationService {
    */
   async markAsRead(notificationId, userId) {
     try {
-      await executeQuery(`
+      // For admin notifications (user_id IS NULL), we allow marking without user_id check
+      // For user notifications, we check user_id to ensure users can only mark their own notifications
+      const query = userId ? `
         UPDATE notifications 
         SET is_read = 1, read_at = NOW() 
-        WHERE id = ? AND user_id = ?
-      `, [notificationId, userId]);
+        WHERE id = ? AND (user_id = ? OR user_id IS NULL)
+      ` : `
+        UPDATE notifications 
+        SET is_read = 1, read_at = NOW() 
+        WHERE id = ?
+      `;
 
+      const params = userId ? [notificationId, userId] : [notificationId];
+      
+      console.log(`[NOTIF_SERVICE] Marking notification as read:`, {
+        notificationId,
+        userId: userId || 'admin',
+        query,
+        params
+      });
+      
+      const result = await executeQuery(query, params);
+      
+      console.log(`[NOTIF_SERVICE] Mark as read result:`, result);
+      console.log(`[NOTIF_SERVICE] Rows affected: ${result.affectedRows || 0}`);
+
+      if (result.affectedRows === 0) {
+        console.warn(`[NOTIF_SERVICE] ⚠️ No rows were updated! Notification ${notificationId} may not exist or is already read.`);
+      } else {
+        console.log(`[NOTIF_SERVICE] ✅ Successfully marked notification ${notificationId} as read`);
+      }
+      
       return true;
     } catch (error) {
       console.error('Error marking notification as read:', error);
@@ -457,7 +483,7 @@ class NotificationService {
   /**
    * Get admin notifications with pagination
    */
-  async getAdminNotifications(page = 1, limit = 20, type = null) {
+  async getAdminNotifications(page = 1, limit = 20, type = null, unreadOnly = false) {
     try {
       const sanitizedPage = Math.max(1, parseInt(page) || 1);
       const sanitizedLimit = Math.max(1, Math.min(1000, parseInt(limit) || 20));
@@ -472,12 +498,47 @@ class NotificationService {
         queryParams.push(type);
       }
 
-      // Get total count
+      // Filter for unread notifications if requested
+      if (unreadOnly) {
+        whereClause += ' AND is_read = 0';
+      }
+
+      console.log(`[NOTIF_SERVICE] Query parameters:`, {
+        page: sanitizedPage,
+        limit: sanitizedLimit,
+        type,
+        unreadOnly,
+        whereClause,
+        queryParams
+      });
+
+      // Get total count for the specific query
       const [total] = await executeQuery(`
         SELECT COUNT(*) as count 
         FROM notifications 
         ${whereClause}
       `, queryParams);
+
+      console.log(`[NOTIF_SERVICE] Total count result:`, total);
+
+      // Also get diagnostic counts for debugging
+      const [allAdminCount] = await executeQuery(`
+        SELECT COUNT(*) as count FROM notifications WHERE user_id IS NULL
+      `);
+      const [allAdminUnreadCount] = await executeQuery(`
+        SELECT COUNT(*) as count FROM notifications WHERE user_id IS NULL AND is_read = 0
+      `);
+      const [allAdminReadCount] = await executeQuery(`
+        SELECT COUNT(*) as count FROM notifications WHERE user_id IS NULL AND is_read = 1
+      `);
+
+      console.log(`[NOTIF_SERVICE] 📊 Diagnostic Counts:`, {
+        totalAdminNotifications: allAdminCount.count,
+        unreadAdminNotifications: allAdminUnreadCount.count,
+        readAdminNotifications: allAdminReadCount.count,
+        queriedCount: total.count,
+        difference: allAdminUnreadCount.count - total.count
+      });
 
       // Get notifications
       const notifications = await executeQuery(`
@@ -487,7 +548,7 @@ class NotificationService {
         LIMIT ${sanitizedLimit} OFFSET ${offset}
       `, queryParams);
 
-      console.log(`[NOTIF_SERVICE] Retrieved ${notifications.length} admin notifications`);
+      console.log(`[NOTIF_SERVICE] Retrieved ${notifications.length} admin notifications (unreadOnly: ${unreadOnly}, total: ${total.count})`);
 
       return {
         notifications,

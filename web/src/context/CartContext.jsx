@@ -78,15 +78,28 @@ export const CartProvider = ({ children }) => {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, [isBrowser]);
 
-  const addToCart = (product, quantity = 1, variant = null, specialInstructions = '') => {
-    console.log('🛒 Adding to cart:', { product, quantity, variant, specialInstructions });
+  const addToCart = (product, quantity = 1, variants = null, specialInstructions = '') => {
+    console.log('🛒 Adding to cart:', { product, quantity, variants, specialInstructions });
+    
+    // Handle both single variant (backward compatibility) and array of variants
+    const variantsArray = Array.isArray(variants) ? variants : (variants ? [variants] : []);
     
     setCart((prevCart) => {
       const existingItemIndex = prevCart.findIndex((item) => {
-        // Normalize variant IDs for comparison
-        const itemVariantId = item.variant?.id ?? null;
-        const targetVariantId = variant?.id ?? null;
-        return item.id === product.id && itemVariantId === targetVariantId;
+        // Compare product ID
+        if (item.id !== product.id) return false;
+        
+        // Compare variants array (order-independent)
+        const itemVariants = Array.isArray(item.variants) ? item.variants : (item.variant ? [item.variant] : []);
+        const targetVariants = variantsArray;
+        
+        if (itemVariants.length !== targetVariants.length) return false;
+        
+        // Check if all variant IDs match (order-independent)
+        const itemVariantIds = itemVariants.map(v => v.id).sort();
+        const targetVariantIds = targetVariants.map(v => v.id).sort();
+        
+        return JSON.stringify(itemVariantIds) === JSON.stringify(targetVariantIds);
       });
 
       if (existingItemIndex > -1) {
@@ -100,13 +113,46 @@ export const CartProvider = ({ children }) => {
         return updatedCart;
       }
 
-      // Add unit_price for consistent pricing
-      const unitPrice = variant ? variant.price : (product.final_price || product.sale_price || product.base_price || 0);
+      // Calculate unit_price for multi-variant - consider price_behavior
+      let unitPrice = parseFloat(product.final_price || product.sale_price || product.base_price || 0);
+      
+      if (variantsArray.length > 0) {
+        // Separate override and add variants
+        const overrideVariants = variantsArray.filter(v => {
+          const behavior = v.price_behavior || v.pricing_behavior;
+          return behavior === 'override';
+        });
+        
+        const addVariants = variantsArray.filter(v => {
+          const behavior = v.price_behavior || v.pricing_behavior;
+          return behavior !== 'override'; // treat null/undefined as 'add'
+        });
+        
+        // Sort override variants by priority (lower number = higher priority)
+        const sortedOverrides = overrideVariants.sort((a, b) => {
+          const priorityA = a.override_priority !== null && a.override_priority !== undefined ? a.override_priority : Infinity;
+          const priorityB = b.override_priority !== null && b.override_priority !== undefined ? b.override_priority : Infinity;
+          return priorityA - priorityB;
+        });
+        
+        // Apply the first override variant (highest priority)
+        if (sortedOverrides.length > 0) {
+          const winningOverride = sortedOverrides[0];
+          unitPrice = parseFloat(winningOverride.price || winningOverride.price_modifier || 0);
+        }
+        
+        // Add all "add" variants
+        addVariants.forEach(variant => {
+          const variantModifier = parseFloat(variant.price || variant.price_modifier || 0);
+          unitPrice += variantModifier;
+        });
+      }
 
       const newCart = [...prevCart, { 
         ...product, 
         quantity, 
-        variant, 
+        variants: variantsArray, // Store as array
+        variant: variantsArray.length === 1 ? variantsArray[0] : null, // Backward compatibility
         special_instructions: specialInstructions || '',
         unit_price: unitPrice
       }];
@@ -116,36 +162,62 @@ export const CartProvider = ({ children }) => {
     });
   };
 
-  const removeFromCart = (productId, variantId = null) => {
-    console.log('🗑️ Removing from cart:', { productId, variantId });
+  const removeFromCart = (productId, variantsOrVariantId = null) => {
+    console.log('🗑️ Removing from cart:', { productId, variantsOrVariantId });
     setCart((prevCart) => {
       const newCart = prevCart.filter((item) => {
-        // Normalize variant IDs: treat undefined, null, and 0 as equivalent
-        const itemVariantId = item.variant?.id ?? null;
-        const targetVariantId = variantId ?? null;
+        if (item.id !== productId) return true; // Keep items with different product ID
         
-        // Item matches if product ID is different OR variant ID is different
-        const matches = item.id === productId && itemVariantId === targetVariantId;
-        return !matches;
+        // Handle both array of variants and single variant ID for backward compatibility
+        const targetVariants = Array.isArray(variantsOrVariantId) 
+          ? variantsOrVariantId 
+          : (variantsOrVariantId ? [{ id: variantsOrVariantId }] : []);
+        
+        const itemVariants = Array.isArray(item.variants) 
+          ? item.variants 
+          : (item.variant ? [item.variant] : []);
+        
+        // If no target variants specified, remove all items with this product ID
+        if (targetVariants.length === 0 && itemVariants.length === 0) {
+          return false; // Remove this item
+        }
+        
+        // Compare variant IDs
+        const itemVariantIds = itemVariants.map(v => v.id).sort();
+        const targetVariantIds = targetVariants.map(v => v.id).sort();
+        
+        const matches = JSON.stringify(itemVariantIds) === JSON.stringify(targetVariantIds);
+        return !matches; // Keep items that don't match
       });
       console.log('✅ Cart after removal:', newCart);
       return newCart;
     });
   };
 
-  const updateQuantity = (productId, quantity, variantId = null) => {
+  const updateQuantity = (productId, quantity, variantsOrVariantId = null) => {
     if (quantity <= 0) {
-      removeFromCart(productId, variantId);
+      removeFromCart(productId, variantsOrVariantId);
       return;
     }
 
     setCart((prevCart) =>
       prevCart.map((item) => {
-        // Normalize variant IDs
-        const itemVariantId = item.variant?.id ?? null;
-        const targetVariantId = variantId ?? null;
+        if (item.id !== productId) return item;
         
-        if (item.id === productId && itemVariantId === targetVariantId) {
+        // Handle both array of variants and single variant ID for backward compatibility
+        const targetVariants = Array.isArray(variantsOrVariantId) 
+          ? variantsOrVariantId 
+          : (variantsOrVariantId ? [{ id: variantsOrVariantId }] : []);
+        
+        const itemVariants = Array.isArray(item.variants) 
+          ? item.variants 
+          : (item.variant ? [item.variant] : []);
+        
+        // Compare variant IDs
+        const itemVariantIds = itemVariants.map(v => v.id).sort();
+        const targetVariantIds = targetVariants.map(v => v.id).sort();
+        
+        if (JSON.stringify(itemVariantIds) === JSON.stringify(targetVariantIds)) {
           return { ...item, quantity };
         }
         return item;
@@ -153,14 +225,25 @@ export const CartProvider = ({ children }) => {
     );
   };
 
-  const updateItemInstructions = (productId, variantId = null, instructions = '') => {
+  const updateItemInstructions = (productId, variantsOrVariantId = null, instructions = '') => {
     setCart((prevCart) =>
       prevCart.map((item) => {
-        // Normalize variant IDs
-        const itemVariantId = item.variant?.id ?? null;
-        const targetVariantId = variantId ?? null;
+        if (item.id !== productId) return item;
         
-        if (item.id === productId && itemVariantId === targetVariantId) {
+        // Handle both array of variants and single variant ID for backward compatibility
+        const targetVariants = Array.isArray(variantsOrVariantId) 
+          ? variantsOrVariantId 
+          : (variantsOrVariantId ? [{ id: variantsOrVariantId }] : []);
+        
+        const itemVariants = Array.isArray(item.variants) 
+          ? item.variants 
+          : (item.variant ? [item.variant] : []);
+        
+        // Compare variant IDs
+        const itemVariantIds = itemVariants.map(v => v.id).sort();
+        const targetVariantIds = targetVariants.map(v => v.id).sort();
+        
+        if (JSON.stringify(itemVariantIds) === JSON.stringify(targetVariantIds)) {
           return { ...item, special_instructions: instructions };
         }
         return item;

@@ -327,7 +327,13 @@ const resolveVariantUnitPrice = (basePrice, variant) => {
 
   const priceModifier = parseNumericValue(variant.price_modifier);
   if (priceModifier !== null) {
-    return basePrice + priceModifier;
+    // Check price_behavior: 'override' replaces base price, 'add' adds to it
+    const priceBehavior = variant.price_behavior || 'add';
+    if (priceBehavior === 'override') {
+      return priceModifier;
+    } else {
+      return basePrice + priceModifier;
+    }
   }
 
   return basePrice;
@@ -623,7 +629,7 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
   const inventoryAdjustments = [];
   
   for (const item of items) {
-    const { product_id, variant_id, quantity, special_instructions } = item;
+    const { product_id, variant_id, variants, quantity, special_instructions } = item;
     
     if (!product_id || !quantity || quantity <= 0) {
       throw new Error('Invalid item: product_id and positive quantity required');
@@ -650,13 +656,109 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
     let unitPrice = baseProductPrice;
     let pointsPerItem = product.loyalty_points;
     let branchInventoryRecord = null;
+    let variantDetails = null; // Store variant info for special_instructions
 
     if (branchId) {
       branchInventoryRecord = await getBranchInventoryRecord(branchId, product_id, variant_id || null);
     }
     
-    // If variant specified, get variant details
-    if (variant_id) {
+    // Handle multiple variants (additions like color + size + weight)
+    if (variants && Array.isArray(variants) && variants.length > 0) {
+      let currentPrice = baseProductPrice;
+      const variantNames = [];
+      
+      // First, fetch all variant details
+      const variantsList = [];
+      for (const variantItem of variants) {
+        const variantId = typeof variantItem === 'object' ? variantItem.id : variantItem;
+        
+        const [variant] = await executeQuery(
+          `SELECT * FROM product_variants WHERE id = ? AND product_id = ? AND is_active = 1`,
+          [variantId, product_id]
+        );
+        
+        if (!variant) {
+          throw new Error(`Product variant with ID ${variantId} not found or inactive`);
+        }
+        
+        const variantStockQuantity = parseNumericValue(variant.stock_quantity);
+        if (variantStockQuantity !== null && variantStockQuantity < quantity && !branchInventoryRecord) {
+          throw new Error(`Insufficient stock for variant: ${variant.title_en || variant.variant_value}`);
+        }
+        
+        variantsList.push(variant);
+      }
+      
+      // Sort variants: override variants first (by priority), then add variants
+      variantsList.sort((a, b) => {
+        const behaviorA = a.price_behavior || 'add';
+        const behaviorB = b.price_behavior || 'add';
+        
+        // Override variants come first
+        if (behaviorA === 'override' && behaviorB !== 'override') return -1;
+        if (behaviorA !== 'override' && behaviorB === 'override') return 1;
+        
+        // If both are override, sort by priority (lower number = higher priority)
+        if (behaviorA === 'override' && behaviorB === 'override') {
+          const priorityA = a.override_priority !== null ? a.override_priority : 999999;
+          const priorityB = b.override_priority !== null ? b.override_priority : 999999;
+          return priorityA - priorityB;
+        }
+        
+        return 0;
+      });
+      
+      // Find the winning override variant (first override after sorting = lowest priority number)
+      let winningOverride = null;
+      for (const variant of variantsList) {
+        if ((variant.price_behavior || 'add') === 'override') {
+          winningOverride = variant;
+          break; // Take the first override (lowest priority number wins)
+        }
+      }
+      
+      // Apply the winning override first (if any)
+      if (winningOverride) {
+        const directPrice = parseFloat(winningOverride.price);
+        const priceModifier = parseFloat(winningOverride.price_modifier);
+        
+        if (directPrice && directPrice > 0) {
+          currentPrice = directPrice;
+        } else if (priceModifier && priceModifier > 0) {
+          currentPrice = priceModifier;
+        } else {
+          throw new Error(`Unable to determine override price for variant with ID ${winningOverride.id}`);
+        }
+      }
+      
+      // Now apply all add variants and collect names
+      for (const variant of variantsList) {
+        const priceBehavior = variant.price_behavior || 'add';
+        
+        if (priceBehavior === 'add') {
+          // Add: add the modifier to current price
+          const priceModifier = parseFloat(variant.price_modifier);
+          if (priceModifier) {
+            currentPrice += priceModifier;
+          }
+        }
+        
+        // Collect all variant names for display
+        variantNames.push(variant.title_en || `${variant.variant_name}: ${variant.variant_value}`);
+      }
+      
+      // Final unit price after all variants applied
+      unitPrice = currentPrice;
+      
+      // Store variant details for special_instructions
+      variantDetails = JSON.stringify({
+        type: 'multi_variant',
+        variant_ids: variants.map(v => typeof v === 'object' ? v.id : v),
+        variant_names: variantNames
+      });
+    }
+    // If single variant specified, get variant details
+    else if (variant_id) {
       const [variant] = await executeQuery(
         `SELECT * FROM product_variants WHERE id = ? AND product_id = ? AND is_active = 1`,
         [variant_id, product_id]
@@ -714,6 +816,14 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
     const totalPrice = resolvedUnitPrice * quantity;
     const itemPointsEarned = pointsPerItem * quantity;
     
+    // Combine user's special instructions with variant details
+    let combinedInstructions = special_instructions || '';
+    if (variantDetails) {
+      combinedInstructions = combinedInstructions 
+        ? `${combinedInstructions}\n__VARIANT_DATA__:${variantDetails}`
+        : `__VARIANT_DATA__:${variantDetails}`;
+    }
+    
     validatedItems.push({
       product_id,
       variant_id: variant_id || null,
@@ -721,7 +831,7 @@ const validateAndCalculateOrderItems = async (items, branchId = null) => {
       unit_price: resolvedUnitPrice,
       total_price: totalPrice,
       points_earned: itemPointsEarned,
-      special_instructions: special_instructions || null,
+      special_instructions: combinedInstructions || null,
       // Snapshot fields for product deletion handling
       product_name_en: product.title_en,
       product_name_ar: product.title_ar,
@@ -1074,8 +1184,8 @@ router.get('/', authenticate, validatePagination, async (req, res, next) => {
           COALESCE(p.title_en, oi.product_name_en, '[Deleted Product]') as product_title_en,
           p.main_image as product_image,
           COALESCE(p.sku, oi.product_sku) as product_sku,
-          COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
-          COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+          pv.title_ar as variant_title_ar,
+          pv.title_en as variant_title_en,
           pv.variant_name,
           pv.variant_value
         FROM order_items oi
@@ -1267,8 +1377,8 @@ router.get('/:id', authenticate, validateId, async (req, res, next) => {
         COALESCE(p.title_en, oi.product_name_en, '[Deleted Product]') as product_title_en,
         p.main_image as product_image,
         COALESCE(p.sku, oi.product_sku) as product_sku,
-        COALESCE(pv.variant_name, pv.variant_value) as variant_title_ar,
-        COALESCE(pv.variant_value, pv.variant_name) as variant_title_en,
+        pv.title_ar as variant_title_ar,
+        pv.title_en as variant_title_en,
         pv.variant_name,
         pv.variant_value
       FROM order_items oi
@@ -1556,10 +1666,18 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
     }
     
   const originalDeliveryFee = Number(deliveryCalculation.delivery_fee || 0);
+  const distanceBasedFreeShipping = deliveryCalculation.free_shipping_applied || false;
 
   let adjustedDeliveryFee = originalDeliveryFee;
   let shippingDiscountAmount = 0;
   let promoDiscountAmount = 0;
+
+  // If distance-based free shipping is already applied, record it
+  if (distanceBasedFreeShipping && originalDeliveryFee === 0) {
+    // The delivery fee is already 0 from distance-based calculation
+    // No need to adjust, but we should note this in the response
+    console.log('✅ Distance-based free shipping already applied in delivery calculation');
+  }
 
     const promoUserId = (() => {
       if (isGuestOrder) {
@@ -1673,7 +1791,15 @@ router.post('/calculate', optionalAuth, validateOrderItems, async (req, res, nex
         points_blocked: pointsSummary.blocked,
         points_rate: LOYALTY_POINTS_RATE,
         points_earned: pointsEarned,
-        promo_details: promoDetails
+        promo_details: promoDetails,
+        // Include delivery calculation details
+        delivery_calculation: {
+          calculation_method: deliveryCalculation.calculation_method,
+          distance_km: deliveryCalculation.distance_km,
+          zone_name: deliveryCalculation.zone_name,
+          free_shipping_applied: deliveryCalculation.free_shipping_applied || distanceBasedFreeShipping,
+          free_shipping_threshold: deliveryCalculation.free_shipping_threshold
+        }
       }
     });
 
@@ -2015,13 +2141,17 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
     }
 
     const originalDeliveryFee = Number(deliveryCalculation.delivery_fee || 0);
+    const distanceBasedFreeShipping = deliveryCalculation.free_shipping_applied || false;
+    
     let deliveryFee = originalDeliveryFee;
     let shippingDiscountAmount = 0;
     let promoDiscountAmount = 0;
     let promoCodeId = null;
     let isFreeShippingPromo = false;
     
-    if (promo_code) {
+    // Important: If distance-based free shipping is already applied, 
+    // the delivery_fee is already 0, so we should NOT apply promo code free shipping on top
+    if (promo_code && !distanceBasedFreeShipping) {
       const promoResult = await applyPromoCode(
         promo_code,
         subtotal,
@@ -2049,6 +2179,19 @@ router.post('/', optionalAuth, validateOrderItems, validateOrderType, validatePa
         } else {
           promoDiscountAmount = Number(promoResult.discountAmount || 0);
         }
+      }
+    } else if (promo_code && distanceBasedFreeShipping) {
+      console.log('⚠️ Distance-based free shipping already applied. Promo code free shipping will be ignored.');
+      // Still apply non-shipping promo codes
+      const promoResult = await applyPromoCode(
+        promo_code,
+        subtotal,
+        isGuestOrder ? null : (isAdminOrder ? customerIdForOrder : req.user.id),
+        originalDeliveryFee
+      );
+      if (promoResult && !promoResult.isFreeShipping) {
+        promoCodeId = promoResult.promo.id;
+        promoDiscountAmount = Number(promoResult.discountAmount || 0);
       }
     }
 
@@ -2557,7 +2700,11 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
       order_type,
       items,
       subtotal,
-      total_amount
+      total_amount,
+      discount_amount,
+      promo_code_id,
+      promo_code,
+      promo_discount_amount
     } = req.body;
 
     // Get current order
@@ -2677,10 +2824,23 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
     if (recalculateTotal && !total_amount) {
       const finalSubtotal = subtotal || currentOrder.subtotal;
       const taxAmount = currentOrder.tax_amount || 0;
-      const discountAmount = currentOrder.discount_amount || 0;
+      const discountAmount = (discount_amount !== undefined && discount_amount !== null)
+        ? discount_amount
+        : (currentOrder.discount_amount || 0);
       finalTotalAmount = Number(finalSubtotal) + Number(deliveryFee) + Number(taxAmount) - Number(discountAmount);
       console.log(`Order ${req.params.id}: Recalculated total: ${finalTotalAmount} (subtotal: ${finalSubtotal}, delivery: ${deliveryFee}, tax: ${taxAmount}, discount: ${discountAmount})`);
     }
+
+    // Log promo code update
+    console.log(`Order ${req.params.id}: Updating promo code:`, {
+      promo_code: promo_code,
+      promo_code_id: promo_code_id,
+      promo_discount_amount: promo_discount_amount,
+      discount_amount: discount_amount,
+      previous_promo_code: currentOrder.promo_code,
+      previous_promo_code_id: currentOrder.promo_code_id,
+      previous_promo_discount_amount: currentOrder.promo_discount_amount
+    });
 
     // Update order
     await executeQuery(`
@@ -2694,7 +2854,11 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
         order_type = COALESCE(?, order_type),
         delivery_fee = ?,
         subtotal = COALESCE(?, subtotal),
+        discount_amount = ?,
         total_amount = COALESCE(?, total_amount),
+        promo_code_id = ?,
+        promo_code = ?,
+        promo_discount_amount = ?,
         updated_at = NOW()
       WHERE id = ?
     `, [
@@ -2707,9 +2871,25 @@ router.put('/:id', authenticate, validateId, async (req, res, next) => {
       order_type, 
       deliveryFee,
       subtotal, 
-      finalTotalAmount, 
+      (discount_amount !== undefined && discount_amount !== null) ? discount_amount : currentOrder.discount_amount,
+      finalTotalAmount,
+      promo_code_id ?? null,
+      promo_code,
+      promo_discount_amount || 0,
       req.params.id
     ]);
+
+    // Verify the update
+    const [verifyOrder] = await executeQuery(
+      'SELECT promo_code, promo_code_id, promo_discount_amount, discount_amount FROM orders WHERE id = ?',
+      [req.params.id]
+    );
+    console.log(`Order ${req.params.id}: After update verification:`, {
+      promo_code: verifyOrder.promo_code,
+      promo_code_id: verifyOrder.promo_code_id,
+      promo_discount_amount: verifyOrder.promo_discount_amount,
+      discount_amount: verifyOrder.discount_amount
+    });
 
     // Update order items if provided
     if (items && Array.isArray(items)) {

@@ -19,14 +19,15 @@ const fcmService = require('../services/fcmService');
  */
 router.get('/', authenticate, validatePagination, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, admin = false, type } = req.query;
+    const { page = 1, limit = 20, admin = false, type, unread_only = false } = req.query;
     const userId = req.user.id;
 
     let result;
     
     if (admin === 'true' && req.user.user_type === 'admin') {
       // Get admin notifications (user_id IS NULL)
-      result = await notificationService.getAdminNotifications(page, limit, type);
+      const unreadOnly = unread_only === 'true';
+      result = await notificationService.getAdminNotifications(page, limit, type, unreadOnly);
     } else {
       // Get user-specific notifications
       result = await notificationService.getUserNotifications(userId, page, limit);

@@ -71,6 +71,28 @@ select {
   font-size: inherit;
 }
 
+/* Fix textarea black background issue */
+textarea {
+  background-color: #fff;
+  color: #333;
+}
+
+/* Ensure proper styling on all states */
+textarea:focus,
+textarea:active {
+  background-color: #fff;
+  color: #333;
+}
+
+/* Fix autofill styles */
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 30px white inset !important;
+  -webkit-text-fill-color: #333 !important;
+}
+
 /* Loading animation */
 @keyframes spin {
   to {

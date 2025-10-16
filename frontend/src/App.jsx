@@ -1,6 +1,6 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
-import { Spin } from 'antd'
+import { Spin, Result, Button } from 'antd'
 
 // Layout Components
 import AdminLayout from './components/layout/AdminLayout'
@@ -23,7 +23,7 @@ import ShippingZoneManagement from './pages/ShippingZoneManagement'
 import NotificationTestPage from './pages/NotificationTestPage'
 import Branches from './pages/Branches'
 import URLGeneratorDemo from './pages/URLGeneratorDemo'
-// import OffersManagement from './pages/OffersManagement'
+import OffersManagement from './pages/OffersManagement'
 // import WebClientConfiguration from './pages/WebClientConfiguration'
 import LocationManagement from './pages/LocationManagement'
 import PaymentReturn from './pages/PaymentReturn'
@@ -33,24 +33,6 @@ import MPGSCheckout from './pages/MPGSCheckout'
 // Placeholder pages
 const Inventory = () => <div>Inventory Page - Coming Soon</div>
 const Reports = () => <div>Reports Page - Coming Soon</div>
-
-const OffersManagement = () => (
-  <div style={{ 
-    display: 'flex', 
-    flexDirection: 'column',
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    height: '70vh',
-    textAlign: 'center'
-  }}>
-    <h1 style={{ fontSize: '48px', marginBottom: '16px' }}>🎁</h1>
-    <h2 style={{ fontSize: '24px', marginBottom: '8px' }}>Offers & Promotions</h2>
-    <p style={{ fontSize: '16px', color: '#999' }}>Coming Soon</p>
-    <p style={{ fontSize: '14px', color: '#666', maxWidth: '400px', marginTop: '16px' }}>
-      We're working on bringing you an advanced offers and promotions management system. Stay tuned!
-    </p>
-  </div>
-)
 
 const WebClientConfiguration = () => (
   <div style={{ 
@@ -71,8 +53,9 @@ const WebClientConfiguration = () => (
 )
 
 // Protected Route Component
-const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useAuth()
+const ProtectedRoute = ({ children, requiredPermissions = null }) => {
+  const { user, loading, hasPermission, hasAnyPermission } = useAuth()
+  const navigate = useNavigate()
 
   if (loading) {
     return (
@@ -88,6 +71,30 @@ const ProtectedRoute = ({ children }) => {
 
   if (user.user_type !== 'admin' && user.user_type !== 'staff') {
     return <Navigate to="/login" replace />
+  }
+
+  // Check permissions if required (admins bypass this check)
+  if (requiredPermissions && user.user_type !== 'admin') {
+    const hasAccess = Array.isArray(requiredPermissions)
+      ? hasAnyPermission(requiredPermissions)
+      : hasPermission(requiredPermissions);
+    
+    if (!hasAccess) {
+      return (
+        <AdminLayout>
+          <Result
+            status="403"
+            title="403"
+            subTitle="Sorry, you don't have permission to access this page."
+            extra={
+              <Button type="primary" onClick={() => navigate('/dashboard')}>
+                Back to Dashboard
+              </Button>
+            }
+          />
+        </AdminLayout>
+      );
+    }
   }
 
   return children
@@ -133,7 +140,7 @@ function App() {
         } />
 
         <Route path="/products" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['products.view', 'products.create', 'products.edit', 'products.delete']}>
             <AdminLayout>
               <Products />
             </AdminLayout>
@@ -141,7 +148,7 @@ function App() {
         } />
 
         <Route path="/categories" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['categories.view', 'categories.create', 'categories.edit', 'categories.delete']}>
             <AdminLayout>
               <Categories />
             </AdminLayout>
@@ -149,7 +156,7 @@ function App() {
         } />
 
         <Route path="/orders" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['orders.view', 'orders.edit', 'orders.delete']}>
             <AdminLayout>
               <Orders />
             </AdminLayout>
@@ -157,7 +164,7 @@ function App() {
         } />
 
         <Route path="/users" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['users.view', 'users.create', 'users.edit', 'users.delete']}>
             <AdminLayout>
               <Customers />
             </AdminLayout>
@@ -165,7 +172,7 @@ function App() {
         } />
 
         <Route path="/promos" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['promos.view', 'promos.create', 'promos.edit', 'promos.delete']}>
             <AdminLayout>
               <PromoCodes />
             </AdminLayout>
@@ -173,7 +180,7 @@ function App() {
         } />
 
         <Route path="/offers" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['promos.view', 'promos.create', 'promos.edit', 'promos.delete']}>
             <AdminLayout>
               <OffersManagement />
             </AdminLayout>
@@ -181,7 +188,7 @@ function App() {
         } />
 
         <Route path="/notifications" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['notifications.view', 'notifications.create', 'notifications.send']}>
             <AdminLayout>
               <Notifications />
             </AdminLayout>
@@ -189,7 +196,7 @@ function App() {
         } />
 
         <Route path="/notification-test" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['notifications.view', 'notifications.create']}>
             <AdminLayout>
               <NotificationTestPage />
             </AdminLayout>
@@ -197,7 +204,7 @@ function App() {
         } />
 
         <Route path="/inventory" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['inventory.view', 'inventory.edit']}>
             <AdminLayout>
               <Inventory />
             </AdminLayout>
@@ -205,7 +212,7 @@ function App() {
         } />
 
         <Route path="/reports" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['reports.view', 'reports.generate']}>
             <AdminLayout>
               <Reports />
             </AdminLayout>
@@ -213,7 +220,7 @@ function App() {
         } />
 
         <Route path="/settings" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['settings.view', 'settings.edit']}>
             <AdminLayout>
               <Settings />
             </AdminLayout>
@@ -229,7 +236,7 @@ function App() {
         } />
 
         <Route path="/support" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['support.view', 'support.respond', 'support.manage']}>
             <AdminLayout>
               <Support />
             </AdminLayout>
@@ -237,7 +244,7 @@ function App() {
         } />
 
         <Route path="/invoices" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['invoices.view', 'invoices.generate', 'invoices.export']}>
             <AdminLayout>
               <InvoiceManagement />
             </AdminLayout>
@@ -245,7 +252,7 @@ function App() {
         } />
 
         <Route path="/staff" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['staff.view', 'staff.create', 'staff.edit', 'roles.view', 'roles.create', 'roles.edit']}>
             <AdminLayout>
               <StaffManagement />
             </AdminLayout>
@@ -253,7 +260,7 @@ function App() {
         } />
 
         <Route path="/shipping-zones" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['settings.view', 'settings.edit']}>
             <AdminLayout>
               <ShippingZoneManagement />
             </AdminLayout>
@@ -261,7 +268,7 @@ function App() {
         } />
 
         <Route path="/branches" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['settings.view', 'settings.edit']}>
             <AdminLayout>
               <Branches />
             </AdminLayout>
@@ -285,7 +292,7 @@ function App() {
         } />
 
         <Route path="/locations" element={
-          <ProtectedRoute>
+          <ProtectedRoute requiredPermissions={['settings.view', 'settings.edit']}>
             <AdminLayout>
               <LocationManagement />
             </AdminLayout>

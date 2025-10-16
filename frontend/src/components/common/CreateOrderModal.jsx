@@ -36,6 +36,7 @@ import productsService from '../../services/productsService';
 import ordersService from '../../services/ordersService';
 import branchesService from '../../services/branchesService';
 import paymentsService from '../../services/paymentsService';
+import promosService from '../../services/promosService';
 
 const { Option } = Select;
 const { Text } = Typography;
@@ -68,6 +69,10 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
   const [searchingProducts, setSearchingProducts] = useState(false);
   const [branchInventory, setBranchInventory] = useState({}); // Store branch inventory by product_id
   
+  // Variant selection modal
+  const [showVariantModal, setShowVariantModal] = useState(false);
+  const [selectedProductForVariant, setSelectedProductForVariant] = useState(null);
+  
   // Order preferences
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [orderType, setOrderType] = useState('delivery');
@@ -90,6 +95,12 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     discount_amount: 0,
     total_amount: 0
   });
+
+  // Promo code states
+  const [promoCode, setPromoCode] = useState('');
+  const [promoValidation, setPromoValidation] = useState(null);
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [appliedPromo, setAppliedPromo] = useState(null);
 
   // Helper function to format price
   const formatPrice = (price) => {
@@ -594,11 +605,21 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     addressForm.resetFields();
   };
 
-  const addProduct = (productId) => {
+  const addProduct = (productId, variantId = null) => {
     const product = products.find(p => p.id === productId);
     if (!product) return;
 
-    const existingIndex = selectedProducts.findIndex(p => p.id === productId);
+    // Create a unique key for the product/variant combination
+    const itemKey = variantId ? `${productId}_${variantId}` : `${productId}`;
+    
+    // Find if this exact product+variant combo already exists
+    const existingIndex = selectedProducts.findIndex(p => {
+      if (variantId) {
+        return p.id === productId && p.variant_id === variantId;
+      }
+      return p.id === productId && !p.variant_id;
+    });
+
     if (existingIndex > -1) {
       // Increase quantity if already exists
       const updated = [...selectedProducts];
@@ -606,14 +627,39 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       updated[existingIndex].total = updated[existingIndex].quantity * updated[existingIndex].price;
       setSelectedProducts(updated);
     } else {
-      // Add new product
-      const price = parseFloat(product.sale_price || product.base_price || product.price || 0);
+      // Add new product or variant
+      let price = parseFloat(product.sale_price || product.base_price || product.price || 0);
+      let variantTitle = null;
+      let variant = null;
+      
+      // If variant is selected, get variant details and adjust price
+      if (variantId && product.variants && product.variants.length > 0) {
+        variant = product.variants.find(v => v.id === variantId);
+        if (variant) {
+          variantTitle = variant.title_en || variant.title_ar || variant.variant_name || `Variant ${variantId}`;
+          
+          // Calculate variant price based on pricing strategy
+          if (variant.pricing_strategy === 'fixed' && variant.price_value) {
+            price = parseFloat(variant.price_value);
+          } else if (variant.pricing_strategy === 'percentage' && variant.price_value) {
+            const adjustment = price * (parseFloat(variant.price_value) / 100);
+            price = price + adjustment;
+          } else if (variant.pricing_strategy === 'addition' && variant.price_value) {
+            price = price + parseFloat(variant.price_value);
+          }
+        }
+      }
+
       setSelectedProducts([...selectedProducts, {
         ...product,
+        variant_id: variantId,
+        variant_title: variantTitle,
+        variant_details: variant,
         name: product.title_en || product.name || 'Unknown Product',
         quantity: 1,
         price: price,
-        total: price
+        total: price,
+        _uniqueKey: itemKey // For React key tracking
       }]);
     }
   };
@@ -623,7 +669,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     const subtotal = selectedProducts.reduce((sum, product) => sum + (product.total || 0), 0);
     const deliveryFee = orderType === 'delivery' ? (customDeliveryFee || 0) : 0;
     const taxAmount = subtotal * 0.1; // 10% tax
-    const discountAmount = 0; // Can be implemented later
+    const discountAmount = appliedPromo?.discount || 0; // Use promo discount
     const totalAmount = subtotal + deliveryFee + taxAmount - discountAmount;
 
     setOrderTotals({
@@ -633,24 +679,33 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       discount_amount: discountAmount,
       total_amount: totalAmount
     });
-  }, [selectedProducts, customDeliveryFee, orderType]);
+  }, [selectedProducts, customDeliveryFee, orderType, appliedPromo]);
 
-  const updateProductQuantity = (productId, quantity) => {
+  const updateProductQuantity = (productId, quantity, variantId = null) => {
     if (quantity <= 0) {
-      removeProduct(productId);
+      removeProduct(productId, variantId);
       return;
     }
 
-    const updated = selectedProducts.map(p => 
-      p.id === productId 
+    const updated = selectedProducts.map(p => {
+      const matches = variantId 
+        ? (p.id === productId && p.variant_id === variantId)
+        : (p.id === productId && !p.variant_id);
+      
+      return matches
         ? { ...p, quantity, total: quantity * p.price }
-        : p
-    );
+        : p;
+    });
     setSelectedProducts(updated);
   };
 
-  const removeProduct = (productId) => {
-    setSelectedProducts(selectedProducts.filter(p => p.id !== productId));
+  const removeProduct = (productId, variantId = null) => {
+    setSelectedProducts(selectedProducts.filter(p => {
+      if (variantId) {
+        return !(p.id === productId && p.variant_id === variantId);
+      }
+      return !(p.id === productId && !p.variant_id);
+    }));
   };
 
   const handleDeliveryFeeEdit = () => {
@@ -681,6 +736,72 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     calculateOrderTotals();
   };
 
+  // Promo code validation handler
+  const handleValidatePromoCode = async () => {
+    if (!promoCode.trim()) {
+      message.warning(t ? t('orders.enter_promo_code') : 'Please enter a promo code');
+      return;
+    }
+
+    setPromoLoading(true);
+    setPromoValidation(null);
+
+    try {
+      const data = await promosService.validatePromoCode(promoCode.trim(), orderTotals.subtotal);
+      console.log('Promo validation response:', data);
+
+      if (data.success && data.data) {
+        setPromoValidation({ type: 'success', message: data.message });
+        setAppliedPromo({
+          code: promoCode.trim().toUpperCase(),
+          id: data.data.promo_code?.id || null, // promo_code is the promo object
+          discount: parseFloat(data.data.discount_amount) || 0,
+          final_total: parseFloat(data.data.final_total) || orderTotals.total_amount
+        });
+
+        // Update order totals with promo discount
+        const promoDiscount = parseFloat(data.data.discount_amount) || 0;
+        setOrderTotals(prev => ({
+          ...prev,
+          discount_amount: promoDiscount,
+          total_amount: prev.subtotal + prev.delivery_fee + prev.tax_amount - promoDiscount
+        }));
+
+        message.success(data.message || (t ? t('orders.promo_applied') : 'Promo code applied successfully'));
+      } else {
+        const errorMsg = data.message || (t ? t('orders.invalid_promo') : 'Invalid promo code');
+        setPromoValidation({ type: 'error', message: errorMsg });
+        message.error(errorMsg);
+      }
+    } catch (error) {
+      console.error('Promo validation error:', error);
+      const errorMsg = error.message || (t ? t('orders.promo_validation_error') : 'Failed to validate promo code');
+      setPromoValidation({ 
+        type: 'error', 
+        message: errorMsg
+      });
+      message.error(errorMsg);
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  // Remove promo code handler
+  const handleRemovePromoCode = () => {
+    setPromoCode('');
+    setPromoValidation(null);
+    setAppliedPromo(null);
+
+    // Recalculate totals without promo
+    setOrderTotals(prev => ({
+      ...prev,
+      discount_amount: 0,
+      total_amount: prev.subtotal + prev.delivery_fee + prev.tax_amount
+    }));
+
+    message.info(t ? t('orders.promo_removed') : 'Promo code removed');
+  };
+
   const calculateTotal = () => {
     return selectedProducts.reduce((sum, product) => sum + product.total, 0);
   };
@@ -701,6 +822,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       const orderData = {
         items: selectedProducts.map(p => ({
           product_id: p.id,
+          variant_id: p.variant_id || null,
           quantity: p.quantity,
           price: p.price
         })),
@@ -879,6 +1001,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         customer_email: selectedCustomer.email || '',
         items: selectedProducts.map(p => ({
           product_id: p.id,
+          variant_id: p.variant_id || null,
           quantity: p.quantity,
           price: p.price
         })),
@@ -887,6 +1010,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         delivery_fee: orderType === 'delivery' ? (orderTotals.delivery_fee || customDeliveryFee || 0) : 0,
         tax_amount: orderTotals.tax_amount,
         discount_amount: orderTotals.discount_amount,
+        promo_code: appliedPromo?.code || undefined, // Backend expects promo_code in request body
         order_status: 'pending',
         payment_status: 'pending',
         payment_method: paymentMethod,
@@ -995,6 +1119,10 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
     setBranch('');
     setCustomDeliveryFee(null);
     setIsDeliveryFeeEditing(false);
+    // Reset promo code states
+    setPromoCode('');
+    setPromoValidation(null);
+    setAppliedPromo(null);
     onCancel();
   };
 
@@ -1006,6 +1134,11 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
       render: (text, record) => (
         <div>
           <Text strong>{text}</Text>
+          {record.variant_title && (
+            <div style={{ fontSize: '12px', color: '#1890ff', marginTop: 2 }}>
+              <Tag color="blue" size="small">{record.variant_title}</Tag>
+            </div>
+          )}
           {record.sku && <div style={{ fontSize: '12px', color: '#666' }}>SKU: {record.sku}</div>}
         </div>
       )
@@ -1024,7 +1157,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
         <InputNumber
           min={1}
           value={quantity}
-          onChange={(value) => updateProductQuantity(record.id, value)}
+          onChange={(value) => updateProductQuantity(record.id, value, record.variant_id)}
           style={{ width: '80px' }}
         />
       )
@@ -1043,7 +1176,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
           danger 
           size="small" 
           icon={<DeleteOutlined />}
-          onClick={() => removeProduct(record.id)}
+          onClick={() => removeProduct(record.id, record.variant_id)}
         />
       )
     }
@@ -1406,7 +1539,49 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               style={{ width: '100%', marginBottom: 16 }}
               optionFilterProp="label"
               loading={searchingProducts}
-              onChange={addProduct}
+              onChange={async (productId) => {
+                const product = products.find(p => p.id === productId);
+                if (!product) return;
+                
+                // Check if product has variants loaded, if not fetch them
+                if (!product.variants || product.variants.length === 0) {
+                  try {
+                    // Fetch full product details including variants
+                    const fullProduct = await productsService.getProduct(productId);
+                    if (fullProduct && fullProduct.data) {
+                      const productData = fullProduct.data;
+                      
+                      // Update the product in the products list with variants
+                      setProducts(prevProducts => 
+                        prevProducts.map(p => 
+                          p.id === productId ? { ...p, variants: productData.variants || [] } : p
+                        )
+                      );
+                      
+                      // Check if has variants and show modal
+                      if (productData.variants && productData.variants.length > 0) {
+                        setSelectedProductForVariant({ ...product, variants: productData.variants });
+                        setShowVariantModal(true);
+                      } else {
+                        addProduct(productId);
+                      }
+                    } else {
+                      addProduct(productId);
+                    }
+                  } catch (error) {
+                    console.error('Error fetching product variants:', error);
+                    message.warning('Could not load product variants, adding base product');
+                    addProduct(productId);
+                  }
+                } else if (product.variants.length > 0) {
+                  // Has variants loaded, show variant selection modal
+                  setSelectedProductForVariant(product);
+                  setShowVariantModal(true);
+                } else {
+                  // No variants, add product directly
+                  addProduct(productId);
+                }
+              }}
               value={undefined}
               filterOption={(input, option) => {
                 if (!input) return true;
@@ -1448,8 +1623,13 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 'bold' }}>
+                        <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {product.title_en || product.name}
+                          {product.variants && product.variants.length > 0 && (
+                            <Tag color="blue" size="small" style={{ marginLeft: 4 }}>
+                              {product.variants.length} {product.variants.length === 1 ? 'Variant' : 'Variants'}
+                            </Tag>
+                          )}
                         </div>
                         <div style={{ fontSize: '12px', color: '#666', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span>{product.sku ? `SKU: ${product.sku}` : ''}</span>
@@ -1574,6 +1754,56 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
                 </div>
               )}
             </Form.Item>
+
+            {/* Promo Code Section */}
+            <Form.Item 
+              label={t ? t('orders.promo_code') : 'Promo Code'}
+              style={{ marginBottom: 8 }}
+            >
+              {appliedPromo ? (
+                <div>
+                  <Tag 
+                    color="green" 
+                    style={{ padding: '4px 12px', fontSize: '14px' }}
+                  >
+                    {appliedPromo.code} {t ? t('orders.applied') : '(Applied)'} - {appliedPromo.discount.toFixed(2)} JOD {t ? t('orders.promo_discount') : 'discount'}
+                  </Tag>
+                  <Button 
+                    type="link" 
+                    danger 
+                    size="small"
+                    onClick={handleRemovePromoCode}
+                  >
+                    {t ? t('common.remove') : 'Remove'}
+                  </Button>
+                </div>
+              ) : (
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input
+                    placeholder={t ? t('orders.enter_promo_code') : 'Enter promo code'}
+                    value={promoCode}
+                    onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                    onPressEnter={handleValidatePromoCode}
+                  />
+                  <Button 
+                    type="primary"
+                    loading={promoLoading}
+                    onClick={handleValidatePromoCode}
+                  >
+                    {t ? t('common.apply') : 'Apply'}
+                  </Button>
+                </Space.Compact>
+              )}
+              {promoValidation && (
+                <div style={{ 
+                  marginTop: 8, 
+                  color: promoValidation.type === 'success' ? '#52c41a' : '#ff4d4f',
+                  fontSize: '12px'
+                }}>
+                  {promoValidation.message}
+                </div>
+              )}
+            </Form.Item>
           </Card>
         </Col>
 
@@ -1626,6 +1856,11 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
                       </span>
                     )}
                   </div>
+                  {appliedPromo && (
+                    <div style={{ color: '#52c41a' }}>
+                      {t ? t('orders.promo_discount') : 'Promo Discount'}: -{orderTotals.discount_amount.toFixed(2)} JOD
+                    </div>
+                  )}
                   <div style={{ fontSize: '16px', fontWeight: 'bold', borderTop: '1px solid #d9d9d9', paddingTop: '4px', marginTop: '4px' }}>
                     {t ? t('orders.total') : 'Total'}: {orderTotals.total_amount.toFixed(2)} JOD
                   </div>
@@ -1639,7 +1874,7 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
               columns={productColumns}
               pagination={false}
               size="small"
-              rowKey="id"
+              rowKey={(record) => record._uniqueKey || `${record.id}_${record.variant_id || 'base'}`}
               locale={{
                 emptyText: t ? t('orders.noProductsSelected') : 'No products selected'
               }}
@@ -1731,6 +1966,122 @@ const CreateOrderModal = ({ visible, onCancel, onSuccess, t }) => {
           <div>Loading...</div>
         }
       </div>
+
+      {/* Variant Selection Modal */}
+      <Modal
+        title={
+          <div>
+            <div>{t ? t('orders.selectVariant') : 'Select Product Variant'}</div>
+            {selectedProductForVariant && (
+              <div style={{ fontSize: '14px', fontWeight: 'normal', color: '#666', marginTop: 4 }}>
+                {selectedProductForVariant.title_en || selectedProductForVariant.name}
+              </div>
+            )}
+          </div>
+        }
+        open={showVariantModal}
+        onCancel={() => {
+          setShowVariantModal(false);
+          setSelectedProductForVariant(null);
+        }}
+        footer={[
+          <Button 
+            key="cancel" 
+            onClick={() => {
+              setShowVariantModal(false);
+              setSelectedProductForVariant(null);
+            }}
+          >
+            {t ? t('common.cancel') : 'Cancel'}
+          </Button>,
+          <Button
+            key="without-variant"
+            onClick={() => {
+              if (selectedProductForVariant) {
+                addProduct(selectedProductForVariant.id);
+                setShowVariantModal(false);
+                setSelectedProductForVariant(null);
+              }
+            }}
+          >
+            {t ? t('orders.addWithoutVariant') : 'Add Without Variant'}
+          </Button>
+        ]}
+        width={600}
+      >
+        {selectedProductForVariant && selectedProductForVariant.variants && (
+          <div>
+            <p style={{ marginBottom: 16, color: '#666' }}>
+              {t ? t('orders.selectVariantDescription') : 'Choose a variant to add to your order, or add the base product without a variant.'}
+            </p>
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              {selectedProductForVariant.variants.map(variant => {
+                const basePrice = parseFloat(
+                  selectedProductForVariant.sale_price || 
+                  selectedProductForVariant.base_price || 
+                  selectedProductForVariant.price || 
+                  0
+                );
+                
+                let variantPrice = basePrice;
+                let priceLabel = '';
+                
+                if (variant.pricing_strategy === 'fixed' && variant.price_value) {
+                  variantPrice = parseFloat(variant.price_value);
+                  priceLabel = `${variantPrice.toFixed(2)} JOD`;
+                } else if (variant.pricing_strategy === 'percentage' && variant.price_value) {
+                  const adjustment = basePrice * (parseFloat(variant.price_value) / 100);
+                  variantPrice = basePrice + adjustment;
+                  priceLabel = `${variantPrice.toFixed(2)} JOD (${variant.price_value > 0 ? '+' : ''}${variant.price_value}%)`;
+                } else if (variant.pricing_strategy === 'addition' && variant.price_value) {
+                  variantPrice = basePrice + parseFloat(variant.price_value);
+                  priceLabel = `${variantPrice.toFixed(2)} JOD (+${parseFloat(variant.price_value).toFixed(2)})`;
+                } else {
+                  priceLabel = `${basePrice.toFixed(2)} JOD`;
+                }
+                
+                return (
+                  <Card
+                    key={variant.id}
+                    size="small"
+                    hoverable
+                    onClick={() => {
+                      addProduct(selectedProductForVariant.id, variant.id);
+                      setShowVariantModal(false);
+                      setSelectedProductForVariant(null);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <Text strong>
+                          {variant.title_en || variant.title_ar || variant.variant_name || `Variant ${variant.id}`}
+                        </Text>
+                        {(variant.variant_value || variant.variant_name) && (
+                          <div style={{ fontSize: '12px', color: '#666', marginTop: 4 }}>
+                            {variant.variant_name && <span>{variant.variant_name}: </span>}
+                            {variant.variant_value}
+                          </div>
+                        )}
+                        {!variant.is_active && (
+                          <Tag color="red" size="small" style={{ marginTop: 4 }}>
+                            {t ? t('common.inactive') : 'Inactive'}
+                          </Tag>
+                        )}
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <Text strong style={{ fontSize: '16px', color: '#52c41a' }}>
+                          {priceLabel}
+                        </Text>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </Space>
+          </div>
+        )}
+      </Modal>
     </Modal>
   );
 };

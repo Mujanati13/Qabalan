@@ -153,13 +153,72 @@ const Checkout = () => {
       setIsGuestCheckout(true);
       // Load branches for guest users
       loadBranchesForGuest();
+      // Restore guest form data from sessionStorage
+      restoreGuestFormData();
     } else {
       setIsGuestCheckout(false);
       // Initialize user phone from user data and fetch fresh data
       fetchUserDataAndPhone();
       fetchData();
+      // Restore user form data from sessionStorage
+      restoreUserFormData();
     }
-  }, [user, navigate]);
+  }, [user]);
+  
+  // Save guest form data to sessionStorage
+  useEffect(() => {
+    if (isGuestCheckout) {
+      sessionStorage.setItem('guestCheckoutInfo', JSON.stringify(guestInfo));
+    }
+  }, [guestInfo, isGuestCheckout]);
+  
+  // Save user form selections to sessionStorage
+  useEffect(() => {
+    if (!isGuestCheckout && user) {
+      const formData = {
+        selectedAddress,
+        selectedBranch,
+        deliveryMethod,
+        paymentMethod,
+        notes,
+        promoCode,
+        userPhone
+      };
+      sessionStorage.setItem('userCheckoutForm', JSON.stringify(formData));
+    }
+  }, [selectedAddress, selectedBranch, deliveryMethod, paymentMethod, notes, promoCode, userPhone, isGuestCheckout, user]);
+  
+  const restoreGuestFormData = () => {
+    try {
+      const saved = sessionStorage.getItem('guestCheckoutInfo');
+      if (saved) {
+        const data = JSON.parse(saved);
+        setGuestInfo(data);
+        console.log('✅ Restored guest form data:', data);
+      }
+    } catch (err) {
+      console.error('Error restoring guest form data:', err);
+    }
+  };
+  
+  const restoreUserFormData = () => {
+    try {
+      const saved = sessionStorage.getItem('userCheckoutForm');
+      if (saved) {
+        const data = JSON.parse(saved);
+        if (data.selectedAddress) setSelectedAddress(data.selectedAddress);
+        if (data.selectedBranch) setSelectedBranch(data.selectedBranch);
+        if (data.deliveryMethod) setDeliveryMethod(data.deliveryMethod);
+        if (data.paymentMethod) setPaymentMethod(data.paymentMethod);
+        if (data.notes) setNotes(data.notes);
+        if (data.promoCode) setPromoCode(data.promoCode);
+        if (data.userPhone) setUserPhone(data.userPhone);
+        console.log('✅ Restored user form data:', data);
+      }
+    } catch (err) {
+      console.error('Error restoring user form data:', err);
+    }
+  };
 
   const fetchUserDataAndPhone = async () => {
     try {
@@ -214,7 +273,18 @@ const Checkout = () => {
       checkAllBranchesAvailability();
       calculateOrder();
     }
-  }, [deliveryMethod, selectedAddress, selectedBranch, appliedPromo, branches, cart, guestInfo]);
+  }, [
+    deliveryMethod, 
+    selectedAddress, 
+    selectedBranch, 
+    appliedPromo, 
+    branches, 
+    cart, 
+    // Only recalculate when delivery address/coordinates change, not contact info
+    guestInfo.address,
+    guestInfo.latitude,
+    guestInfo.longitude
+  ]);
 
   // Check availability for all branches - match mobile
   const checkAllBranchesAvailability = async () => {
@@ -447,7 +517,15 @@ const Checkout = () => {
       console.log('🎫 Applied promo state:', appliedPromo);
       console.log('📍 Guest location:', isGuestCheckout ? { lat: guestInfo.latitude, lng: guestInfo.longitude } : 'N/A');
 
-      const response = await ordersAPI.calculate(requestData);
+      // Add timeout to prevent hanging
+      const CALCULATION_TIMEOUT = 15000; // 15 seconds
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Calculation timeout - taking too long')), CALCULATION_TIMEOUT)
+      );
+      
+      const calculationPromise = ordersAPI.calculate(requestData);
+      
+      const response = await Promise.race([calculationPromise, timeoutPromise]);
       
       console.log(`📊 Order calculation response [#${requestId}]:`, JSON.stringify(response, null, 2));
       console.log('💰 Response discount_amount:', response?.data?.data?.discount_amount);
@@ -495,6 +573,13 @@ const Checkout = () => {
       console.error('❌ Error message:', error.message);
       console.error('❌ Error response:', error.response?.data);
       console.error('❌ Error status:', error.response?.status);
+      
+      // Check if it's a timeout error
+      if (error.message === 'Calculation timeout - taking too long') {
+        setError('The delivery cost calculation is taking too long. Please try refreshing the page or selecting a different address.');
+        setLoading(false);
+        return;
+      }
       
       const errorMessage = error.response?.data?.message || error.message;
       
@@ -848,6 +933,11 @@ const Checkout = () => {
       // For cash payment, clear cart and navigate to confirmation
       clearCart();
       
+      // Clear sessionStorage form data after successful order
+      sessionStorage.removeItem('guestCheckoutInfo');
+      sessionStorage.removeItem('userCheckoutForm');
+      console.log('✅ Cleared checkout form data from sessionStorage');
+      
       // For guest users, store order details in localStorage for confirmation page
       if (isGuestCheckout) {
         const guestOrderInfo = {
@@ -858,7 +948,11 @@ const Checkout = () => {
           customerEmail: guestInfo.email,
           orderType: deliveryMethod,
           paymentMethod: paymentMethod,
+          subtotal: orderCalculation?.subtotal || 0,
+          deliveryFee: orderCalculation?.delivery_fee || 0,
+          discount: orderCalculation?.discount_amount || 0,
           total: orderCalculation?.total_amount || calculateTotal(),
+          branchName: selectedBranch?.title_en || selectedBranch?.title_ar || 'Branch',
           timestamp: Date.now()
         };
         localStorage.setItem('guestOrderInfo', JSON.stringify(guestOrderInfo));
@@ -923,10 +1017,18 @@ const Checkout = () => {
       return false;
     }
 
-    // For delivery orders, verify delivery fee is calculated
+    // For delivery orders, verify order calculation exists
+    // Allow zero delivery fee (free delivery threshold met)
     if (deliveryMethod === 'delivery') {
-      // Check if order calculation exists and has delivery fee > 0
-      if (!orderCalculation || !orderCalculation.delivery_fee || orderCalculation.delivery_fee <= 0) {
+      // Check if order calculation exists
+      if (!orderCalculation || orderCalculation.delivery_fee === null || orderCalculation.delivery_fee === undefined) {
+        return false;
+      }
+      // Delivery fee can be 0 (free delivery) or > 0 (paid delivery)
+    }
+    // For pickup orders, just verify orderCalculation exists
+    else if (deliveryMethod === 'pickup') {
+      if (!orderCalculation || orderCalculation.total_amount <= 0) {
         return false;
       }
     }
@@ -1305,12 +1407,61 @@ const Checkout = () => {
               
               <div className="summary-items">
                 {cart.map((item) => {
-                  const unitPrice = item.variant ? parseNumericValue(item.variant.price) : (parseNumericValue(item.final_price) || parseNumericValue(item.base_price) || 0);
+                  // Calculate unit price considering multi-variant behavior
+                  let unitPrice = parseNumericValue(item.final_price) || parseNumericValue(item.base_price) || 0;
+                  
+                  // Handle multiple variants
+                  const variantsArray = item.variants && item.variants.length > 0 
+                    ? item.variants 
+                    : (item.variant ? [item.variant] : []);
+
+                  if (variantsArray.length > 0) {
+                    // Separate override and add variants
+                    const overrideVariants = variantsArray.filter(v => {
+                      const behavior = v.price_behavior || v.pricing_behavior;
+                      return behavior === 'override';
+                    });
+                    
+                    const addVariants = variantsArray.filter(v => {
+                      const behavior = v.price_behavior || v.pricing_behavior;
+                      return behavior !== 'override';
+                    });
+                    
+                    // Sort override variants by priority (lower number = higher priority)
+                    const sortedOverrides = overrideVariants.sort((a, b) => {
+                      const priorityA = a.override_priority !== null && a.override_priority !== undefined ? a.override_priority : Infinity;
+                      const priorityB = b.override_priority !== null && b.override_priority !== undefined ? b.override_priority : Infinity;
+                      return priorityA - priorityB;
+                    });
+                    
+                    // Apply the first override variant (highest priority)
+                    if (sortedOverrides.length > 0) {
+                      const winningOverride = sortedOverrides[0];
+                      unitPrice = parseNumericValue(winningOverride.price || winningOverride.price_modifier || 0);
+                    }
+                    
+                    // Add all "add" variants
+                    addVariants.forEach(variant => {
+                      const variantModifier = parseNumericValue(variant.price || variant.price_modifier || 0);
+                      unitPrice += variantModifier;
+                    });
+                  }
+                  
+                  // Generate unique key
+                  const variantKey = variantsArray.length > 0
+                    ? variantsArray.map(v => v.id).sort().join('-')
+                    : 'default';
+                  
+                  // Display variant names
+                  const variantNames = variantsArray.length > 0
+                    ? variantsArray.map(v => v.title_en || v.title_ar || v.title).join(', ')
+                    : '';
+                  
                   return (
-                    <div key={`${item.id}-${item.variant?.id || 'default'}`} className="summary-item">
+                    <div key={`${item.id}-${variantKey}`} className="summary-item">
                       <span>
                         {item.title_en || item.title_ar} 
-                        {item.variant && ` (${item.variant.title_en || item.variant.title_ar || item.variant.title})`} 
+                        {variantNames && ` (${variantNames})`} 
                         x{item.quantity}
                       </span>
                       <span>{(unitPrice * item.quantity).toFixed(2)} JOD</span>
@@ -1417,7 +1568,7 @@ const Checkout = () => {
                       ? 'Please pick your delivery location on the map'
                       : isGuestCheckout && deliveryMethod === 'delivery' && !guestInfo.address
                       ? 'Please provide your delivery address'
-                      : deliveryMethod === 'delivery' && (!orderCalculation || !orderCalculation.delivery_fee || orderCalculation.delivery_fee <= 0)
+                      : deliveryMethod === 'delivery' && (!orderCalculation || orderCalculation.delivery_fee === null || orderCalculation.delivery_fee === undefined)
                       ? 'Calculating delivery fee... Please wait'
                       : deliveryMethod === 'delivery' && !isGuestCheckout && !selectedAddress
                       ? 'Please select a delivery address'

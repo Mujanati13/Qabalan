@@ -338,6 +338,18 @@ const Categories = () => {
     try {
       setLoading(true);
       
+      console.log('[Category Submit] Starting submission with values:', values);
+      
+      // Validation: At least one title is required
+      if (!values.title_en && !values.title_ar) {
+        message.error(
+          language === 'ar' 
+            ? 'يرجى إدخال عنوان واحد على الأقل (عربي أو إنجليزي)'
+            : 'Please enter at least one title (Arabic or English)'
+        );
+        return;
+      }
+      
       // Auto-generate slug if not provided
       if (!values.slug && (values.title_en || values.title_ar)) {
         const baseSlug = (values.title_en || values.title_ar)
@@ -348,6 +360,7 @@ const Categories = () => {
         
         // Add timestamp suffix for uniqueness
         values.slug = `${baseSlug}-${Date.now()}`;
+        console.log('[Category Submit] Auto-generated slug:', values.slug);
       }
       
       // Create FormData to handle file uploads
@@ -356,6 +369,7 @@ const Categories = () => {
       // Handle file upload
       if (values.image_file && values.image_file.length > 0) {
         formData.append('image', values.image_file[0].originFileObj);
+        console.log('[Category Submit] Added image file to FormData');
       }
       
       // Add other form fields (ensure all expected fields are present)
@@ -369,16 +383,30 @@ const Categories = () => {
           const value = values[field];
           if (value !== undefined && value !== null && value !== '') {
             formData.append(field, value);
+          } else if (field === 'parent_id') {
+            // Explicitly set null for root categories
+            formData.append(field, '');
+          } else if (field === 'is_active') {
+            // Default to active if not specified
+            formData.append(field, value !== undefined ? value : true);
+          } else if (field === 'sort_order') {
+            // Default sort_order to 0
+            formData.append(field, value || 0);
           }
         }
       });
       
+      console.log('[Category Submit] FormData prepared. Sending to API...');
+
+      let response;
       if (editingCategory) {
-        await categoriesService.updateCategory(editingCategory.id, formData);
-        message.success(t('categories.updated_successfully'));
+        response = await categoriesService.updateCategory(editingCategory.id, formData);
+        console.log('[Category Submit] Update response:', response);
+        message.success(t('categories.updated_successfully') || 'Category updated successfully');
       } else {
-        await categoriesService.createCategory(formData);
-        message.success(t('categories.created_successfully'));
+        response = await categoriesService.createCategory(formData);
+        console.log('[Category Submit] Create response:', response);
+        message.success(t('categories.created_successfully') || 'Category created successfully');
       }
 
       setModalVisible(false);
@@ -387,13 +415,29 @@ const Categories = () => {
       fetchCategories();
       fetchCategoriesTree();
     } catch (error) {
-      console.error('Category submission error:', error);
+      console.error('[Category Submit] Error:', error);
+      console.error('[Category Submit] Error response:', error.response);
       
       // Enhanced error handling with specific messages
       const errorData = error.response?.data;
       const errorMessage = errorData?.message;
       const errorMessageAr = errorData?.message_ar;
       const suggestedSlug = errorData?.suggestedSlug;
+      const validationErrors = errorData?.errors;
+      
+      // Handle validation errors
+      if (validationErrors && typeof validationErrors === 'object') {
+        const errorFields = Object.keys(validationErrors);
+        const firstError = validationErrors[errorFields[0]];
+        const errorText = Array.isArray(firstError) ? firstError[0] : firstError;
+        
+        message.error(
+          language === 'ar' 
+            ? errorMessageAr || errorText || 'خطأ في التحقق من البيانات'
+            : errorMessage || errorText || 'Validation error'
+        );
+        return;
+      }
       
       if (errorMessage?.includes('slug') && errorMessage?.includes('already exists')) {
         // Show specific slug conflict error with suggestion
@@ -428,19 +472,45 @@ const Categories = () => {
             ? errorMessageAr || 'يرجى إدخال عنوان واحد على الأقل (عربي أو إنجليزي)'
             : errorMessage || 'Please enter at least one title (Arabic or English)'
         );
-      } else if (errorMessage?.includes('Parent category')) {
+      } else if (errorMessage?.includes('Parent category') || errorMessage?.includes('parent_id')) {
         message.error(
           language === 'ar' 
             ? errorMessageAr || 'التصنيف الأساسي غير صحيح أو غير موجود'
             : errorMessage || 'Invalid or non-existent parent category'
         );
+      } else if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
+        message.error(
+          language === 'ar' 
+            ? 'خطأ في الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت.'
+            : 'Network error. Please check your internet connection.'
+        );
+      } else if (error.response?.status === 500) {
+        message.error(
+          language === 'ar' 
+            ? 'خطأ في الخادم. يرجى المحاولة مرة أخرى أو الاتصال بالدعم الفني.'
+            : 'Server error. Please try again or contact support.'
+        );
+      } else if (error.response?.status === 401 || error.response?.status === 403) {
+        message.error(
+          language === 'ar' 
+            ? 'غير مصرح لك بتنفيذ هذا الإجراء'
+            : 'You are not authorized to perform this action'
+        );
       } else {
         // Show the exact server message or fallback
         const displayMessage = language === 'ar' 
-          ? errorMessageAr || errorMessage || 'فشل في حفظ التصنيف'
-          : errorMessage || 'Failed to save category';
+          ? errorMessageAr || errorMessage || 'فشل في حفظ التصنيف. يرجى التحقق من البيانات المدخلة.'
+          : errorMessage || 'Failed to save category. Please check your inputs.';
         
-        message.error(displayMessage);
+        message.error(displayMessage, 5);
+        
+        // Show additional details in console for debugging
+        console.error('[Category Submit] Full error details:', {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: errorData,
+          message: errorMessage
+        });
       }
     } finally {
       setLoading(false);
@@ -1325,7 +1395,23 @@ const Categories = () => {
               <Form.Item
                 name="title_ar"
                 label={t('categories.title_ar')}
-                rules={[{ required: !editingCategory, message: t('categories.title_ar_required') }]}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const titleEn = form.getFieldValue('title_en');
+                      if (!value && !titleEn && !editingCategory) {
+                        return Promise.reject(
+                          new Error(
+                            language === 'ar'
+                              ? 'يرجى إدخال عنوان واحد على الأقل (عربي أو إنجليزي)'
+                              : 'Please enter at least one title (Arabic or English)'
+                          )
+                        );
+                      }
+                      return Promise.resolve();
+                    }
+                  }
+                ]}
               >
                 <Input 
                   placeholder={t('categories.title_ar_placeholder')} 
@@ -1337,7 +1423,23 @@ const Categories = () => {
               <Form.Item
                 name="title_en"
                 label={t('categories.title_en')}
-                rules={[{ required: !editingCategory, message: t('categories.title_en_required') }]}
+                rules={[
+                  {
+                    validator: (_, value) => {
+                      const titleAr = form.getFieldValue('title_ar');
+                      if (!value && !titleAr && !editingCategory) {
+                        return Promise.reject(
+                          new Error(
+                            language === 'ar'
+                              ? 'يرجى إدخال عنوان واحد على الأقل (عربي أو إنجليزي)'
+                              : 'Please enter at least one title (Arabic or English)'
+                          )
+                        );
+                      }
+                      return Promise.resolve();
+                    }
+                  }
+                ]}
               >
                 <Input 
                   placeholder={t('categories.title_en_placeholder')} 

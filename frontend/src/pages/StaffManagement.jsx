@@ -64,6 +64,7 @@ import dayjs from 'dayjs';
 import staffRoleService from '../services/staffRoleService';
 import { useExportConfig } from '../hooks/useExportConfig';
 import { useAuth } from '../hooks/useAuth';
+import { useLanguage } from '../contexts/LanguageContext';
 import { exportStaffToExcel } from '../utils/comprehensiveExportUtils';
 
 const { TabPane } = Tabs;
@@ -74,6 +75,7 @@ const { TextArea } = Input;
 const StaffManagement = () => {
   const { user, hasPermission } = useAuth();
   const { getStaffExportConfig, getRolesExportConfig } = useExportConfig();
+  const { t, language } = useLanguage();
   
   // Enhanced error handling
   const [operationLoading, setOperationLoading] = useState({});
@@ -309,6 +311,7 @@ const StaffManagement = () => {
   const [passwordLoading, setPasswordLoading] = useState(false);
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [selectedRole, setSelectedRole] = useState(null);
+  const [rolePermissions, setRolePermissions] = useState({});
   const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [editMode, setEditMode] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -336,6 +339,7 @@ const StaffManagement = () => {
     { key: 'invoices', name: 'Invoices', icon: '🧾' },
     { key: 'users', name: 'Users', icon: '👥' },
     { key: 'promos', name: 'Promo Codes', icon: '🎫' },
+    { key: 'offers', name: 'Offers Management', icon: '🎁' },
     { key: 'notifications', name: 'Notifications', icon: '🔔' },
     { key: 'support', name: 'Support', icon: '💬' },
     { key: 'staff', name: 'Staff Management', icon: '👨‍💼' },
@@ -1346,9 +1350,105 @@ const StaffManagement = () => {
   };
 
   // Permission management
-  const handleManagePermissions = (record) => {
-    setSelectedRole(record);
-    setPermissionVisible(true);
+  const handleManagePermissions = async (record) => {
+    try {
+      setSelectedRole(record);
+      setLoading(true);
+      
+      // Fetch detailed role permissions
+      const roleDetails = await staffRoleService.getRole(record.id);
+      
+      // Convert permissions array to object structure for easy checkbox management
+      const permissionsObj = {};
+      
+      if (roleDetails.permissions && Array.isArray(roleDetails.permissions)) {
+        roleDetails.permissions.forEach(perm => {
+          permissionsObj[`${perm.module}_${perm.action}`] = true;
+        });
+      }
+      
+      setRolePermissions(permissionsObj);
+      setPermissionVisible(true);
+      
+    } catch (error) {
+      console.error('Error loading role permissions:', error);
+      message.error(t('staffManagement.permissions.permissionsFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle permission checkbox toggle
+  const handlePermissionToggle = (moduleKey, actionKey) => {
+    const permKey = `${moduleKey}_${actionKey}`;
+    setRolePermissions(prev => ({
+      ...prev,
+      [permKey]: !prev[permKey]
+    }));
+  };
+
+  // Handle select all permissions for a module
+  const handleSelectAllModule = (moduleKey, checked) => {
+    const updates = {};
+    permissionActions.forEach(action => {
+      updates[`${moduleKey}_${action.key}`] = checked;
+    });
+    
+    setRolePermissions(prev => ({
+      ...prev,
+      ...updates
+    }));
+  };
+
+  // Save permissions
+  const handleSavePermissions = async () => {
+    try {
+      setLoading(true);
+      
+      // Convert permissions object back to API format
+      const permissions = [];
+      
+      permissionModules.forEach(module => {
+        const modulePerms = {
+          module: module.key,
+          can_read: rolePermissions[`${module.key}_can_read`] || false,
+          can_create: rolePermissions[`${module.key}_can_create`] || false,
+          can_update: rolePermissions[`${module.key}_can_update`] || false,
+          can_delete: rolePermissions[`${module.key}_can_delete`] || false,
+          can_export: rolePermissions[`${module.key}_can_export`] || false,
+          can_manage: rolePermissions[`${module.key}_can_manage`] || false,
+        };
+        
+        // Only include modules with at least one permission enabled
+        const hasAnyPermission = Object.values(modulePerms).some(val => val === true);
+        if (hasAnyPermission) {
+          permissions.push(modulePerms);
+        }
+      });
+
+      const roleData = {
+        name: selectedRole.name,
+        display_name: selectedRole.display_name,
+        description: selectedRole.description,
+        permissions: permissions
+      };
+
+      await staffRoleService.updateRole(selectedRole.id, roleData);
+      
+      message.success(t('staffManagement.permissions.permissionsUpdated'));
+      setPermissionVisible(false);
+      fetchRoles(); // Refresh roles to show updated permissions
+      
+    } catch (error) {
+      console.error('Error saving permissions:', error);
+      
+      const errorMessage = error?.response?.data?.message || 
+                          error?.response?.data?.error || 
+                          t('staffManagement.permissions.permissionsFailed');
+      message.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Staff table columns
@@ -2864,55 +2964,185 @@ const StaffManagement = () => {
 
       {/* Permission Management Drawer */}
       <Drawer
-        title={`Manage Permissions - ${selectedRole?.display_name}`}
+        title={`${t('staffManagement.permissions.managePermissions')} - ${selectedRole?.display_name || ''}`}
         placement="right"
-        onClose={() => setPermissionVisible(false)}
+        onClose={() => {
+          setPermissionVisible(false);
+          setRolePermissions({});
+          setSelectedRole(null);
+        }}
         open={permissionVisible}
         width="90%"
-        style={{ maxWidth: 800 }}
+        style={{ maxWidth: 900 }}
+        footer={
+          <div style={{ textAlign: 'right' }}>
+            <Space>
+              <Button 
+                onClick={() => {
+                  setPermissionVisible(false);
+                  setRolePermissions({});
+                  setSelectedRole(null);
+                }}
+              >
+                {t('common.cancel')}
+              </Button>
+              <Button 
+                type="primary" 
+                onClick={handleSavePermissions}
+                loading={loading}
+              >
+                {t('staffManagement.permissions.savePermissions')}
+              </Button>
+            </Space>
+          </div>
+        }
       >
-        <div>
+        <Spin spinning={loading}>
           <Alert
-            message="Permission Management"
-            description="Configure what actions this role can perform in each module."
+            message={t('staffManagement.permissions.title')}
+            description={t('staffManagement.permissions.description', { role: selectedRole?.display_name || '' })}
             type="info"
             style={{ marginBottom: 16 }}
+            showIcon
           />
           
           <div style={{ marginBottom: 16 }}>
-            {permissionModules.map(module => (
-              <Card
-                key={module.key}
-                size="small"
-                title={
-                  <span style={{ fontSize: '12px' }}>
-                    {module.icon} {module.name}
-                  </span>
-                }
-                style={{ marginBottom: 8 }}
-              >
-                <Row gutter={[8, 8]}>
-                  {permissionActions.map(action => (
-                    <Col xs={12} sm={8} md={6} lg={4} key={action.key}>
-                      <Checkbox>
-                        <Tag color={action.color} size="small" style={{ fontSize: '10px' }}>
-                          {action.label}
-                        </Tag>
+            {permissionModules.map(module => {
+              // Check if all permissions are selected for this module
+              const allSelected = permissionActions.every(action => 
+                rolePermissions[`${module.key}_${action.key}`]
+              );
+              const someSelected = permissionActions.some(action => 
+                rolePermissions[`${module.key}_${action.key}`]
+              );
+              
+              return (
+                <Card
+                  key={module.key}
+                  size="small"
+                  title={
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 600 }}>
+                        <span style={{ marginRight: 8 }}>{module.icon}</span>
+                        {t(`staffManagement.permissions.modules.${module.key}`)}
+                      </span>
+                      <Checkbox
+                        checked={allSelected}
+                        indeterminate={someSelected && !allSelected}
+                        onChange={(e) => handleSelectAllModule(module.key, e.target.checked)}
+                      >
+                        <Text style={{ fontSize: '12px' }}>{t('staffManagement.permissions.selectAll')}</Text>
                       </Checkbox>
-                    </Col>
-                  ))}
-                </Row>
-              </Card>
-            ))}
+                    </div>
+                  }
+                  style={{ marginBottom: 12 }}
+                >
+                  <Row gutter={[12, 12]}>
+                    {permissionActions.map(action => {
+                      const permKey = `${module.key}_${action.key}`;
+                      const isChecked = rolePermissions[permKey] || false;
+                      
+                      return (
+                        <Col xs={12} sm={8} md={6} key={action.key}>
+                          <Checkbox
+                            checked={isChecked}
+                            onChange={() => handlePermissionToggle(module.key, action.key)}
+                          >
+                            <Tag 
+                              color={isChecked ? action.color : 'default'} 
+                              style={{ 
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                userSelect: 'none'
+                              }}
+                            >
+                              {t(`staffManagement.permissions.actions.${action.key.replace('can_', '')}`)}
+                            </Tag>
+                          </Checkbox>
+                        </Col>
+                      );
+                    })}
+                  </Row>
+                </Card>
+              );
+            })}
           </div>
 
-          <div style={{ textAlign: 'right', marginTop: 16 }}>
+          {/* Quick Actions */}
+          <Card size="small" title={t('staffManagement.permissions.quickActions')} style={{ marginTop: 16 }}>
             <Space wrap>
-              <Button onClick={() => setPermissionVisible(false)}>Cancel</Button>
-              <Button type="primary">Save Permissions</Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  const updates = {};
+                  permissionModules.forEach(module => {
+                    permissionActions.forEach(action => {
+                      updates[`${module.key}_${action.key}`] = true;
+                    });
+                  });
+                  setRolePermissions(updates);
+                }}
+              >
+                {t('staffManagement.permissions.selectAllPermissions')}
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setRolePermissions({})}
+              >
+                {t('staffManagement.permissions.clearAllPermissions')}
+              </Button>
+              <Button
+                size="small"
+                onClick={() => {
+                  const updates = {};
+                  permissionModules.forEach(module => {
+                    updates[`${module.key}_can_read`] = true;
+                  });
+                  setRolePermissions(updates);
+                }}
+              >
+                {t('staffManagement.permissions.viewOnlyAllModules')}
+              </Button>
             </Space>
-          </div>
-        </div>
+          </Card>
+
+          {/* Permission Summary */}
+          <Card size="small" title={t('staffManagement.permissions.permissionSummary')} style={{ marginTop: 16 }}>
+            <div>
+              {permissionModules.map(module => {
+                const modulePerms = permissionActions.filter(action => 
+                  rolePermissions[`${module.key}_${action.key}`]
+                );
+                
+                if (modulePerms.length === 0) return null;
+                
+                return (
+                  <div key={module.key} style={{ marginBottom: 8 }}>
+                    <Text strong style={{ fontSize: '12px' }}>
+                      {module.icon} {t(`staffManagement.permissions.modules.${module.key}`)}:
+                    </Text>
+                    <Space wrap style={{ marginLeft: 8 }}>
+                      {modulePerms.map(action => (
+                        <Tag 
+                          key={action.key} 
+                          color={action.color}
+                          style={{ fontSize: '10px', margin: '2px' }}
+                        >
+                          {t(`staffManagement.permissions.actions.${action.key.replace('can_', '')}`)}
+                        </Tag>
+                      ))}
+                    </Space>
+                  </div>
+                );
+              })}
+              {Object.keys(rolePermissions).filter(k => rolePermissions[k]).length === 0 && (
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  {t('staffManagement.permissions.noPermissionsSelected')}
+                </Text>
+              )}
+            </div>
+          </Card>
+        </Spin>
       </Drawer>
 
       {/* Bulk Assign Roles Modal */}

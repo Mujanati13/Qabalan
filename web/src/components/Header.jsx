@@ -1,12 +1,14 @@
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useState } from 'react';
 import './Header.css';
 
 const Header = () => {
   const { cartCount } = useCart();
   const { user, logout } = useAuth();
+  const { language, toggleLanguage, t } = useLanguage();
   const [showMobileMenu, setShowMobileMenu] = useState(false);
 
   const toggleMobileMenu = () => {
@@ -42,23 +44,38 @@ const Header = () => {
             <ul className="menu-primary">
               <li className="menu-item">
                 <Link to="/shop" onClick={() => setShowMobileMenu(false)}>
-                  <span>Shop</span>
+                  <span>{t('shop')}</span>
                 </Link>
               </li>
               <li className="menu-item">
                 <Link to="/story" onClick={() => setShowMobileMenu(false)}>
-                  <span>Our Story</span>
+                  <span>{t('ourStory')}</span>
                 </Link>
               </li>
               <li className="menu-item">
                 <Link to="/recipes" onClick={() => setShowMobileMenu(false)}>
-                  <span>Recipes</span>
+                  <span>{t('recipes')}</span>
+                </Link>
+              </li>
+              <li className="menu-item">
+                <Link to="/offers" onClick={() => setShowMobileMenu(false)}>
+                  <span>{t('offers')}</span>
                 </Link>
               </li>
               <li className="menu-item">
                 <Link to="/news" onClick={() => setShowMobileMenu(false)}>
-                  <span>News & Events</span>
+                  <span>{t('newsEvents')}</span>
                 </Link>
+              </li>
+              <li className="menu-item">
+                <a 
+                  href="https://export.qabalanbakery.com/en" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  onClick={() => setShowMobileMenu(false)}
+                >
+                  <span>{t('forExport')}</span>
+                </a>
               </li>
             </ul>
           </nav>
@@ -68,13 +85,13 @@ const Header = () => {
             <ul className="menu-primary">
               <li className="menu-item">
                 <Link to="/contact" onClick={() => setShowMobileMenu(false)}>
-                  <span>Contact</span>
+                  <span>{t('contact')}</span>
                 </Link>
               </li>
               {user && (
                 <li className="menu-item">
                   <Link to="/account" state={{ activeTab: 'orders' }} onClick={() => setShowMobileMenu(false)}>
-                    <span>My Orders</span>
+                    <span>{t('myOrders')}</span>
                   </Link>
                 </li>
               )}
@@ -90,6 +107,16 @@ const Header = () => {
                   {cartCount > 0 && <span className="cart-count">{cartCount}</span>}
                 </Link>
               </li>
+              {/* Language Toggle */}
+              <li className="menu-item menu-item-icon">
+                <button 
+                  className="language-toggle" 
+                  onClick={toggleLanguage}
+                  aria-label={`Switch to ${language === 'en' ? 'Arabic' : 'English'}`}
+                >
+                  <span className="lang-text">{language === 'en' ? 'ع' : 'EN'}</span>
+                </button>
+              </li>
             </ul>
           </nav>
         </div>
@@ -98,11 +125,11 @@ const Header = () => {
         <div className="menu-secondary">
           {user ? (
             <Link to="/account" className="auth-button">
-              My Account
+              {t('myAccount')}
             </Link>
           ) : (
             <Link to="/login" className="auth-button">
-              Login
+              {t('login')}
             </Link>
           )}
         </div>

@@ -1,11 +1,13 @@
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useEffect } from 'react';
 import { getImageUrl } from '../services/api';
 import './Cart.css';
 
 const Cart = () => {
   const { cart, removeFromCart, updateQuantity, getCartTotal, clearCart } = useCart();
+  const { t, isArabic } = useLanguage();
 
   // Debug: Check cart state and localStorage on component mount
   useEffect(() => {
@@ -45,7 +47,7 @@ const Cart = () => {
     return Number.isNaN(parsed) ? 0 : parsed;
   };
 
-  // Resolve unit price - match mobile CartScreen logic
+  // Resolve unit price - match mobile CartScreen logic with multi-variant support
   const resolveUnitPrice = (item) => {
     // If item has explicit unit_price, use it
     if (typeof item.unit_price === 'number' && !Number.isNaN(item.unit_price)) {
@@ -53,17 +55,45 @@ const Cart = () => {
     }
 
     // Get base price from product
-    const base = parseNumericValue(
+    let base = parseNumericValue(
       item.final_price ?? item.sale_price ?? item.base_price
     );
 
-    // If variant exists and has price adjustments, apply them
-    if (item.variant) {
-      const variantPrice = parseNumericValue(item.variant.price);
-      if (variantPrice > 0) {
-        return variantPrice;
+    // Handle multiple variants
+    const variantsArray = item.variants && item.variants.length > 0 
+      ? item.variants 
+      : (item.variant ? [item.variant] : []);
+
+    if (variantsArray.length > 0) {
+      // Separate override and add variants
+      const overrideVariants = variantsArray.filter(v => {
+        const behavior = v.price_behavior || v.pricing_behavior;
+        return behavior === 'override';
+      });
+      
+      const addVariants = variantsArray.filter(v => {
+        const behavior = v.price_behavior || v.pricing_behavior;
+        return behavior !== 'override';
+      });
+      
+      // Sort override variants by priority (lower number = higher priority)
+      const sortedOverrides = overrideVariants.sort((a, b) => {
+        const priorityA = a.override_priority !== null && a.override_priority !== undefined ? a.override_priority : Infinity;
+        const priorityB = b.override_priority !== null && b.override_priority !== undefined ? b.override_priority : Infinity;
+        return priorityA - priorityB;
+      });
+      
+      // Apply the first override variant (highest priority)
+      if (sortedOverrides.length > 0) {
+        const winningOverride = sortedOverrides[0];
+        base = parseNumericValue(winningOverride.price || winningOverride.price_modifier || 0);
       }
-      // Could add variant price adjustments here if needed
+      
+      // Add all "add" variants
+      addVariants.forEach(variant => {
+        const variantModifier = parseNumericValue(variant.price || variant.price_modifier || 0);
+        base += variantModifier;
+      });
     }
 
     return base;
@@ -83,16 +113,21 @@ const Cart = () => {
       <div className="cart-page">
         <div className="container">
           <div className="empty-cart">
-            <h1>Your Cart is Empty</h1>
-            <p>Add some delicious items to get started!</p>
+            <h1>{t('emptyCart')}</h1>
+            <p>{isArabic ? 'أضف بعض المنتجات اللذيذة للبدء!' : 'Add some delicious items to get started!'}</p>
             <Link to="/shop" className="continue-shopping-btn">
-              Continue Shopping
+              {t('continueShopping')}
             </Link>
           </div>
         </div>
       </div>
     );
   }
+
+  // Helper function to get product title
+  const getProductTitle = (item) => {
+    return isArabic ? (item.title_ar || item.title_en || item.name) : (item.title_en || item.title_ar || item.name);
+  };
 
   return (
     <div className="cart-page">
@@ -110,13 +145,18 @@ const Cart = () => {
                 ? Math.round(((basePrice - unitPrice) / basePrice) * 100)
                 : 0;
               const itemTotal = unitPrice * item.quantity;
+              
+              // Generate unique key for cart item
+              const variantKey = item.variants && item.variants.length > 0
+                ? item.variants.map(v => v.id).sort().join('-')
+                : (item.variant?.id || 'default');
 
               return (
-                <div key={`${item.id}-${item.variant?.id || 'default'}`} className="cart-item">
+                <div key={`${item.id}-${variantKey}`} className="cart-item">
                   <div className="item-image">
                     <img
                       src={getProductImage(item)}
-                      alt={item.title_en || item.title_ar || 'Product'}
+                      alt={getProductTitle(item)}
                       onError={(e) => {
                         e.target.onerror = null; // Prevent infinite loop
                         e.target.src = '/assets/images/placeholder.svg';
@@ -129,12 +169,21 @@ const Cart = () => {
                     )}
                   </div>
                   <div className="item-details">
-                    <h3>{item.title_en || item.title_ar || 'Unnamed Product'}</h3>
-                    {item.variant && (
+                    <h3>{getProductTitle(item)}</h3>
+                    {/* Display multiple variants */}
+                    {item.variants && item.variants.length > 0 ? (
+                      <div className="item-variants">
+                        {item.variants.map((variant, idx) => (
+                          <p key={idx} className="item-variant">
+                            {variant.title_en || variant.title_ar || variant.title}
+                          </p>
+                        ))}
+                      </div>
+                    ) : item.variant ? (
                       <p className="item-variant">
                         {item.variant.title_en || item.variant.title_ar || item.variant.title}
                       </p>
-                    )}
+                    ) : null}
                     <div className="price-container">
                       <p className="item-price">{unitPrice.toFixed(2)} JOD</p>
                       {hasDiscount && (
@@ -149,26 +198,28 @@ const Cart = () => {
                   </div>
                   <div className="item-quantity">
                     <button
-                      onClick={() =>
+                      onClick={() => {
+                        const variants = item.variants && item.variants.length > 0 ? item.variants : null;
                         handleQuantityChange(
                           item.id,
                           item.quantity - 1,
-                          item.variant?.id
-                        )
-                      }
+                          variants || item.variant?.id
+                        );
+                      }}
                       className="qty-btn"
                     >
                       -
                     </button>
                     <span>{item.quantity}</span>
                     <button
-                      onClick={() =>
+                      onClick={() => {
+                        const variants = item.variants && item.variants.length > 0 ? item.variants : null;
                         handleQuantityChange(
                           item.id,
                           item.quantity + 1,
-                          item.variant?.id
-                        )
-                      }
+                          variants || item.variant?.id
+                        );
+                      }}
                       className="qty-btn"
                     >
                       +
@@ -178,7 +229,10 @@ const Cart = () => {
                     {itemTotal.toFixed(2)} JOD
                   </div>
                   <button
-                    onClick={() => removeFromCart(item.id, item.variant?.id)}
+                    onClick={() => {
+                      const variants = item.variants && item.variants.length > 0 ? item.variants : null;
+                      removeFromCart(item.id, variants || item.variant?.id);
+                    }}
                     className="remove-btn"
                   >
                     <i className="fa fa-trash"></i>
@@ -189,27 +243,27 @@ const Cart = () => {
           </div>
 
           <div className="cart-summary">
-            <h2>Order Summary</h2>
+            <h2>{t('orderSummary')}</h2>
             <div className="summary-row">
-              <span>Subtotal</span>
+              <span>{t('subtotal')}</span>
               <span>{getCartTotal().toFixed(2)} JOD</span>
             </div>
             <div className="summary-row">
-              <span>Delivery Fee</span>
-              <span>Calculated at checkout</span>
+              <span>{isArabic ? 'رسوم التوصيل' : 'Delivery Fee'}</span>
+              <span>{isArabic ? 'تحسب عند الدفع' : 'Calculated at checkout'}</span>
             </div>
             <div className="summary-row total">
-              <span>Total</span>
+              <span>{t('total')}</span>
               <span>{getCartTotal().toFixed(2)} JOD</span>
             </div>
             <Link to="/checkout" className="checkout-btn">
-              Proceed to Checkout
+              {t('proceedToCheckout')}
             </Link>
             <button onClick={clearCart} className="clear-cart-btn">
-              Clear Cart
+              {isArabic ? 'إفراغ السلة' : 'Clear Cart'}
             </button>
             <Link to="/shop" className="continue-shopping">
-              Continue Shopping
+              {t('continueShopping')}
             </Link>
           </div>
         </div>

@@ -61,7 +61,28 @@ export const AuthProvider = ({ children }) => {
   const loadUserPermissions = async () => {
     try {
       const permissionData = await permissionService.getUserPermissions()
-      setPermissions(permissionData.permissions)
+      
+      // Convert database permissions to readable format
+      // Database format: {module: 'products', can_read: true, can_create: false, ...}
+      // Convert to: ['products.view', 'products.create', ...]
+      const formattedPermissions = []
+      
+      if (permissionData.permissions && Array.isArray(permissionData.permissions)) {
+        permissionData.permissions.forEach(perm => {
+          const module = perm.module
+          
+          // Map database actions to permission names
+          if (perm.can_read) formattedPermissions.push(`${module}.view`)
+          if (perm.can_create) formattedPermissions.push(`${module}.create`)
+          if (perm.can_update) formattedPermissions.push(`${module}.edit`)
+          if (perm.can_delete) formattedPermissions.push(`${module}.delete`)
+          if (perm.can_export) formattedPermissions.push(`${module}.export`)
+          if (perm.can_manage) formattedPermissions.push(`${module}.manage`)
+        })
+      }
+      
+      console.log('Loaded permissions:', formattedPermissions)
+      setPermissions(formattedPermissions)
       setUserRoles(permissionData.roles)
     } catch (error) {
       console.error('Failed to load permissions:', error)
@@ -235,11 +256,25 @@ export const AuthProvider = ({ children }) => {
     isStaff: user?.user_type === 'staff',
     hasPermission: (permission) => {
       if (user?.user_type === 'admin') return true
-      return permissions.includes(permission)
+      const hasIt = permissions.includes(permission)
+      // Debug logging
+      if (!hasIt && permissions.length > 0) {
+        console.log(`Permission check failed for "${permission}". Available:`, permissions)
+      }
+      return hasIt
     },
     hasAnyPermission: (permissionList) => {
       if (user?.user_type === 'admin') return true
-      return permissionList.some(permission => permissions.includes(permission))
+      const hasAny = permissionList.some(permission => permissions.includes(permission))
+      // Debug logging
+      if (!hasAny && permissions.length > 0) {
+        console.log(`Permission check failed for any of:`, permissionList, 'Available:', permissions)
+      }
+      return hasAny
+    },
+    hasAllPermissions: (permissionList) => {
+      if (user?.user_type === 'admin') return true
+      return permissionList.every(permission => permissions.includes(permission))
     }
   }
 

@@ -132,43 +132,35 @@ const NotificationBell = () => {
     try {
       console.log('🔔 Loading unread count...')
       
-      // Load admin notifications (user_id = null) - get ALL types for count
+      // Load admin notifications (user_id = null) - get only UNREAD notifications for count
       const notificationsResponse = await api.get('/notifications', {
         params: { 
           limit: 1,
           page: 1,
-          admin: true // Get all admin notifications, not just support
-          // Removed type filter to get total count
+          admin: true,
+          unread_only: true // Only count unread notifications
         }
       })
       
-      console.log('📊 Notifications response:', notificationsResponse.data)
+      console.log('📊 Full API response:', notificationsResponse.data)
+      console.log('📊 Pagination object:', JSON.stringify(notificationsResponse.data?.pagination, null, 2))
       
-      // Load recent support tickets (last 24 hours) for additional count
-      const now = new Date()
-      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      const unreadNotificationsCount = notificationsResponse.data?.pagination?.total || 0
       
-      const supportResponse = await api.get('/support/admin/tickets', {
-        params: { 
-          limit: 10,
-          status: 'open,in_progress',
-          createdAfter: yesterday.toISOString()
-        }
-      })
+      console.log(`📈 Raw count from API: ${unreadNotificationsCount}`)
+      console.log(`📈 Will display (capped at 99): ${Math.min(unreadNotificationsCount, 99)}`)
       
-      console.log('🎫 Support response:', supportResponse.data)
+      // Set the unread count
+      setUnreadCount(Math.min(unreadNotificationsCount, 99))
       
-      const generalNotificationsCount = notificationsResponse.data?.pagination?.total || 0
-      const supportTicketsCount = supportResponse.data?.data?.tickets?.length || 0
+      console.log(`✅ Badge now showing: ${Math.min(unreadNotificationsCount, 99)} notifications`)
       
-      console.log(`📈 Counts - Notifications: ${generalNotificationsCount}, Support: ${supportTicketsCount}`)
-      
-      // For badge count, use only the database notifications count
-      // Don't double count with support tickets since they should be in notifications
-      setUnreadCount(Math.min(generalNotificationsCount, 99))
+      if (unreadNotificationsCount > 99) {
+        console.warn(`⚠️ Actual unread count is ${unreadNotificationsCount}, but displaying 99 (badge limit)`)
+      }
     } catch (error) {
       console.error('❌ Error loading unread count:', error)
-      // Fallback: still show some count for demonstration
+      console.error('❌ Error details:', error.response?.data)
       setUnreadCount(0)
     }
   }
@@ -178,93 +170,45 @@ const NotificationBell = () => {
       setLoading(true)
       console.log('📋 Loading recent notifications...')
       
-      // Load ALL admin notifications (user_id = null) - not just support type
+      // Load ALL admin notifications (user_id = null) - all types
       const notificationsResponse = await api.get('/notifications', {
         params: { 
-          limit: 10,
+          limit: 50, // Increased to get more notifications
           page: 1,
           admin: true
-          // Removed type filter to get all types of notifications
+          // No type filter - get ALL types: order, support, general, promotion, system
         }
       })
       
       console.log('📨 Admin notifications response:', notificationsResponse.data)
       
-      // Load recent support tickets (last 24 hours) as backup if no DB notifications
-      const now = new Date()
-      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-      
-      const supportResponse = await api.get('/support/admin/tickets', {
-        params: { 
-          limit: 10,
-          sortBy: 'created_at',
-          sortOrder: 'desc',
-          status: 'open,in_progress',
-          createdAfter: yesterday.toISOString()
-        }
-      })
-      
-      console.log('🎫 Support tickets response:', supportResponse.data)
-      
       const adminNotifications = notificationsResponse.data?.data || []
-      const supportTickets = supportResponse.data?.data?.tickets || []
       
       console.log('📊 Processing data:', {
         adminNotifications: adminNotifications.length,
-        supportTickets: supportTickets.length
+        types: [...new Set(adminNotifications.map(n => n.type))]
       })
       
-      // Transform admin notifications if they exist
+      // Transform admin notifications
       let notifications = adminNotifications.map(notification => {
-        console.log('🔧 Processing admin notification:', notification)
+        console.log('🔧 Processing notification:', {
+          id: notification.id,
+          type: notification.type,
+          is_read: notification.is_read,
+          created_at: notification.created_at
+        })
         return {
           ...notification,
           isDbNotification: true
         }
       })
       
-      // Only use ticket fallback if NO database notifications exist at all
-      if (notifications.length === 0) {
-        console.log('🔄 No DB notifications found, using ticket fallback:', supportTickets.length)
-        notifications = supportTickets.map(ticket => {
-          let type = 'info'
-          let priority = 'normal'
-          
-          if (ticket.priority === 'urgent') {
-            type = 'error'
-            priority = 'urgent'
-          } else if (ticket.priority === 'high') {
-            type = 'warning'
-            priority = 'high'
-          }
-          
-          return {
-            id: `support-${ticket.id}`,
-            type: 'support_ticket',
-            title: language === 'ar' ? 
-              (ticket.priority === 'urgent' ? 'تذكرة عاجلة' : 
-               ticket.priority === 'high' ? 'تذكرة ذات أولوية عالية' : 
-               'تذكرة دعم جديدة') :
-              (ticket.priority === 'urgent' ? 'Urgent Ticket' : 
-               ticket.priority === 'high' ? 'High Priority Ticket' : 
-               'New Support Ticket'),
-            message: `#${ticket.ticket_number}: ${ticket.subject}`,
-            created_at: ticket.created_at,
-            priority: priority,
-            ticket_id: ticket.id,
-            customer_name: `${ticket.user_first_name} ${ticket.user_last_name}`,
-            category: ticket.category,
-            isDbNotification: false
-          }
-        })
-      } else {
-        console.log(`✅ Found ${notifications.length} database notifications, using those`)
-      }
-      
-      // Sort by date
+      // Sort by date (newest first)
       notifications.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       
-      console.log('✅ Final notifications:', notifications)
+      console.log(`✅ Loaded ${notifications.length} notifications of types:`, 
+        [...new Set(notifications.map(n => n.type))])
+      
       setNotifications(notifications.slice(0, 10))
     } catch (error) {
       console.error('Error loading notifications:', error)
@@ -273,8 +217,67 @@ const NotificationBell = () => {
     }
   }
 
+  // Mark a single notification as read
+  const markAsRead = async (notificationId) => {
+    try {
+      console.log('📝 Marking notification as read:', notificationId)
+      const response = await api.post(`/notifications/${notificationId}/read`)
+      console.log('✅ Mark as read response:', response.data)
+      
+      // Update local state
+      setNotifications(prev => 
+        prev.map(n => n.id === notificationId ? { ...n, is_read: true, read_at: new Date() } : n)
+      )
+      
+      // Refresh unread count
+      await loadUnreadCount()
+    } catch (error) {
+      console.error('❌ Error marking notification as read:', error)
+      console.error('Error details:', error.response?.data)
+    }
+  }
+
+  // Mark all notifications as read
+  const markAllAsRead = async () => {
+    try {
+      // Mark all unread notifications
+      const unreadNotifications = notifications.filter(n => n.isDbNotification && !n.is_read)
+      
+      await Promise.all(
+        unreadNotifications.map(n => api.post(`/notifications/${n.id}/read`))
+      )
+      
+      message.success(
+        language === 'ar' ? 
+          'تم وضع علامة مقروء على جميع الإشعارات' : 
+          'All notifications marked as read'
+      )
+      
+      // Refresh notifications and count
+      await loadRecentNotifications()
+      await loadUnreadCount()
+    } catch (error) {
+      console.error('Error marking all as read:', error)
+      message.error(
+        language === 'ar' ? 
+          'فشل في تحديث الإشعارات' : 
+          'Failed to update notifications'
+      )
+    }
+  }
+
   // Handle notification click to navigate to the related item
-  const handleNotificationClick = (notification) => {
+  const handleNotificationClick = async (notification) => {
+    console.log('🔔 Notification clicked:', notification)
+    
+    // Mark as read if it's a database notification and unread
+    if (notification.isDbNotification && !notification.is_read) {
+      console.log('📝 Attempting to mark as read...')
+      await markAsRead(notification.id)
+    } else {
+      console.log('⏭️ Skip marking (isDb:', notification.isDbNotification, 'is_read:', notification.is_read, ')')
+    }
+
     setPopoverOpen(false)
     
     const isSupport = notification.type === 'support_ticket' || notification.type === 'support'
@@ -319,10 +322,10 @@ const NotificationBell = () => {
       navigate('/promotions')
     } else if (notification.type === 'general' || notification.type === 'system') {
       // Navigate to notifications page for general notifications
-      navigate('/notifications')
+      navigate('/notifications?tab=notifications')
     } else {
       // Default fallback to notifications page
-      navigate('/notifications')
+      navigate('/notifications?tab=notifications')
     }
   }
 
@@ -346,11 +349,31 @@ const NotificationBell = () => {
         <Text strong>
           {language === 'ar' ? 'الإشعارات الحديثة' : 'Recent Notifications'}
         </Text>
-        <Link to="/notifications">
-          <Button type="link" size="small">
+        <Space size="small">
+          {notifications.some(n => n.isDbNotification && !n.is_read) && (
+            <Button 
+              type="link" 
+              size="small" 
+              icon={<CheckOutlined />}
+              onClick={(e) => {
+                e.stopPropagation()
+                markAllAsRead()
+              }}
+            >
+              {language === 'ar' ? 'تحديد الكل كمقروء' : 'Mark all read'}
+            </Button>
+          )}
+          <Button 
+            type="link" 
+            size="small"
+            onClick={() => {
+              setPopoverOpen(false)
+              navigate('/notifications?tab=notifications')
+            }}
+          >
             {language === 'ar' ? 'عرض الكل' : 'View All'}
           </Button>
-        </Link>
+        </Space>
       </div>
 
       {loading ? (
@@ -392,6 +415,8 @@ const NotificationBell = () => {
                   padding: '12px 16px',
                   cursor: 'pointer',
                   transition: 'background-color 0.2s',
+                  backgroundColor: item.isDbNotification && !item.is_read ? '#e6f7ff' : 'transparent',
+                  borderLeft: item.isDbNotification && !item.is_read ? '3px solid #1890ff' : 'none',
                 }}
                 className="notification-item"
                 onClick={() => handleNotificationClick(item)}
@@ -399,7 +424,7 @@ const NotificationBell = () => {
                   e.currentTarget.style.backgroundColor = '#f5f5f5'
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
+                  e.currentTarget.style.backgroundColor = item.isDbNotification && !item.is_read ? '#e6f7ff' : 'transparent'
                 }}
               >
                 <List.Item.Meta
@@ -407,8 +432,15 @@ const NotificationBell = () => {
                     <div style={{ 
                       fontSize: '14px',
                       color: isSupport && item.priority === 'urgent' ? '#ff4d4f' :
-                             isSupport && item.priority === 'high' ? '#fa8c16' : '#262626'
+                             isSupport && item.priority === 'high' ? '#fa8c16' : '#262626',
+                      fontWeight: item.isDbNotification && !item.is_read ? '600' : 'normal'
                     }}>
+                      {item.isDbNotification && !item.is_read && (
+                        <Badge 
+                          status="processing" 
+                          style={{ marginRight: isRTL ? '0' : '6px', marginLeft: isRTL ? '6px' : '0' }} 
+                        />
+                      )}
                       {title}
                       {isSupport && item.category && (
                         <span style={{ 

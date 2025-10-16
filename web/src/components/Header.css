@@ -157,17 +157,27 @@
 
 .language-toggle {
   background: none;
-  border: none;
+  border: 2px solid #16A2A3;
   cursor: pointer;
-  padding: 0.5rem 0.75rem;
-  color: #333;
+  padding: 0.4rem 0.8rem;
+  color: #16A2A3;
   display: flex;
   align-items: center;
-  transition: color 0.3s;
+  justify-content: center;
+  transition: all 0.3s;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  min-width: 45px;
 }
 
 .language-toggle:hover {
-  color: #16A2A3;
+  background: #16A2A3;
+  color: #fff;
+}
+
+.lang-text {
+  font-family: Arial, sans-serif;
 }
 
 .auth-button {
@@ -284,3 +294,51 @@
     width: 100%;
   }
 }
+
+/* Arabic/RTL Font Size Adjustments */
+html[dir='rtl'] .menu-item a,
+html[dir='rtl'] .auth-button {
+  font-size: 0.9rem;
+}
+
+html[dir='rtl'] .header-logo img {
+  height: 55px;
+}
+
+html[dir='rtl'] .language-toggle {
+  font-size: 0.85rem;
+}
+
+/* Make Arabic text slightly smaller for better appearance */
+body.rtl .menu-item a {
+  font-size: 0.9rem;
+}
+
+body.rtl .auth-button {
+  font-size: 0.9rem;
+  padding: 0.55rem 1.3rem;
+}
+
+/* Make English text smaller */
+html[dir='ltr'] .menu-item a {
+  font-size: 0.85rem;
+}
+
+html[dir='ltr'] .auth-button {
+  font-size: 0.85rem;
+}
+
+html[dir='ltr'] .language-toggle {
+  font-size: 0.8rem;
+}
+
+@media (max-width: 768px) {
+  html[dir='rtl'] .menu-item a {
+    font-size: 0.95rem;
+  }
+  
+  html[dir='ltr'] .menu-item a {
+    font-size: 0.9rem;
+  }
+}
+

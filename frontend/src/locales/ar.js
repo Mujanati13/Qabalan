@@ -592,6 +592,18 @@ export const ar = {
     cancelled_at: 'تم الإلغاء في',
     cancellation_reason: 'سبب الإلغاء',
     promo_code: 'كود الخصم',
+    enter_promo_code: 'أدخل كود الخصم',
+    no_promo_code: 'لا يوجد كود خصم مطبق',
+    promo_code_disabled_edit: 'لا يمكن تعديل كود الخصم. قم بإزالة الكود الحالي لتطبيق كود جديد.',
+    promo_code_locked_edit: 'لا يمكن تغيير كود الخصم عند تعديل الطلبات',
+    locked: 'مقفل',
+    applied: 'مطبق',
+    promo_applied: 'تم تطبيق كود الخصم بنجاح',
+    promo_removed: 'تم إزالة كود الخصم',
+    invalid_promo: 'كود خصم غير صالح',
+    promo_validation_error: 'فشل التحقق من كود الخصم',
+    free_shipping: 'شحن مجاني',
+    order_summary: 'ملخص الطلب',
     delivery_address: 'عنوان التوصيل',
     delivery_address_placeholder: 'أدخل عنوان التوصيل أو معرف العنوان',
     delivery_address_required: 'عنوان التوصيل مطلوب لطلبات التوصيل',
@@ -695,6 +707,7 @@ export const ar = {
     no_location: 'لا يوجد موقع',
     discount: 'الخصم',
     discount_label: 'الخصم',
+    promo_discount: 'خصم الكوبون',
     promo_discount_label: 'خصم الكوبون',
     shipping_discount_label: 'خصم التوصيل',
     total_savings_label: 'إجمالي التوفير',
@@ -823,6 +836,18 @@ export const ar = {
     price: 'السعر',
     quantity: 'الكمية',
     total: 'المجموع',
+    
+    // Variant Selection - اختيار المتغيرات
+    selectVariant: 'اختيار متغير المنتج',
+    selectVariantDescription: 'اختر متغيراً لإضافته إلى طلبك، أو أضف المنتج الأساسي بدون متغير.',
+    addWithoutVariant: 'إضافة بدون متغير',
+    variant: 'المتغير',
+    variants: 'المتغيرات',
+    hasVariants: 'يحتوي على متغيرات',
+    noVariants: 'لا يوجد متغيرات',
+    variantPrice: 'سعر المتغير',
+    variantDetails: 'تفاصيل المتغير',
+    
     selectBranchRequired: 'يرجى اختيار فرع',
     selectCustomerRequired: 'يرجى اختيار عميل',
     selectAddressRequired: 'يرجى اختيار عنوان أو إنشاء عنوان جديد',
@@ -900,6 +925,7 @@ export const ar = {
     add_new_address_with_map: 'إضافة عنوان جديد بالخريطة',
     refresh_addresses: 'تحديث',
     no_saved_addresses: 'لا توجد عناوين محفوظة',
+    no_saved_addresses_found: 'لم يتم تحميل قائمة العناوين المحفوظة. هذا هو عنوان الطلب.',
     edit_address: 'تعديل العنوان',
     add_new_address: 'إضافة عنوان جديد',
     save_address: 'حفظ العنوان',
@@ -1600,7 +1626,16 @@ export const ar = {
     subtotal: 'المجموع الفرعي',
     delivery_fee: 'رسوم التوصيل',
     tax_amount: 'الضريبة',
+    discount: 'الخصم',
     grand_total: 'المجموع',
+    items_subtotal: 'مجموع العناصر',
+    payment_received: 'تم استلام الدفع',
+    last_updated: 'آخر تحديث',
+    payment_status: 'حالة الدفع',
+    
+    // Order Modified Warning
+    order_modified_warning: 'تم تعديل هذا الطلب مؤخراً',
+    order_modified_description: 'تعرض الفاتورة أحدث معلومات الطلب بما في ذلك أي تغييرات تمت على العناصر أو الأسعار أو رسوم التوصيل.',
     
     // Pagination
     items_per_page: 'عنصر في الصفحة',
@@ -1857,6 +1892,56 @@ export const ar = {
     processing: {
       title: 'معالجة الدفع',
       message: 'يرجى الانتظار بينما نقوم بمعالجة الدفع...'
+    }
+  },
+
+  // Staff Management
+  staffManagement: {
+    // Permission Management
+    permissions: {
+      title: 'إدارة الصلاحيات',
+      managePermissions: 'إدارة الصلاحيات',
+      description: 'قم بتكوين الإجراءات التي يمكن أن يؤديها دور "{role}" في كل وحدة. حدد الصلاحيات التي تريد منحها.',
+      selectAll: 'تحديد الكل',
+      clearAll: 'إلغاء الكل',
+      quickActions: 'إجراءات سريعة',
+      selectAllPermissions: 'تحديد جميع الصلاحيات',
+      clearAllPermissions: 'إلغاء جميع الصلاحيات',
+      viewOnlyAllModules: 'عرض فقط (جميع الوحدات)',
+      permissionSummary: 'ملخص الصلاحيات',
+      noPermissionsSelected: 'لم يتم تحديد صلاحيات بعد',
+      savePermissions: 'حفظ الصلاحيات',
+      permissionsUpdated: 'تم تحديث الصلاحيات بنجاح',
+      permissionsFailed: 'فشل في حفظ الصلاحيات',
+      loadingPermissions: 'جاري تحميل الصلاحيات...',
+      
+      // Permission Actions
+      actions: {
+        view: 'عرض',
+        create: 'إنشاء',
+        edit: 'تعديل',
+        delete: 'حذف',
+        export: 'تصدير',
+        manage: 'إدارة'
+      },
+      
+      // Permission Modules
+      modules: {
+        products: 'المنتجات',
+        categories: 'الفئات',
+        orders: 'الطلبات',
+        invoices: 'الفواتير',
+        users: 'المستخدمون',
+        promos: 'أكواد الخصم',
+        offers: 'إدارة العروض',
+        notifications: 'الإشعارات',
+        support: 'الدعم الفني',
+        staff: 'إدارة الموظفين',
+        roles: 'إدارة الأدوار',
+        inventory: 'المخزون',
+        reports: 'التقارير',
+        settings: 'الإعدادات'
+      }
     }
   }
 };

@@ -64,6 +64,7 @@ import {
   MoreOutlined,
   CopyOutlined,
   CreditCardOutlined,
+  LockOutlined,
 } from "@ant-design/icons";
 import { useLanguage } from "../contexts/LanguageContext";
 import { useNotifications } from "../contexts/NotificationContext";
@@ -71,6 +72,7 @@ import { useNavigate } from "react-router-dom";
 import { useTableSorting } from "../hooks/useTableSorting.jsx";
 import ordersService from "../services/ordersService";
 import customersService from "../services/customersService";
+import promosService from "../services/promosService";
 import NotificationControls from "../components/notifications/NotificationControls";
 import ExportButton from "../components/common/ExportButton";
 import { useExportConfig } from "../hooks/useExportConfig";
@@ -92,6 +94,37 @@ import NotificationTestPanel from "../components/notifications/NotificationTestP
 const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
+
+// API Base URL for image construction
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3015/api';
+
+// Helper function to get the correct image URL
+const getImageUrl = (imagePath) => {
+  if (!imagePath) return null;
+
+  // Check if it's already a full URL (starts with http:// or https://)
+  if (imagePath.startsWith("http://") || imagePath.startsWith("https://")) {
+    return imagePath;
+  }
+
+  // Check if it's a data URL (base64)
+  if (imagePath.startsWith("data:")) {
+    return imagePath;
+  }
+
+  // Check if it's a placeholder
+  if (imagePath.includes("placeholder")) {
+    return imagePath;
+  }
+
+  // If it starts with /uploads/, construct the full URL
+  if (imagePath.startsWith("/uploads/")) {
+    return `${API_BASE_URL}${imagePath}`;
+  }
+
+  // Otherwise, assume it's a filename and prepend the products path
+  return `${API_BASE_URL}/uploads/products/${imagePath}`;
+};
 
 // Enhanced notification sound with better browser compatibility
 const playNotificationSound = async () => {
@@ -304,8 +337,9 @@ const OrderItemCard = ({ item, formatPrice }) => {
   const totalPrice = Number(item?.total_price || unitPrice * quantity);
 
   // Get product image with fallback
-  const productImage =
-    item?.product_image || item?.main_image || "/api/placeholder/80/80";
+  const productImage = getImageUrl(
+    item?.product_image || item?.main_image
+  ) || "/api/placeholder/80/80";
 
   // Get variant information
   const variantName = item?.variant_name;
@@ -548,6 +582,53 @@ const Orders = () => {
   const [generatedPaymentLink, setGeneratedPaymentLink] = useState("");
   const [paymentLinkDetails, setPaymentLinkDetails] = useState(null);
   const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+
+  // Promo code states
+  const [promoCode, setPromoCode] = useState("");
+  const [promoValidation, setPromoValidation] = useState(null);
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [appliedPromo, setAppliedPromo] = useState(null);
+  const [promoManuallyRemoved, setPromoManuallyRemoved] = useState(false);
+  // --- Auto-heal: ensure editing order's address appears in customerAddresses so Select renders instead of fallback ---
+  useEffect(() => {
+    if (
+      editingOrder &&
+      (editingOrder.delivery_address || editingOrder.fetched_delivery_address) &&
+      Array.isArray(customerAddresses)
+    ) {
+      const addrObj = editingOrder.delivery_address || editingOrder.fetched_delivery_address;
+      const targetId = String(
+        (addrObj && (addrObj.id || addrObj.address_id)) || editingOrder.delivery_address_id || editingOrder.original_delivery_address_id || ""
+      );
+      if (
+        targetId &&
+        !customerAddresses.some(
+          (a) => String(a.id || a.address_id) === targetId
+        )
+      ) {
+        const normalized = {
+          id: addrObj.id || addrObj.address_id || targetId,
+            address_id: addrObj.id || addrObj.address_id || targetId,
+            name: addrObj.name || addrObj.address_name || addrObj.full_name || "Order Address",
+            address_name: addrObj.name || addrObj.address_name || addrObj.full_name,
+            full_name: addrObj.full_name || addrObj.name || addrObj.address_name,
+            address_line: addrObj.address_line || addrObj.address_line_1 || "",
+            address_line_1: addrObj.address_line || addrObj.address_line_1 || "",
+            city: addrObj.city,
+            city_title_en: addrObj.city_title_en || addrObj.city,
+            governorate: addrObj.governorate,
+            governorate_title_en: addrObj.governorate_title_en || addrObj.governorate,
+            area: addrObj.area,
+            area_title_en: addrObj.area_title_en || addrObj.area,
+            building_no: addrObj.building_no,
+            latitude: addrObj.latitude,
+            longitude: addrObj.longitude,
+            is_default: addrObj.is_default || 0,
+        };
+        setCustomerAddresses((prev) => [...prev, normalized]);
+      }
+    }
+  }, [editingOrder, customerAddresses]);
 
   // Initiate MPGS Hosted Checkout for an order
   const initiateCardPayment = async (order) => {
@@ -1415,22 +1496,26 @@ const Orders = () => {
 
   const fetchOrderCounts = async () => {
     try {
-      console.log("🔢 Calculating order counts from filtered orders...");
+      console.log("🔢 Fetching order counts from backend...");
 
-      // Calculate counts from the filtered orders data
+      // Fetch actual counts from backend instead of calculating from filtered data
+      const response = await ordersService.getOrderCounts();
+      const counts = response.data || {};
+
+      console.log("📊 Backend order counts:", counts);
+      setOrderCounts(counts);
+    } catch (error) {
+      console.error("Failed to fetch order counts:", error);
+      // Fallback to calculating from filtered orders if backend fails
       const counts = {};
-
       if (filteredOrders && filteredOrders.length >= 0) {
         filteredOrders.forEach((order) => {
           const status = order.order_status || "unknown";
           counts[status] = (counts[status] || 0) + 1;
         });
       }
-
-      console.log("📊 Calculated order counts:", counts);
+      console.log("📊 Fallback calculated order counts:", counts);
       setOrderCounts(counts);
-    } catch (error) {
-      console.error("Failed to calculate order counts:", error);
     }
   };
 
@@ -2188,6 +2273,112 @@ const Orders = () => {
     }
   };
 
+  // Validate and apply promo code
+  const handleValidatePromoCode = async (code = promoCode) => {
+    console.log("handleValidatePromoCode called:", { code, promoManuallyRemoved });
+    
+    // Don't validate if user manually removed the promo
+    if (promoManuallyRemoved) {
+      console.log("Skipping validation - promo was manually removed");
+      return;
+    }
+    
+    if (!code || !code.trim()) {
+      setPromoValidation(null);
+      setAppliedPromo(null);
+      return;
+    }
+
+    try {
+      setPromoLoading(true);
+      const orderTotal = calculateOrderTotal();
+      const deliveryFee = parseFloat(orderForm.getFieldValue("delivery_fee")) || 0;
+      const totalWithDelivery = orderTotal + deliveryFee;
+      
+      const response = await promosService.validatePromoCode(code.trim(), totalWithDelivery);
+      
+      console.log("=== PROMO VALIDATION DEBUG ===");
+      console.log("Full response:", JSON.stringify(response, null, 2));
+      console.log("response.success:", response.success);
+      console.log("response.data:", response.data);
+      console.log("response.data.discount_amount:", response.data?.discount_amount);
+      console.log("response.data.promo_code:", response.data?.promo_code);
+      
+      if (response.success && response.data) {
+        const promoData = response.data.promo_code || response.data; // Handle both response structures
+        const discountAmount = parseFloat(response.data.discount_amount) || 0;
+        
+        console.log("Extracted values:");
+        console.log("- promoData:", promoData);
+        console.log("- raw discount_amount:", response.data.discount_amount);
+        console.log("- parsed discountAmount:", discountAmount);
+        console.log("- typeof discountAmount:", typeof discountAmount);
+        console.log("- order_total:", totalWithDelivery);
+        
+        setPromoValidation({
+          valid: true,
+          data: promoData,
+          message: response.message || "Promo code is valid"
+        });
+        
+        // Apply the promo discount
+        const promoToApply = {
+          id:
+            promoData.id ??
+            promoData.promo_code_id ??
+            promoData.promo_id ??
+            promoData.promo?.id ??
+            null,
+          code: code.trim(),
+          discount_type: promoData.discount_type,
+          discount_value: promoData.discount_value,
+          discount_amount: discountAmount,
+          free_shipping: promoData.discount_type === 'free_shipping'
+        };
+        
+        console.log("Setting appliedPromo to:", promoToApply);
+        setAppliedPromo(promoToApply);
+        
+        message.success(response.message || "Promo code applied successfully!");
+        
+        // Update delivery fee if free shipping
+        if (promoData.discount_type === 'free_shipping') {
+          orderForm.setFieldsValue({ delivery_fee: 0 });
+          setShippingCalculation(null);
+        }
+        
+      } else {
+        setPromoValidation({
+          valid: false,
+          message: response.message || "Invalid promo code"
+        });
+        setAppliedPromo(null);
+        message.error(response.message || "Invalid promo code");
+      }
+    } catch (error) {
+      console.error("Promo validation error:", error);
+      setPromoValidation({
+        valid: false,
+        message: error.message || "Failed to validate promo code"
+      });
+      setAppliedPromo(null);
+      message.error(error.message || "Failed to validate promo code");
+    } finally {
+      setPromoLoading(false);
+    }
+  };
+
+  // Remove promo code
+  const handleRemovePromoCode = () => {
+    console.log("handleRemovePromoCode called - clearing all promo states");
+    setPromoCode("");
+    setPromoValidation(null);
+    setAppliedPromo(null);
+    setPromoManuallyRemoved(true); // Mark as manually removed
+    console.log("Promo removed, promoManuallyRemoved set to true");
+    message.info("Promo code removed");
+  };
+
   const handleCreateOrder = async (values) => {
     try {
       // Calculate basic totals
@@ -2233,7 +2424,11 @@ const Orders = () => {
         delivery_fee: deliveryFee,
         tax_amount: taxAmount,
         discount_amount: discountAmount,
-        total_amount: subtotal + deliveryFee + taxAmount - discountAmount,
+        total_amount: calculateFinalTotal(),
+        // Add promo code information
+        promo_code: appliedPromo ? appliedPromo.code : null,
+  promo_discount_amount: appliedPromo ? appliedPromo.discount_amount : 0,
+  promo_code_id: appliedPromo ? appliedPromo.id || null : null,
         items:
           selectedItems.length > 0
             ? selectedItems
@@ -2294,12 +2489,63 @@ const Orders = () => {
   };
 
   const handleEditOrder = async (values) => {
-    if (!editingOrder) return;
+    console.log("=== handleEditOrder START ===");
+    console.log("Values received:", values);
+    console.log("Editing order:", editingOrder);
+    console.log("Edit order items:", editOrderItems);
+    
+    if (!editingOrder) {
+      console.log("ERROR: No editing order found!");
+      return;
+    }
+
+    console.log("handleEditOrder called - Current promo state:", {
+      promoCode: promoCode,
+      appliedPromo: appliedPromo,
+      promoValidation: promoValidation,
+      promoManuallyRemoved: promoManuallyRemoved
+    });
 
     try {
+      setLoading(true); // Add loading state
+      console.log("Loading state set to true");
+
       // Calculate current order total
       const currentSubtotal = calculateOrderTotal();
+      console.log("Current subtotal calculated:", currentSubtotal);
       let deliveryFee = Number(values.delivery_fee || 0);
+
+      // Ensure delivery_address_id references known address (auto-heal if missing)
+      if (values.order_type === "delivery" && values.delivery_address_id) {
+        const addrIdStr = String(values.delivery_address_id);
+        const inList = customerAddresses.some(a => String(a.id || a.address_id) === addrIdStr);
+        if (!inList) {
+          console.warn("Healing missing address selection: injecting temporary address entry");
+          const source = editingOrder.delivery_address || editingOrder.fetched_delivery_address;
+          if (source) {
+            const normalized = {
+              id: source.id || source.address_id || addrIdStr,
+              address_id: source.id || source.address_id || addrIdStr,
+              name: source.name || source.address_name || source.full_name || "Order Address",
+              address_name: source.name || source.address_name || source.full_name,
+              full_name: source.full_name || source.name || source.address_name,
+              address_line: source.address_line || source.address_line_1 || "",
+              address_line_1: source.address_line || source.address_line_1 || "",
+              city: source.city,
+              city_title_en: source.city_title_en || source.city,
+              governorate: source.governorate,
+              governorate_title_en: source.governorate_title_en || source.governorate,
+              area: source.area,
+              area_title_en: source.area_title_en || source.area,
+              building_no: source.building_no,
+              latitude: source.latitude,
+              longitude: source.longitude,
+              is_default: source.is_default || 0,
+            };
+            setCustomerAddresses(prev => [...prev, normalized]);
+          }
+        }
+      }
 
       // Auto-recalculate shipping if address or branch changed and it's a delivery order
       if (
@@ -2371,11 +2617,12 @@ const Orders = () => {
           total_price: item.total_price,
         })),
         subtotal: currentSubtotal,
-        total_amount:
-          currentSubtotal +
-          deliveryFee +
-          Number(values.tax_amount || 0) -
-          Number(values.discount_amount || 0),
+        total_amount: calculateFinalTotal(),
+        discount_amount: appliedPromo ? appliedPromo.discount_amount : 0,
+        // Add promo code information
+        promo_code: appliedPromo ? appliedPromo.code : null,
+        promo_discount_amount: appliedPromo ? appliedPromo.discount_amount : 0,
+        promo_code_id: appliedPromo ? appliedPromo.id || null : null,
       };
 
       // Handle delivery address for delivery orders
@@ -2457,6 +2704,14 @@ const Orders = () => {
         customer_phone: orderData.customer_phone,
         existing_user_id: editingOrder.user_id,
       });
+      console.log("Debug - Promo code details being sent:", {
+        promo_code: orderData.promo_code,
+        promo_discount_amount: orderData.promo_discount_amount,
+        appliedPromo: appliedPromo,
+        total_amount: orderData.total_amount,
+        subtotal: orderData.subtotal,
+        delivery_fee: orderData.delivery_fee
+      });
 
       await ordersService.updateOrder(editingOrder.id, orderData);
       message.success(
@@ -2467,6 +2722,11 @@ const Orders = () => {
       setEditOrderItems([]);
       setShippingCalculation(null); // Reset shipping calculation
       orderForm.resetFields();
+      // Reset promo code states
+      setPromoCode("");
+      setPromoValidation(null);
+      setAppliedPromo(null);
+      setPromoManuallyRemoved(false);
       fetchOrders();
       // Update notification badge counter
       updatePendingCount();
@@ -2554,6 +2814,8 @@ const Orders = () => {
           error.message || t("orders.update_error") || "Failed to update order"
         );
       }
+    } finally {
+      setLoading(false); // Reset loading state
     }
   };
 
@@ -2572,20 +2834,52 @@ const Orders = () => {
 
   const handlePrintInvoice = async (order) => {
     try {
-      // Fetch the latest order data to ensure we have updated info
-      const response = await ordersService.getOrder(order.id);
-      let completeOrder = order;
+      message.loading('Preparing invoice...', 0);
       
-      if (response.success && response.data) {
-        const { order: orderDetails, items } = response.data;
-        completeOrder = {
-          ...order,
-          ...orderDetails,
-          items: items || order.items || [],
-        };
+      // Always fetch the latest order data to ensure accuracy
+      const response = await ordersService.getOrder(order.id);
+      
+      if (!response.success || !response.data) {
+        throw new Error('Failed to fetch order data');
       }
       
+      const { order: orderDetails, items } = response.data;
+      
+      // Merge with comprehensive data structure - prioritize fresh data over stale
+      const completeOrder = {
+        ...orderDetails, // Latest order details from API (prioritize this)
+        items: items || [], // Latest items array
+        // Explicitly override any potentially stale financial fields
+        subtotal: orderDetails.subtotal,
+        delivery_fee: orderDetails.delivery_fee,
+        tax_amount: orderDetails.tax_amount,
+        discount_amount: orderDetails.discount_amount,
+        total_amount: orderDetails.total_amount,
+        shipping_discount_amount: orderDetails.shipping_discount_amount,
+        points_used: orderDetails.points_used,
+        // Ensure order status and payment info are current
+        order_status: orderDetails.order_status,
+        payment_status: orderDetails.payment_status,
+        payment_method: orderDetails.payment_method,
+        order_type: orderDetails.order_type,
+        delivery_address_id: orderDetails.delivery_address_id,
+        delivery_address: orderDetails.delivery_address
+      };
+      
+      console.log('Printing invoice with latest data:', {
+        orderId: order.id,
+        orderType: completeOrder.order_type,
+        deliveryFee: completeOrder.delivery_fee,
+        totalAmount: completeOrder.total_amount
+      });
+      
+      message.destroy();
+      
       const printWindow = window.open("", "_blank");
+      if (!printWindow) {
+        throw new Error('Pop-up blocked. Please allow pop-ups for this site.');
+      }
+      
       const invoiceHtml = generateInvoiceHTML(completeOrder);
 
       printWindow.document.write(invoiceHtml);
@@ -2595,22 +2889,39 @@ const Orders = () => {
       // Wait for content to load, then print
       setTimeout(() => {
         printWindow.print();
-        printWindow.close();
-      }, 250);
+        // Don't auto-close so user can review
+        // printWindow.close();
+      }, 500); // Increased timeout for better rendering
+      
     } catch (error) {
+      message.destroy();
       console.error("Error generating invoice:", error);
-      message.error("Failed to generate invoice");
+      message.error(error.message || "Failed to generate invoice");
     }
   };
 
   const generateInvoiceHTML = (order) => {
     const currentDate = new Date().toLocaleDateString();
+    
+    // Calculate items subtotal from actual items for verification
+    const calculatedItemsTotal = order.items && order.items.length > 0
+      ? order.items.reduce((sum, item) => {
+          const quantity = Number(item?.quantity || 0);
+          const unitPrice = Number(item?.unit_price || item?.price || 0);
+          return sum + (quantity * unitPrice);
+        }, 0)
+      : 0;
+    
+    // Use order subtotal or calculated total as fallback
+    const displaySubtotal = order.subtotal !== undefined && order.subtotal !== null
+      ? Number(order.subtotal)
+      : calculatedItemsTotal;
 
     return `
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Invoice #${order.order_number}</title>
+        <title>Invoice #${order.order_number || order.id}</title>
         <style>
             body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
             .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 20px; margin-bottom: 30px; }
@@ -2624,18 +2935,21 @@ const Orders = () => {
             .items-table th { background-color: #f5f5f5; font-weight: bold; }
             .items-table .qty-col { text-align: center; width: 80px; }
             .items-table .price-col { text-align: right; width: 100px; }
+            .items-table tbody tr:nth-child(even) { background-color: #fafafa; }
             .totals { float: right; width: 300px; }
             .totals table { width: 100%; }
             .totals td { padding: 8px; border-bottom: 1px solid #eee; }
             .totals .total-row { font-weight: bold; font-size: 16px; border-top: 2px solid #333; }
-            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #666; }
+            .footer { margin-top: 50px; text-align: center; font-size: 12px; color: #666; clear: both; }
             .delivery-address { margin-top: 15px; padding: 10px; background-color: #f9f9f9; border-radius: 5px; }
+            .warning-box { background-color: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 5px; }
             @media print {
                 body { margin: 0; }
                 .header { page-break-inside: avoid; }
                 .invoice-info { page-break-inside: avoid; }
                 .items-table { page-break-inside: avoid; }
                 .totals { page-break-inside: avoid; }
+                .warning-box { display: none; }
             }
         </style>
     </head>
@@ -2645,28 +2959,42 @@ const Orders = () => {
             <div class="invoice-title">INVOICE</div>
         </div>
         
+        ${order.updated_at && new Date(order.updated_at) > new Date(new Date(order.created_at).getTime() + 5*60*1000) ? `
+        <div class="warning-box">
+            ⚠️ <strong>Note:</strong> This order was modified on ${new Date(order.updated_at).toLocaleDateString()} at ${new Date(order.updated_at).toLocaleTimeString()}. 
+            Invoice reflects the latest order details.
+        </div>
+        ` : ''}
+        
         <div class="invoice-info">
             <div class="invoice-details">
                 <h3>Invoice Details</h3>
-                <p><strong>Invoice #:</strong> ${order.order_number}</p>
+                <p><strong>Invoice #:</strong> ${order.order_number || order.id}</p>
                 <p><strong>Order Date:</strong> ${new Date(
                   order.created_at
-                ).toLocaleDateString()}</p>
+                ).toLocaleDateString()} ${new Date(order.created_at).toLocaleTimeString()}</p>
+                ${order.updated_at && order.updated_at !== order.created_at ? 
+                  `<p><strong>Last Updated:</strong> ${new Date(order.updated_at).toLocaleDateString()} ${new Date(order.updated_at).toLocaleTimeString()}</p>` 
+                  : ''}
                 <p><strong>Print Date:</strong> ${currentDate}</p>
-                <p><strong>Status:</strong> ${order.order_status.toUpperCase()}</p>
-                <p><strong>Payment:</strong> ${order.payment_method.toUpperCase()} (${order.payment_status.toUpperCase()})</p>
+                <p><strong>Status:</strong> ${(order.order_status || 'pending').toUpperCase()}</p>
+                <p><strong>Payment:</strong> ${(order.payment_method || 'N/A').toUpperCase()} 
+                   <span style="color: ${order.payment_status === 'paid' ? '#52c41a' : order.payment_status === 'failed' ? '#ff4d4f' : '#faad14'}">
+                     (${(order.payment_status || 'pending').toUpperCase()})
+                   </span>
+                </p>
             </div>
             
             <div class="customer-details">
                 <h3>Customer Information</h3>
-                <p><strong>Name:</strong> ${order.customer_name}</p>
-                <p><strong>Phone:</strong> ${order.customer_phone}</p>
+                <p><strong>Name:</strong> ${order.customer_name || 'N/A'}</p>
+                <p><strong>Phone:</strong> ${order.customer_phone || 'N/A'}</p>
                 ${
                   order.customer_email
                     ? `<p><strong>Email:</strong> ${order.customer_email}</p>`
                     : ""
                 }
-                <p><strong>Order Type:</strong> ${order.order_type.toUpperCase()}</p>
+                <p><strong>Order Type:</strong> ${(order.order_type || 'pickup').toUpperCase()}</p>
                 
                 ${
                   order.order_type === "delivery" && order.delivery_address
@@ -2678,9 +3006,9 @@ const Orders = () => {
                         ? `${order.delivery_address.full_name}<br>`
                         : ""
                     }
-                    ${order.delivery_address.address_line}<br>
-                    ${order.delivery_address.city}, ${
-                        order.delivery_address.governorate
+                    ${order.delivery_address.address_line || order.delivery_address.street || ''}<br>
+                    ${order.delivery_address.city || ''}, ${
+                        order.delivery_address.governorate || order.delivery_address.area || ''
                       }
                     ${
                       order.delivery_address.phone
@@ -2705,7 +3033,7 @@ const Orders = () => {
             </thead>
             <tbody>
                 ${
-                  order.items
+                  order.items && order.items.length > 0
                     ? order.items
                         .map((item) => {
                           const productName =
@@ -2718,15 +3046,16 @@ const Orders = () => {
                             item?.unit_price || item?.price || 0
                           );
                           
-                          // Get variant info
+                          // Get variant info - check multiple possible fields
                           const variantInfo =
-                            item?.variant_name && item?.variant_value
+                            item?.variant_options ||
+                            (item?.variant_name && item?.variant_value
                               ? ` (${item.variant_name}: ${item.variant_value})`
-                              : "";
+                              : "");
 
                           return `
                     <tr>
-                        <td>${productName}${variantInfo}</td>
+                        <td>${productName}${variantInfo ? '<br><small style="color: #666;">' + variantInfo + '</small>' : ''}</td>
                         <td class="qty-col">${quantity}</td>
                         <td class="price-col">${formatPrice(unitPrice)}</td>
                         <td class="price-col">${formatPrice(
@@ -2736,18 +3065,24 @@ const Orders = () => {
                     `;
                         })
                         .join("")
-                    : '<tr><td colspan="4">No items available</td></tr>'
+                    : '<tr><td colspan="4" style="text-align: center; color: #999;">No items available</td></tr>'
                 }
             </tbody>
+            ${order.items && order.items.length > 0 ? `
+            <tfoot>
+                <tr style="background-color: #f5f5f5;">
+                    <td colspan="3" style="text-align: right; font-weight: bold;">Items Subtotal:</td>
+                    <td class="price-col" style="font-weight: bold;">${formatPrice(calculatedItemsTotal)}</td>
+                </tr>
+            </tfoot>
+            ` : ''}
         </table>
         
         <div class="totals">
             <table>
                 <tr>
                     <td>Subtotal:</td>
-                    <td style="text-align: right;">${formatPrice(
-                      order.subtotal || 0
-                    )}</td>
+                    <td style="text-align: right;">${formatPrice(displaySubtotal)}</td>
                 </tr>
         ${
           Number(order.delivery_fee || 0) > 0
@@ -2767,7 +3102,7 @@ const Orders = () => {
             ? `
         <tr>
           <td>Shipping Discount:</td>
-          <td style="text-align: right;">-${formatPrice(
+          <td style="text-align: right; color: #52c41a;">-${formatPrice(
             order.shipping_discount_amount
           )}</td>
         </tr>
@@ -2791,9 +3126,20 @@ const Orders = () => {
                     ? `
                 <tr>
                     <td>Discount:</td>
-                    <td style="text-align: right;">-${formatPrice(
+                    <td style="text-align: right; color: #52c41a;">-${formatPrice(
                       order.discount_amount
                     )}</td>
+                </tr>
+                `
+                    : ""
+                }
+                ${
+                  order.promo_code
+                    ? `
+                <tr>
+                    <td colspan="2" style="font-size: 12px; color: #666;">
+                        Promo Code: <strong>${order.promo_code}</strong>
+                    </td>
                 </tr>
                 `
                     : ""
@@ -2803,7 +3149,7 @@ const Orders = () => {
                     ? `
                 <tr>
                     <td>Points Used:</td>
-                    <td style="text-align: right;">-${order.points_used} pts</td>
+                    <td style="text-align: right; color: #52c41a;">-${order.points_used} pts</td>
                 </tr>
                 `
                     : ""
@@ -2811,9 +3157,16 @@ const Orders = () => {
                 <tr class="total-row">
                     <td>TOTAL:</td>
                     <td style="text-align: right;">${formatPrice(
-                      order.total_amount || 0
+                      Number(order.total_amount || 0)
                     )}</td>
                 </tr>
+                ${order.payment_status === 'paid' ? `
+                <tr style="background-color: #f6ffed; color: #52c41a;">
+                    <td colspan="2" style="text-align: center; font-weight: bold;">
+                        ✓ PAID
+                    </td>
+                </tr>
+                ` : ''}
             </table>
         </div>
         
@@ -2825,11 +3178,17 @@ const Orders = () => {
                 ? `<p><strong>Special Instructions:</strong> ${order.special_instructions}</p>`
                 : ""
             }
+            ${
+              order.notes
+                ? `<p><strong>Notes:</strong> ${order.notes}</p>`
+                : ""
+            }
         </div>
     </body>
     </html>
     `;
   };
+// Removed duplicate HTML/template code after generateInvoiceHTML
 
   const showCreateModal = () => {
     orderForm.resetFields();
@@ -2837,12 +3196,69 @@ const Orders = () => {
     setSelectedCustomerForOrder(null);
     setCustomerAddresses([]);
     setCreateOrderVisible(true);
+    // Reset promo code states and enable promo functionality for new orders
+    setPromoCode("");
+    setPromoValidation(null);
+    setAppliedPromo(null);
+    setPromoManuallyRemoved(false);
     // Load initial customer list
     fetchCustomers();
   };
 
   const showEditModal = async (order) => {
+    console.log("showEditModal - Opening order:", {
+      order_id: order.id,
+      promo_code: order.promo_code,
+      promo_discount_amount: order.promo_discount_amount,
+      discount_amount: order.discount_amount
+    });
+    
     setEditingOrder(order);
+    
+    // Check if user manually removed the promo before resetting
+    const wasManuallyRemoved = promoManuallyRemoved;
+    
+    // Reset promo code states
+    setPromoCode("");
+    setPromoValidation(null);
+    setAppliedPromo(null);
+    setPromoManuallyRemoved(false); // Reset the removal flag
+    
+    // If order has a promo code, load it with its discount amount
+    // But only if user hasn't manually removed it in this session
+    if (order?.promo_code && !wasManuallyRemoved) {
+      setPromoCode(order.promo_code);
+      
+      // If order has promo discount amount, apply it directly
+      if (order?.promo_discount_amount || order?.discount_amount) {
+        const discountAmount = parseFloat(order.promo_discount_amount || order.discount_amount || 0);
+        console.log("Loading existing promo from order:", {
+          promo_code: order.promo_code,
+          promo_discount_amount: order.promo_discount_amount,
+          discount_amount: order.discount_amount,
+          parsed: discountAmount
+        });
+        
+        setAppliedPromo({
+          id: order.promo_code_id || null,
+          code: order.promo_code,
+          discount_type: 'percentage', // Default, will be updated if we validate
+          discount_value: 0,
+          discount_amount: discountAmount,
+          free_shipping: false
+        });
+        
+        setPromoValidation({
+          valid: true,
+          message: 'Promo code loaded from order'
+        });
+      } else {
+        // Auto-validate if no discount amount in order
+        setTimeout(() => {
+          handleValidatePromoCode(order.promo_code);
+        }, 500);
+      }
+    }
 
     try {
       // Always ensure products are loaded before opening modal
@@ -3008,8 +3424,11 @@ const Orders = () => {
 
       // Prepare delivery address display text
       let deliveryAddressText = "";
+      let actualAddressData = null;
+      
       if (completeOrder.delivery_address) {
         const addr = completeOrder.delivery_address;
+        actualAddressData = addr;
         deliveryAddressText = [
           addr.full_name,
           addr.address_line,
@@ -3019,7 +3438,34 @@ const Orders = () => {
           .filter(Boolean)
           .join(" | ");
       } else if (completeOrder.delivery_address_id) {
-        deliveryAddressText = `Address ID: ${completeOrder.delivery_address_id}`;
+        // Fetch the actual address data from the API
+        try {
+          const addressResponse = await api.get(`/addresses/${completeOrder.delivery_address_id}`);
+          if (addressResponse.data && addressResponse.data.success) {
+            actualAddressData = addressResponse.data.data;
+            const addr = actualAddressData;
+            
+            // Build a readable address text
+            deliveryAddressText = [
+              addr.name || addr.address_name || addr.full_name,
+              addr.address_line || addr.address_line_1,
+              addr.city_title_en || addr.city,
+              addr.area_title_en || addr.area,
+              addr.building_no ? `Building ${addr.building_no}` : null,
+            ]
+              .filter(Boolean)
+              .join(" | ");
+              
+            console.log("Fetched address data:", actualAddressData);
+          } else {
+            // Fallback if address fetch fails
+            deliveryAddressText = `Address ID: ${completeOrder.delivery_address_id}`;
+          }
+        } catch (error) {
+          console.error("Error fetching address details:", error);
+          // Fallback to showing just the ID
+          deliveryAddressText = `Address ID: ${completeOrder.delivery_address_id}`;
+        }
       }
 
       console.log("Order data for edit modal:", {
@@ -3027,6 +3473,7 @@ const Orders = () => {
         order_type: completeOrder.order_type,
         delivery_address_id: completeOrder.delivery_address_id,
         delivery_address: completeOrder.delivery_address,
+        actualAddressData: actualAddressData,
         deliveryAddressText: deliveryAddressText,
       });
 
@@ -3036,21 +3483,94 @@ const Orders = () => {
         completeOrder.delivery_address_id
       );
 
-      // Store the complete order with original delivery_address_id for reference
+      // Store the complete order with original delivery_address_id and fetched address data for reference
       setEditingOrder({
         ...completeOrder,
         original_delivery_address_id: completeOrder.delivery_address_id, // Preserve original ID
+        fetched_delivery_address: actualAddressData || null,
       });
 
-      // Load customer addresses if we have a phone number
+      // Fetch latest customer addresses for accurate validation
+      // DO THIS BEFORE setting form values and calculating shipping
+      let loadedAddresses = [];
       if (completeOrder.customer_phone) {
         try {
-          await fetchCustomerAddresses(completeOrder.customer_phone);
-          console.log("Customer addresses loaded for edit order");
+          console.log("Fetching customer addresses for edit modal...");
+          loadedAddresses = await fetchCustomerAddresses(
+            completeOrder.customer_phone,
+            completeOrder.user_id
+          );
+          console.log("Customer addresses loaded:", loadedAddresses?.length || 0, "addresses");
+          
+          // Verify the address still exists if order has a delivery_address_id
+          if (completeOrder.delivery_address_id && loadedAddresses && loadedAddresses.length > 0) {
+            const addressExists = loadedAddresses.some(
+              addr => String(addr.id || addr.address_id) === String(completeOrder.delivery_address_id)
+            );
+            
+            if (!addressExists && actualAddressData) {
+              // If the address was fetched successfully earlier, add it to the list
+              console.log("Adding fetched address to customer addresses list");
+              const addressToAdd = {
+                id: actualAddressData.id || actualAddressData.address_id || completeOrder.delivery_address_id,
+                address_id: actualAddressData.id || actualAddressData.address_id || completeOrder.delivery_address_id,
+                name: actualAddressData.name || actualAddressData.address_name || actualAddressData.full_name || "Order Address",
+                address_name: actualAddressData.name || actualAddressData.address_name || actualAddressData.full_name,
+                address_line: actualAddressData.address_line || actualAddressData.address_line_1,
+                address_line_1: actualAddressData.address_line || actualAddressData.address_line_1,
+                city: actualAddressData.city,
+                city_title_en: actualAddressData.city_title_en || actualAddressData.city,
+                area: actualAddressData.area,
+                area_title_en: actualAddressData.area_title_en || actualAddressData.area,
+                building_no: actualAddressData.building_no,
+                latitude: actualAddressData.latitude,
+                longitude: actualAddressData.longitude,
+                is_default: actualAddressData.is_default || 0
+              };
+              
+              loadedAddresses = [...loadedAddresses, addressToAdd];
+              setCustomerAddresses(loadedAddresses);
+              console.log("Address added to list for display");
+              console.log("Total addresses now:", loadedAddresses.length);
+            } else if (!addressExists) {
+              console.warn("Warning: Order's delivery_address_id not found in customer's addresses");
+              console.warn("actualAddressData is:", actualAddressData);
+              message.warning(
+                "The delivery address for this order may have been deleted or modified"
+              );
+            } else {
+              console.log("✓ Address verified in customer's address list");
+            }
+          } else if (completeOrder.delivery_address_id && actualAddressData) {
+            // No customer addresses loaded, but we have the fetched address - add it
+            console.log("No customer addresses found, adding fetched address as only address");
+            const addressToAdd = {
+              id: actualAddressData.id || actualAddressData.address_id || completeOrder.delivery_address_id,
+              address_id: actualAddressData.id || actualAddressData.address_id || completeOrder.delivery_address_id,
+              name: actualAddressData.name || actualAddressData.address_name || actualAddressData.full_name || "Order Address",
+              address_name: actualAddressData.name || actualAddressData.address_name || actualAddressData.full_name,
+              address_line: actualAddressData.address_line || actualAddressData.address_line_1,
+              address_line_1: actualAddressData.address_line || actualAddressData.address_line_1,
+              city: actualAddressData.city,
+              city_title_en: actualAddressData.city_title_en || actualAddressData.city,
+              area: actualAddressData.area,
+              area_title_en: actualAddressData.area_title_en || actualAddressData.area,
+              building_no: actualAddressData.building_no,
+              latitude: actualAddressData.latitude,
+              longitude: actualAddressData.longitude,
+              is_default: actualAddressData.is_default || 0
+            };
+            
+            setCustomerAddresses([addressToAdd]);
+            console.log("Single address added to empty list");
+          }
         } catch (error) {
           console.error("Error loading customer addresses:", error);
         }
       }
+      
+      // Small delay to ensure state has updated
+      await new Promise(resolve => setTimeout(resolve, 150));
 
       // Calculate shipping for existing delivery orders
       if (
@@ -3102,15 +3622,6 @@ const Orders = () => {
         points_to_use: completeOrder.points_to_use,
         total_amount: completeOrder.total_amount,
       });
-
-      // Fetch latest customer addresses for accurate validation
-      if (completeOrder.customer_phone) {
-        console.log("Fetching customer addresses for edit modal...");
-        await fetchCustomerAddresses(
-          completeOrder.customer_phone,
-          completeOrder.user_id
-        );
-      }
 
       console.log("Form values set:", {
         customer_name: completeOrder.customer_name,
@@ -3475,6 +3986,20 @@ const Orders = () => {
       (total, item) => total + Number(item.total_price || 0),
       0
     );
+  };
+
+  // Calculate final total with promo discount applied
+  const calculateFinalTotal = () => {
+    const subtotal = calculateOrderTotal();
+    const deliveryFee = parseFloat(orderForm.getFieldValue("delivery_fee")) || 0;
+    let total = subtotal + deliveryFee;
+
+    // Apply promo discount
+    if (appliedPromo && appliedPromo.discount_amount) {
+      total = Math.max(0, total - appliedPromo.discount_amount);
+    }
+
+    return total;
   };
 
   const handleCancelOrder = async (order) => {
@@ -6112,17 +6637,6 @@ const Orders = () => {
               {t("orders.change_status")}
             </Button>,
             <Button
-              key="edit"
-              icon={<EditOutlined />}
-              onClick={() => {
-                setDetailsVisible(false);
-                showEditModal(selectedOrder);
-              }}
-              disabled={detailsLoading}
-            >
-              {t("orders.edit_order")}
-            </Button>,
-            <Button
               key="close"
               onClick={() => {
                 setDetailsVisible(false);
@@ -7484,17 +7998,66 @@ const Orders = () => {
                 </Form.Item>
               </Col>
               <Col xs={24} md={12}>
-                <Form.Item
-                  name="promo_code"
-                  label={t("orders.promo_code")}
-                  extra={
-                    <Text type="secondary" style={{ fontSize: "11px" }}>
-                      Promo discount will be automatically calculated based on
-                      code type (%, fixed, or free shipping)
-                    </Text>
-                  }
-                >
-                  <Input placeholder={t("orders.promo_code")} />
+                <Form.Item label={t("orders.promo_code") || "Promo Code"}>
+                  <Space.Compact style={{ width: "100%" }}>
+                    <Input
+                      placeholder={t("orders.enter_promo_code") || "Enter promo code"}
+                      value={promoCode}
+                      onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                      onPressEnter={(e) => {
+                        e.preventDefault();
+                        if (!appliedPromo && !promoLoading && promoCode.trim()) {
+                          handleValidatePromoCode();
+                        }
+                      }}
+                      disabled={promoLoading || appliedPromo}
+                    />
+                    {appliedPromo ? (
+                      <Button
+                        type="primary"
+                        danger
+                        icon={<CloseCircleOutlined />}
+                        onClick={handleRemovePromoCode}
+                      >
+                        {t("common.remove") || "Remove"}
+                      </Button>
+                    ) : (
+                      <Button
+                        type="primary"
+                        loading={promoLoading}
+                        onClick={() => handleValidatePromoCode()}
+                        disabled={!promoCode || promoCode.trim() === "" || promoLoading}
+                      >
+                        {t("common.apply") || "Apply"}
+                      </Button>
+                    )}
+                  </Space.Compact>
+                  {promoValidation && (
+                    <Alert
+                      type={promoValidation.valid ? "success" : "error"}
+                      message={promoValidation.message}
+                      style={{ marginTop: 8 }}
+                      showIcon
+                      closable
+                      onClose={() => setPromoValidation(null)}
+                    />
+                  )}
+                  {appliedPromo && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", backgroundColor: "#f6ffed", border: "1px solid #b7eb8f", borderRadius: "6px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ color: "#52c41a", fontWeight: "bold" }}>
+                          ✓ {appliedPromo.code} {t("orders.applied") || "Applied"}
+                        </span>
+                        <span style={{ color: "#52c41a" }}>
+                          {appliedPromo.free_shipping ? (
+                            t("orders.free_shipping") || "Free Shipping"
+                          ) : (
+                            `-${formatPrice(appliedPromo.discount_amount)}`
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </Form.Item>
               </Col>
             </Row>
@@ -7521,7 +8084,7 @@ const Orders = () => {
                         justifyContent: "space-between",
                       }}
                     >
-                      <Text type="secondary">Subtotal:</Text>
+                      <Text type="secondary">{t("orders.subtotal") || "Subtotal"}:</Text>
                       <Text>
                         {formatPrice(orderForm.getFieldValue("subtotal") || 0)}
                       </Text>
@@ -7532,40 +8095,28 @@ const Orders = () => {
                         justifyContent: "space-between",
                       }}
                     >
-                      <Text type="secondary">Delivery Fee:</Text>
+                      <Text type="secondary">{t("orders.delivery_fee") || "Delivery Fee"}:</Text>
                       <Text>
                         {formatPrice(
                           orderForm.getFieldValue("delivery_fee") || 0
                         )}
                       </Text>
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <Text type="secondary">Tax:</Text>
-                      <Text>
-                        {formatPrice(
-                          orderForm.getFieldValue("tax_amount") || 0
-                        )}
-                      </Text>
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <Text type="secondary">Discount:</Text>
-                      <Text style={{ color: "#ff4d4f" }}>
-                        -
-                        {formatPrice(
-                          orderForm.getFieldValue("discount_amount") || 0
-                        )}
-                      </Text>
-                    </div>
+                    {appliedPromo && appliedPromo.discount_amount > 0 && (
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <Text type="secondary" style={{ color: "#52c41a" }}>
+                          {t("orders.promo_discount") || "Promo Discount"}:
+                        </Text>
+                        <Text style={{ color: "#52c41a" }}>
+                          -{formatPrice(appliedPromo.discount_amount)}
+                        </Text>
+                      </div>
+                    )}
                     <Divider style={{ margin: "8px 0" }} />
                     <div
                       style={{
@@ -7574,19 +8125,18 @@ const Orders = () => {
                       }}
                     >
                       <Text strong style={{ fontSize: "16px" }}>
-                        Total Amount:
+                        {t("orders.total") || "Total Amount"}:
                       </Text>
                       <Text
                         strong
-                        style={{ fontSize: "18px", color: "#52c41a" }}
+                        style={{ fontSize: "18px", color: "#1890ff" }}
                       >
                         {formatPrice(
                           Math.max(
                             0,
                             (orderForm.getFieldValue("subtotal") || 0) +
-                              (orderForm.getFieldValue("delivery_fee") || 0) +
-                              (orderForm.getFieldValue("tax_amount") || 0) -
-                              (orderForm.getFieldValue("discount_amount") || 0)
+                              (orderForm.getFieldValue("delivery_fee") || 0) -
+                              (appliedPromo ? appliedPromo.discount_amount : 0)
                           )
                         )}
                       </Text>
@@ -7648,12 +8198,26 @@ const Orders = () => {
             setEditingOrder(null);
             setEditOrderItems([]);
             orderForm.resetFields();
+            // Reset promo code states
+            setPromoCode("");
+            setPromoValidation(null);
+            setAppliedPromo(null);
+            setPromoManuallyRemoved(false);
           }}
           footer={null}
           width={900}
           styles={{ body: { maxHeight: "80vh", overflowY: "auto" } }}
         >
-          <Form form={orderForm} layout="vertical" onFinish={handleEditOrder}>
+          <Form 
+            form={orderForm} 
+            layout="vertical" 
+            onFinish={handleEditOrder}
+            onFinishFailed={(errorInfo) => {
+              console.log("=== FORM VALIDATION FAILED ===");
+              console.log("Failed fields:", errorInfo);
+              message.error(t("orders.validation_failed") || "Please fill in all required fields");
+            }}
+          >
             {/* Customer Information */}
             <Card
               size="small"
@@ -7713,16 +8277,25 @@ const Orders = () => {
                             delivery_address_id: null,
                           });
                           setShippingCalculation(null);
+                          console.log("[Order Type Change] Switched to pickup. Current items count:", editOrderItems?.length || 0);
+                        } else {
+                          console.log("[Order Type Change] Switched to delivery. Current items count:", editOrderItems?.length || 0);
                         }
 
                         // Validate delivery address field
                         orderForm.validateFields(["delivery_address_id"]);
 
                         // Force re-render to show/hide branch selection for pickup
+                        // Note: editOrderItems should NOT be affected by order type changes
                         setEditingOrder((prev) => ({
                           ...prev,
                           order_type: value,
                         }));
+                        
+                        // Log items count after state update
+                        setTimeout(() => {
+                          console.log("[Order Type Change] After state update. Items count:", editOrderItems?.length || 0);
+                        }, 100);
                       }}
                     >
                       <Select.Option value="pickup">
@@ -7813,7 +8386,6 @@ const Orders = () => {
                           showSearch
                           optionFilterProp="children"
                           optionLabelProp="label"
-                          value={orderForm.getFieldValue("delivery_address_id")}
                           onChange={async (addressIdRaw) => {
                             const addressId = String(addressIdRaw);
                             // Persist selection
@@ -7862,31 +8434,37 @@ const Orders = () => {
                           notFoundContent="No addresses found"
                         >
                           {customerAddresses.map((address) => {
-                            // Enhanced address display logic for GPS addresses
-                            const isGPSAddress =
+                            // Match table's Contact & Location display format
+                            const hasGPS =
                               address.latitude &&
                               address.longitude &&
                               typeof address.latitude === "number" &&
                               typeof address.longitude === "number";
-                            const cityArea = isGPSAddress
-                              ? `📍 GPS: ${address.latitude.toFixed(
-                                  4
-                                )}, ${address.longitude.toFixed(4)}`
-                              : [
-                                  address.city_title_en || address.city,
-                                  address.area_title_en || address.area,
-                                ]
-                                  .filter(Boolean)
-                                  .join(", ");
 
-                            const label = [
+                            // Build label similar to table format
+                            const fullName =
+                              address.full_name ||
                               address.name ||
-                                address.address_name ||
-                                `Address #${address.id || address.address_id}`,
-                              cityArea,
-                              address.building_no &&
-                                `Building ${address.building_no}`,
+                              address.address_name ||
+                              `Address #${address.id || address.address_id}`;
+
+                            const addressLine =
+                              address.address_line ||
+                              address.street ||
+                              address.area_title_en ||
+                              address.area ||
+                              "";
+
+                            const cityGov = [
+                              address.city_title_en || address.city,
+                              address.governorate_title_en ||
+                                address.governorate,
                             ]
+                              .filter(Boolean)
+                              .join(", ");
+
+                            // Compact label for dropdown display
+                            const label = [fullName, addressLine, cityGov]
                               .filter(Boolean)
                               .join(" | ");
 
@@ -7896,88 +8474,132 @@ const Orders = () => {
                                 value={String(address.id || address.address_id)}
                                 label={label}
                               >
-                                <div>
-                                  <Text strong>
-                                    {address.name ||
-                                      address.address_name ||
-                                      `Address #${
-                                        address.id || address.address_id
-                                      }`}
-                                  </Text>
-                                  <br />
-                                  <Text
-                                    type="secondary"
-                                    style={{ fontSize: "12px" }}
+                                <div style={{ padding: "4px 0" }}>
+                                  {/* Full Name in bold */}
+                                  <div
+                                    style={{
+                                      fontWeight: "bold",
+                                      marginBottom: "2px",
+                                    }}
                                   >
-                                    {isGPSAddress ? (
-                                      <span>
-                                        <Tag
-                                          color="green"
-                                          size="small"
-                                          style={{ marginRight: 4 }}
-                                        >
-                                          📍 GPS Address
-                                        </Tag>
-                                        {address.latitude.toFixed(4)},{" "}
-                                        {address.longitude.toFixed(4)}
-                                        {address.building_no &&
-                                          ` - Building ${address.building_no}`}
-                                      </span>
-                                    ) : (
-                                      <span>
-                                        {address.city_title_en ||
-                                          address.city ||
-                                          "City"}
-                                        ,{" "}
-                                        {address.area_title_en ||
-                                          address.area ||
-                                          "Area"}
-                                        {address.building_no &&
-                                          ` - Building ${address.building_no}`}
-                                      </span>
-                                    )}
-                                    {address.is_default && (
-                                      <Tag
-                                        color="gold"
-                                        size="small"
-                                        style={{ marginLeft: 4 }}
-                                      >
-                                        Default
+                                    {fullName}
+                                  </div>
+
+                                  {/* Address Line */}
+                                  {addressLine && (
+                                    <div
+                                      style={{
+                                        fontSize: "12px",
+                                        color: "#666",
+                                        marginBottom: "2px",
+                                      }}
+                                    >
+                                      {addressLine}
+                                    </div>
+                                  )}
+
+                                  {/* City, Governorate */}
+                                  {cityGov && (
+                                    <div
+                                      style={{
+                                        fontSize: "12px",
+                                        color: "#666",
+                                        marginBottom: "4px",
+                                      }}
+                                    >
+                                      {cityGov}
+                                    </div>
+                                  )}
+
+                                  {/* GPS indicator */}
+                                  {hasGPS && (
+                                    <div style={{ fontSize: "11px" }}>
+                                      <Tag color="green" size="small">
+                                        📍 GPS Available
                                       </Tag>
-                                    )}
-                                    {(!address.latitude ||
-                                      !address.longitude) && (
-                                      <div style={{ marginTop: "4px" }}>
-                                        <Tag color="orange" size="small">
-                                          ⚠️ No GPS coordinates
-                                        </Tag>
-                                        <Text
-                                          type="secondary"
-                                          style={{
-                                            fontSize: "11px",
-                                            display: "block",
-                                          }}
-                                        >
-                                          Manual shipping fee required or will
-                                          use default zone pricing
-                                        </Text>
-                                      </div>
-                                    )}
-                                  </Text>
+                                    </div>
+                                  )}
+
+                                  {/* Default indicator */}
+                                  {address.is_default && (
+                                    <Tag
+                                      color="gold"
+                                      size="small"
+                                      style={{ marginTop: "2px" }}
+                                    >
+                                      Default
+                                    </Tag>
+                                  )}
+
+                                  {/* Warning for missing GPS */}
+                                  {!hasGPS && (
+                                    <div style={{ marginTop: "4px" }}>
+                                      <Tag color="orange" size="small">
+                                        ⚠️ No GPS coordinates
+                                      </Tag>
+                                    </div>
+                                  )}
                                 </div>
                               </Option>
                             );
                           })}
                         </Select>
                       ) : (
-                        <Input.TextArea
-                          rows={3}
-                          placeholder={
-                            t("orders.delivery_address_placeholder") ||
-                            "Enter delivery address or select from existing addresses"
-                          }
-                          style={{ resize: "vertical" }}
-                        />
+                        // Fallback: show formatted address (like Contact & Location) instead of plain ID when editing existing order
+                        editingOrder && (editingOrder.delivery_address || editingOrder.fetched_delivery_address || editingOrder.original_delivery_address_id) ? (
+                          <div
+                            style={{
+                              border: "1px solid #d9d9d9",
+                              borderRadius: 6,
+                              padding: 10,
+                              minHeight: 80,
+                              background: "#fafafa",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 4
+                            }}
+                          >
+                            {(() => {
+                              const da = editingOrder.delivery_address || editingOrder.fetched_delivery_address || {};
+                              const fullName = da.full_name || da.name || da.address_name || `Address #${editingOrder.delivery_address_id}`;
+                              const addressLine = da.address_line || da.address_line_1 || da.street || "";
+                              const cityGov = [da.city, da.governorate].filter(Boolean).join(", ");
+                              const hasGPS = da.latitude && da.longitude;
+                              return (
+                                <>
+                                  <div style={{ fontWeight: 600 }}>
+                                    <EnvironmentOutlined style={{ marginRight: 6, color: hasGPS ? "#52c41a" : "#fa8c16" }} />
+                                    {fullName}
+                                  </div>
+                                  {addressLine && (
+                                    <div style={{ fontSize: 12, color: "#555" }}>{addressLine}</div>
+                                  )}
+                                  {cityGov && (
+                                    <div style={{ fontSize: 12, color: "#555" }}>{cityGov}</div>
+                                  )}
+                                  {hasGPS && (
+                                    <Tag color="green" style={{ width: "fit-content" }}>📍 GPS Available</Tag>
+                                  )}
+                                  {!hasGPS && (
+                                    <Tag color="orange" style={{ width: "fit-content" }}>⚠️ No GPS</Tag>
+                                  )}
+                                  <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>
+                                    {t("orders.no_saved_addresses_found") || "No saved addresses list was loaded. This is the order's address."}
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                        ) : (
+                          <Input.TextArea
+                            rows={3}
+                            placeholder={
+                              t("orders.delivery_address_placeholder") ||
+                              "Enter delivery address or select from existing addresses"
+                            }
+                            style={{ resize: "vertical" }}
+                          />
+                        )
                       )}
                     </Form.Item>
                     {/* Address editing button */}
@@ -8104,6 +8726,72 @@ const Orders = () => {
                 </Col>
               </Row>
 
+              {/* Promo Code Section - Read Only in Edit Mode */}
+              <Row gutter={16} style={{ marginTop: 16 }}>
+                <Col xs={24} md={12}>
+                  <Form.Item label={t("orders.promo_code") || "Promo Code"}>
+                    <Space.Compact style={{ width: "100%" }}>
+                      <Input
+                        placeholder={t("orders.no_promo_code") || "No promo code applied"}
+                        value={promoCode}
+                        disabled={true}
+                        readOnly={true}
+                      />
+                      <Tooltip title={t("orders.promo_code_locked_edit") || "Promo codes cannot be changed when editing orders"}>
+                        <Button
+                          type="default"
+                          disabled={true}
+                          icon={<LockOutlined />}
+                        >
+                          {t("orders.locked") || "Locked"}
+                        </Button>
+                      </Tooltip>
+                    </Space.Compact>
+                    {appliedPromo && (
+                      <div style={{ marginTop: 8, padding: "8px 12px", backgroundColor: "#f0f0f0", border: "1px solid #d9d9d9", borderRadius: "6px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ color: "#595959", fontWeight: "bold" }}>
+                            ✓ {appliedPromo.code} {t("orders.applied") || "Applied"}
+                          </span>
+                          <span style={{ color: "#595959" }}>
+                            {appliedPromo.free_shipping ? (
+                              t("orders.free_shipping") || "Free Shipping"
+                            ) : (
+                              `-${formatPrice(appliedPromo.discount_amount)}`
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item label={t("orders.order_summary") || "Order Summary"}>
+                    <div style={{ padding: "12px", backgroundColor: "#fafafa", borderRadius: "6px", border: "1px solid #d9d9d9" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <Text>Subtotal:</Text>
+                        <Text strong>{formatPrice(calculateOrderTotal())}</Text>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                        <Text>Delivery Fee:</Text>
+                        <Text strong>{formatPrice(parseFloat(orderForm.getFieldValue("delivery_fee")) || 0)}</Text>
+                      </div>
+                      {appliedPromo && appliedPromo.discount_amount > 0 && (
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, color: "#52c41a" }}>
+                          <Text style={{ color: "#52c41a" }}>Promo Discount:</Text>
+                          <Text strong style={{ color: "#52c41a" }}>-{formatPrice(appliedPromo.discount_amount)}</Text>
+                        </div>
+                      )}
+                      <Divider style={{ margin: "8px 0" }} />
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <Text strong style={{ fontSize: "16px" }}>Total:</Text>
+                        <Text strong style={{ fontSize: "16px", color: "#1890ff" }}>{formatPrice(calculateFinalTotal())}</Text>
+                      </div>
+                    </div>
+                  </Form.Item>
+                </Col>
+              </Row>
+
               <Row gutter={16}>
                 <Col xs={24} md={12}>
                   <Form.Item
@@ -8169,7 +8857,7 @@ const Orders = () => {
               }
               style={{ marginBottom: 16 }}
             >
-              {editOrderItems.length === 0 ? (
+              {!editOrderItems || editOrderItems.length === 0 ? (
                 <div
                   style={{
                     textAlign: "center",
@@ -8659,6 +9347,11 @@ const Orders = () => {
                         setEditingOrder(null);
                         setEditOrderItems([]);
                         orderForm.resetFields();
+                        // Reset promo code states
+                        setPromoCode("");
+                        setPromoValidation(null);
+                        setAppliedPromo(null);
+                        setPromoManuallyRemoved(false);
                       }}
                       icon={<CloseCircleOutlined />}
                     >

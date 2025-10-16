@@ -985,6 +985,26 @@ router.get('/:id/orders', authenticate, validateId, validatePagination, async (r
 
     const result = await getPaginatedResults(query, queryParams, validatedPage, validatedLimit);
 
+    // Fetch order items for each order to display product details
+    for (const order of result.data) {
+      const orderItems = await executeQuery(`
+        SELECT 
+          oi.id, oi.order_id, oi.product_id, oi.quantity, oi.unit_price,
+          oi.special_instructions, oi.variant_id,
+          p.title_en as product_title_en, p.title_ar as product_title_ar,
+          p.description_en as product_description_en, p.description_ar as product_description_ar,
+          pv.title_en as variant_title_en, pv.title_ar as variant_title_ar,
+          pv.variant_name, pv.variant_value
+        FROM order_items oi
+        LEFT JOIN products p ON oi.product_id = p.id
+        LEFT JOIN product_variants pv ON oi.variant_id = pv.id
+        WHERE oi.order_id = ?
+        ORDER BY oi.id ASC
+      `, [order.id]);
+      
+      order.order_items = orderItems;
+    }
+
     res.json({
       success: true,
       data: result.data,
@@ -1093,7 +1113,9 @@ router.get('/:id/point-transactions', authenticate, validateId, validatePaginati
     const query = `
       SELECT 
         pt.*,
-        o.order_number
+        o.order_number,
+        o.total_amount as order_total,
+        o.order_status
       FROM point_transactions pt
       LEFT JOIN orders o ON pt.order_id = o.id
       WHERE ${whereClause}

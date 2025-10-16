@@ -252,28 +252,15 @@ const AdminLayout = ({ children }) => {
       });
     }
 
-    // Offers Management - Coming Soon (Disabled)
-    if (user?.user_type === "admin" || hasAnyPermission(["offers.view", "offers.create", "offers.edit", "offers.delete"])) {
+    // Offers Management
+    if (
+      user?.user_type === "admin" ||
+      hasAnyPermission(["offers.view", "offers.create", "offers.edit", "offers.delete"])
+    ) {
       marketingChildren.push({
         key: "/offers",
         icon: <GiftOutlined />,
-        label: (
-          <span style={{ opacity: 0.5, cursor: 'not-allowed' }}>
-            {t("nav.offers")} 
-            <span style={{ 
-              marginLeft: '8px', 
-              fontSize: '10px', 
-              background: '#faad14', 
-              color: '#fff', 
-              padding: '1px 6px', 
-              borderRadius: '4px',
-              fontWeight: 'bold'
-            }}>
-              Coming Soon
-            </span>
-          </span>
-        ),
-        disabled: true,
+        label: <Link to="/offers">{t("nav.offers")}</Link>,
       });
     }
 

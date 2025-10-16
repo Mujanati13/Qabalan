@@ -7,6 +7,7 @@ const OrderConfirmation = () => {
   const { orderId } = useParams();
   const navigate = useNavigate();
   const [order, setOrder] = useState(null);
+  const [orderItems, setOrderItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [paymentStatus, setPaymentStatus] = useState(null);
 
@@ -33,8 +34,11 @@ const OrderConfirmation = () => {
       console.log('📦 Order response:', response.data);
       // Backend returns { success: true, data: { order, order_items, status_history } }
       const orderData = response.data.data?.order || response.data.order || response.data;
+      const items = response.data.data?.order_items || response.data.order_items || [];
       console.log('📦 Order data:', orderData);
+      console.log('📦 Order items:', items);
       setOrder(orderData);
+      setOrderItems(items);
     } catch (err) {
       console.error('Error fetching order:', err);
       
@@ -58,9 +62,14 @@ const OrderConfirmation = () => {
               customer_email: guestOrder.customerEmail,
               order_type: guestOrder.orderType,
               payment_method: guestOrder.paymentMethod,
+              subtotal: guestOrder.subtotal || 0,
+              delivery_fee: guestOrder.deliveryFee || 0,
+              discount_amount: guestOrder.discount || 0,
               total_amount: guestOrder.total,
+              created_at: new Date().toISOString(), // Use current time for guest orders
               order_status: 'pending',
               payment_status: guestOrder.paymentMethod === 'cash' ? 'pending' : 'unpaid',
+              branch_name: guestOrder.branchName,
               isGuestOrder: true // Flag to indicate this is from localStorage
             });
           } else {
@@ -248,7 +257,7 @@ const OrderConfirmation = () => {
             <div className="detail-row">
               <span className="label">Delivery Method:</span>
               <span className="value">
-                {order.delivery_method === 'delivery' ? 'Home Delivery' : 'Pickup from Branch'}
+                {order.order_type === 'delivery' ? 'Home Delivery' : 'In-Store Pickup'}
               </span>
             </div>
 
@@ -265,6 +274,16 @@ const OrderConfirmation = () => {
                 {(order.order_status || order.status || 'pending').charAt(0).toUpperCase() + (order.order_status || order.status || 'pending').slice(1)}
               </span>
             </div>
+
+            {/* Branch Information */}
+            {(order.branch_title_en || order.branch_title_ar || order.branch_name) && (
+              <div className="detail-row">
+                <span className="label">Branch:</span>
+                <span className="value">
+                  {order.branch_title_en || order.branch_title_ar || order.branch_name}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="order-summary">
@@ -302,6 +321,31 @@ const OrderConfirmation = () => {
             </div>
           )}
 
+          {/* Order Items */}
+          {orderItems && orderItems.length > 0 && (
+            <div className="order-items-section">
+              <h2>Order Items</h2>
+              <div className="order-items-list">
+                {orderItems.map((item, index) => (
+                  <div key={index} className="order-item">
+                    <div className="item-info">
+                      <div className="item-name">
+                        {item.product_name_en || item.product_name_ar || 'Product'}
+                        {item.variant_title && (
+                          <span className="item-variant"> - {item.variant_title}</span>
+                        )}
+                      </div>
+                      <div className="item-quantity">Qty: {item.quantity}</div>
+                    </div>
+                    <div className="item-price">
+                      {safeParseFloat(item.total_price).toFixed(2)} JOD
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="action-buttons">
             <Link to="/shop" className="btn-secondary">
               Continue Shopping
@@ -317,7 +361,7 @@ const OrderConfirmation = () => {
           <div className="confirmation-message">
             <p>
               Thank you for your order! We've sent a confirmation email with your order details.
-              {order.delivery_method === 'delivery' 
+              {order.order_type === 'delivery' 
                 ? ' Your order will be delivered to your address soon.'
                 : ' You can pick up your order from the selected branch.'}
             </p>

@@ -166,12 +166,41 @@ const InvoiceManagement = () => {
 
   const handlePreviewInvoice = async (orderId) => {
     try {
-      const response = await invoiceService.previewInvoice(orderId);
-      setPreviewOrder(response.data);
+      setLoading(true);
+      
+      // First, fetch the latest order data to ensure we have current information
+      const orderResponse = await orderService.getOrder(orderId);
+      
+      // Then fetch the invoice preview with fresh data
+      const invoiceResponse = await invoiceService.previewInvoice(orderId);
+      
+      // Merge the latest order data with invoice data to ensure accuracy
+      const freshInvoiceData = {
+        ...invoiceResponse.data,
+        order: {
+          ...invoiceResponse.data.order,
+          ...orderResponse.data, // Override with latest order data
+          // Ensure financial fields are up-to-date
+          subtotal: orderResponse.data.subtotal,
+          delivery_fee: orderResponse.data.delivery_fee,
+          tax_amount: orderResponse.data.tax_amount,
+          discount_amount: orderResponse.data.discount_amount,
+          total_amount: orderResponse.data.total_amount,
+          // Ensure items are current
+          items: orderResponse.data.items || invoiceResponse.data.items
+        },
+        items: orderResponse.data.items || invoiceResponse.data.items
+      };
+      
+      console.log('Fresh invoice data with latest order:', freshInvoiceData);
+      
+      setPreviewOrder(freshInvoiceData);
       setPreviewVisible(true);
     } catch (error) {
       console.error('Error previewing invoice:', error);
       message.error(t('invoices.preview_error'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -687,6 +716,17 @@ const InvoiceManagement = () => {
             {t('invoices.close')}
           </Button>,
           <Button
+            key="refresh"
+            icon={<ReloadOutlined />}
+            onClick={() => {
+              if (previewOrder?.order?.id) {
+                handlePreviewInvoice(previewOrder.order.id);
+              }
+            }}
+          >
+            {t('invoices.refresh')}
+          </Button>,
+          <Button
             key="download"
             type="primary"
             icon={<DownloadOutlined />}
@@ -695,6 +735,7 @@ const InvoiceManagement = () => {
                 handleGeneratePDF(previewOrder.order.id);
               }
             }}
+            loading={pdfLoading[previewOrder?.order?.id]}
           >
             {t('invoices.download_pdf_button')}
           </Button>
@@ -702,22 +743,43 @@ const InvoiceManagement = () => {
       >
         {previewOrder && (
           <div>
+            {/* Show warning if order was recently modified */}
+            {previewOrder.order.updated_at && 
+             dayjs(previewOrder.order.updated_at).isAfter(dayjs(previewOrder.order.created_at).add(5, 'minute')) && (
+              <Alert
+                message={t('invoices.order_modified_warning')}
+                description={t('invoices.order_modified_description')}
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                closable
+              />
+            )}
+            
             <Row gutter={[16, 16]}>
               <Col xs={24} md={12}>
                 <Title level={5}>{t('invoices.order_information')}</Title>
                 <p><strong>{t('invoices.order_id')}:</strong> {previewOrder.order.order_number}</p>
                 <p><strong>{t('invoices.order_date')}:</strong> {formatDate(previewOrder.order.created_at)}</p>
+                {previewOrder.order.updated_at && previewOrder.order.updated_at !== previewOrder.order.created_at && (
+                  <p><strong>{t('invoices.last_updated')}:</strong> {formatDate(previewOrder.order.updated_at)}</p>
+                )}
                 <p><strong>{t('invoices.order_status')}:</strong> 
                   <Tag color={getStatusColor(previewOrder.order.order_status)} style={{ marginLeft: 8 }}>
                     {t(`invoices.status_${previewOrder.order.order_status}`)}
                   </Tag>
                 </p>
+                <p><strong>{t('invoices.payment_status')}:</strong> 
+                  <Tag color={getPaymentStatusColor(previewOrder.order.payment_status)} style={{ marginLeft: 8 }}>
+                    {t(`invoices.payment_${previewOrder.order.payment_status}`)}
+                  </Tag>
+                </p>
               </Col>
               <Col xs={24} md={12}>
                 <Title level={5}>{t('invoices.customer_information')}</Title>
-                <p><strong>{t('invoices.customer_name')}:</strong> {previewOrder.order.customer_name}</p>
-                <p><strong>{t('invoices.customer_email')}:</strong> {previewOrder.order.customer_email}</p>
-                <p><strong>{t('invoices.customer_phone')}:</strong> {previewOrder.order.customer_phone}</p>
+                <p><strong>{t('invoices.customer_name')}:</strong> {previewOrder.order.customer_name || 'N/A'}</p>
+                <p><strong>{t('invoices.customer_email')}:</strong> {previewOrder.order.customer_email || 'N/A'}</p>
+                <p><strong>{t('invoices.customer_phone')}:</strong> {previewOrder.order.customer_phone || 'N/A'}</p>
               </Col>
             </Row>
 
@@ -726,44 +788,87 @@ const InvoiceManagement = () => {
             <Title level={5}>{t('invoices.order_items')}</Title>
             <Table
               size="small"
-              dataSource={previewOrder.items}
+              dataSource={previewOrder.items || []}
               pagination={false}
               scroll={{ x: 400 }}
+              rowKey={(record) => record.id || record.product_id}
               columns={[
                 {
                   title: t('invoices.product'),
                   dataIndex: 'product_name',
                   key: 'product_name',
+                  render: (text, record) => (
+                    <div>
+                      <div>{text}</div>
+                      {record.variant_options && (
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {record.variant_options}
+                        </Text>
+                      )}
+                    </div>
+                  ),
                 },
                 {
                   title: t('invoices.quantity'),
                   dataIndex: 'quantity',
                   key: 'quantity',
                   width: 80,
+                  align: 'center',
                 },
                 {
                   title: t('invoices.price'),
                   dataIndex: 'price',
                   key: 'price',
                   width: 100,
-                  render: (price) => formatCurrency(price),
+                  align: 'right',
+                  render: (price) => formatCurrency(price || 0),
                 },
                 {
                   title: t('invoices.item_total'),
                   key: 'total',
-                  width: 100,
-                  render: (_, record) => formatCurrency(record.price * record.quantity),
+                  width: 120,
+                  align: 'right',
+                  render: (_, record) => formatCurrency((record.price || 0) * (record.quantity || 0)),
                 },
               ]}
+              summary={(pageData) => {
+                const calculatedSubtotal = pageData.reduce((sum, record) => 
+                  sum + ((record.price || 0) * (record.quantity || 0)), 0
+                );
+                
+                return (
+                  <Table.Summary fixed>
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={3} align="right">
+                        <Text strong>{t('invoices.items_subtotal')}:</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right">
+                        <Text strong>{formatCurrency(calculatedSubtotal)}</Text>
+                      </Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                );
+              }}
             />
 
             <div style={{ marginTop: 16, textAlign: 'right' }}>
-              <p><strong>{t('invoices.subtotal')}:</strong> {formatCurrency(previewOrder.order.subtotal)}</p>
-              <p><strong>{t('invoices.delivery_fee')}:</strong> {formatCurrency(previewOrder.order.delivery_fee)}</p>
-              <p><strong>{t('invoices.tax_amount')}:</strong> {formatCurrency(previewOrder.order.tax_amount)}</p>
-              <Title level={4} style={{ marginTop: 8 }}>
-                {t('invoices.grand_total')}: {formatCurrency(previewOrder.order.total_amount)}
+              <p><strong>{t('invoices.subtotal')}:</strong> {formatCurrency(previewOrder.order.subtotal || 0)}</p>
+              {previewOrder.order.discount_amount > 0 && (
+                <p><strong>{t('invoices.discount')}:</strong> -{formatCurrency(previewOrder.order.discount_amount || 0)}</p>
+              )}
+              <p><strong>{t('invoices.delivery_fee')}:</strong> {formatCurrency(previewOrder.order.delivery_fee || 0)}</p>
+              {previewOrder.order.tax_amount > 0 && (
+                <p><strong>{t('invoices.tax_amount')}:</strong> {formatCurrency(previewOrder.order.tax_amount || 0)}</p>
+              )}
+              <Divider style={{ margin: '12px 0' }} />
+              <Title level={4} style={{ marginTop: 8, marginBottom: 0 }}>
+                {t('invoices.grand_total')}: {formatCurrency(previewOrder.order.total_amount || 0)}
               </Title>
+              {previewOrder.order.payment_status === 'paid' && (
+                <Text type="success" style={{ fontSize: 14 }}>
+                  ✓ {t('invoices.payment_received')}
+                </Text>
+              )}
             </div>
           </div>
         )}

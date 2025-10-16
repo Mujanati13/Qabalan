@@ -53,7 +53,7 @@ const NotificationQuickActions = () => {
       size="small"
     >
       <Space direction="vertical" style={{ width: '100%' }}>
-        <Link to="/notifications" style={{ width: '100%' }}>
+        <Link to="/notifications?tab=send" style={{ width: '100%' }}>
           <Button 
             type="primary" 
             icon={<SendOutlined />} 
@@ -63,7 +63,7 @@ const NotificationQuickActions = () => {
           </Button>
         </Link>
         
-        <Link to="/notifications" style={{ width: '100%' }}>
+        <Link to="/notifications?tab=notifications" style={{ width: '100%' }}>
           <Button 
             icon={<BellOutlined />} 
             block

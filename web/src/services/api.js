@@ -9,8 +9,19 @@ const BASE_SERVER_URL = API_URL.replace('/api', '');
 export const getImageUrl = (path) => {
   if (!path) return '';
   if (path.startsWith('http')) return path;
-  if (path.startsWith('/')) return `${BASE_SERVER_URL}${path}`;
-  return `${BASE_SERVER_URL}/uploads/products/${path}`;
+  
+  // If path already includes 'uploads/', we need to add /api prefix
+  if (path.includes('uploads/')) {
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    // Backend serves static files at /api/uploads, so we need the full API URL
+    return `${API_URL}${cleanPath}`;
+  }
+  
+  // If path starts with '/', use API URL
+  if (path.startsWith('/')) return `${API_URL}${path}`;
+  
+  // Default to products folder for backward compatibility
+  return `${API_URL}/uploads/products/${path}`;
 };
 
 // Helper function to get category image URL
@@ -100,7 +111,7 @@ export const productsAPI = {
 };
 
 export const categoriesAPI = {
-  getAll: () => api.get('/categories'),
+  getAll: (params) => api.get('/categories', { params }),
   getById: (id) => api.get(`/categories/${id}`),
   getSubcategories: (id) => api.get(`/categories/${id}/subcategories`),
 };
@@ -124,6 +135,7 @@ export const ordersAPI = {
   getById: (id) => api.get(`/orders/${id}`),
   checkBranchAvailability: (data) => api.post('/orders/branch-availability', data),
   calculate: (data) => api.post('/orders/calculate', data),
+  retryPayment: (orderId) => api.post(`/payments/mpgs/session`, { orderId }),
 };
 
 export const addressesAPI = {
@@ -137,6 +149,11 @@ export const promosAPI = {
   validate: (code) => api.post('/promos/validate', { code }),
   validateGuest: (code, orderTotal) => api.post('/promos/validate-guest', { code, order_total: orderTotal }),
   getActive: () => api.get('/promos/active'),
+};
+
+export const offersAPI = {
+  getAll: (params = {}) => api.get('/offers', { params }),
+  getById: (id) => api.get(`/offers/${id}`),
 };
 
 export const shippingAPI = {

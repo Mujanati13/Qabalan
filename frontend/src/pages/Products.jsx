@@ -196,9 +196,9 @@ const Products = () => {
   const [viewingProduct, setViewingProduct] = useState(null);
   const [form] = Form.useForm();
   const [searchText, setSearchText] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState("");
-  const [statusFilter, setStatusFilter] = useState([]); // Array for multi-select: ["active", "inactive"]
+  const [statusFilter, setStatusFilter] = useState("");
   const [switchLoading, setSwitchLoading] = useState({});
   
   // Bulk selection states
@@ -820,19 +820,13 @@ const Products = () => {
     try {
       const currentPage = pageOverride ?? paginationState.current;
       const currentPageSize = pageSizeOverride ?? paginationState.pageSize;
-      // Handle multi-select status filter
-      const statusParam = Array.isArray(statusFilter) && statusFilter.length > 0 
-        ? statusFilter.join(',') 
-        : undefined;
 
       const params = {
         search: searchText || undefined,
-        category_id: Array.isArray(selectedCategory) && selectedCategory.length > 0 
-          ? selectedCategory.join(',') 
-          : undefined,
+        category_id: selectedCategory || undefined,
         department_id: selectedDepartment || undefined,
-        include_inactive: !statusFilter || statusFilter.length === 0 || statusFilter.includes("inactive"),
-        status: statusParam,
+        include_inactive: !statusFilter || statusFilter === "inactive",
+        status: statusFilter || undefined,
         branch_id: selectedBranchFilter || undefined,
         branch_availability: selectedBranchFilter ? branchAvailabilityFilter : undefined,
         include_branch_inactive:
@@ -1754,14 +1748,11 @@ const Products = () => {
     if (!Array.isArray(products)) return [];
     
     return products.filter(product => {
-      // Status filter (multi-select)
-      if (Array.isArray(statusFilter) && statusFilter.length > 0) {
-        if (statusFilter.includes("active") && statusFilter.includes("inactive")) {
-          // Both selected, show all
-          return true;
-        } else if (statusFilter.includes("active") && !product.is_active) {
+      // Status filter (single-select)
+      if (statusFilter) {
+        if (statusFilter === "active" && !product.is_active) {
           return false;
-        } else if (statusFilter.includes("inactive") && product.is_active) {
+        } else if (statusFilter === "inactive" && product.is_active) {
           return false;
         }
       }
@@ -2269,17 +2260,15 @@ const Products = () => {
           </Col>
           <Col xs={24} sm={24} md={12} lg={8} xl={6}>
             <Select
-              mode="multiple"
               placeholder={t("products.filterByCategory")}
               style={{ width: "100%" }}
-              value={selectedCategory}
+              value={selectedCategory || undefined}
               onChange={(value) => {
                 setSelectedCategory(value);
                 setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
-                updateUrlParams({ category: Array.isArray(value) && value.length > 0 ? value.join(',') : undefined, page: undefined });
+                updateUrlParams({ category: value || undefined, page: undefined });
               }}
               allowClear
-              maxTagCount="responsive"
               size="middle"
               optionFilterProp="children"
               showSearch
@@ -2296,20 +2285,18 @@ const Products = () => {
           </Col>
           <Col xs={24} sm={12} md={8} lg={6} xl={4}>
             <Select
-              mode="multiple"
               placeholder={t("products.filterByStatus")}
               style={{ width: "100%" }}
-              value={statusFilter}
+              value={statusFilter || undefined}
               onChange={(value) => {
                 setStatusFilter(value);
                 setPaginationState((prev) => (prev.current === 1 ? prev : { ...prev, current: 1 }));
                 updateUrlParams({
-                  status: Array.isArray(value) && value.length > 0 ? value.join(',') : undefined,
+                  status: value || undefined,
                   page: undefined,
                 });
               }}
               allowClear
-              maxTagCount="responsive"
               size="middle"
             >
               <Option value="active">{t("products.active")}</Option>

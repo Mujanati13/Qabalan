@@ -413,3 +413,64 @@
     justify-content: space-between;
   }
 }
+
+/* Order Items Section */
+.order-items-section {
+  margin: 2rem 0;
+  padding-top: 2rem;
+  border-top: 2px solid #e8f5f5;
+}
+
+.order-items-section h2 {
+  color: #333;
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+  text-align: left;
+}
+
+.order-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.order-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e8e8e8;
+}
+
+.item-info {
+  flex: 1;
+  text-align: left;
+}
+
+.item-name {
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 0.25rem;
+}
+
+.item-variant {
+  color: #666;
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+
+.item-quantity {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.item-price {
+  font-weight: 600;
+  color: #16A2A3;
+  font-size: 1.1rem;
+  white-space: nowrap;
+  margin-left: 1rem;
+}
+

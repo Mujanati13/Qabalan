@@ -1,40 +1,42 @@
 import { Link } from 'react-router-dom';
+import { useLanguage } from '../context/LanguageContext';
 import './Footer.css';
 
 const Footer = () => {
+  const { t } = useLanguage();
+  
   return (
     <footer className="site-footer">
       <div className="footer-content">
         <div className="footer-section">
-          <h3>About Qabalan Bakery</h3>
+          <h3>{t('aboutUs')}</h3>
           <p>
-            Since our establishment, we have been committed to providing the finest
-            quality bakery products with traditional recipes and modern techniques.
+            {t('footerAboutText')}
           </p>
         </div>
 
         <div className="footer-section">
-          <h3>Quick Links</h3>
+          <h3>{t('quickLinks')}</h3>
           <ul>
-            <li><Link to="/">Home</Link></li>
-            <li><Link to="/products">Products</Link></li>
-            <li><Link to="/story">Our Story</Link></li>
-            <li><Link to="/recipes">Recipes</Link></li>
-            <li><Link to="/contact">Contact Us</Link></li>
+            <li><Link to="/">{t('home')}</Link></li>
+            <li><Link to="/shop">{t('products')}</Link></li>
+            <li><Link to="/story">{t('ourStory')}</Link></li>
+            <li><Link to="/recipes">{t('recipes')}</Link></li>
+            <li><Link to="/contact">{t('contactUs')}</Link></li>
           </ul>
         </div>
 
         <div className="footer-section">
-          <h3>Customer Service</h3>
+          <h3>{t('customerService')}</h3>
           <ul>
-            <li><Link to="/terms">Terms & Conditions</Link></li>
-            <li><Link to="/privacy">Privacy Policy</Link></li>
-            <li><Link to="/contact">Contact Support</Link></li>
+            <li><Link to="/terms">{t('termsConditions')}</Link></li>
+            <li><Link to="/privacy">{t('privacyPolicy')}</Link></li>
+            <li><Link to="/contact">{t('contactSupport')}</Link></li>
           </ul>
         </div>
 
         <div className="footer-section">
-          <h3>Connect With Us</h3>
+          <h3>{t('connectWithUs')}</h3>
           <div className="social-links">
             <a 
               href="https://www.facebook.com/QabalanBakeries?mibextid=LQQJ4d" 
@@ -65,7 +67,7 @@ const Footer = () => {
       </div>
 
       <div className="footer-bottom">
-        <p>&copy; {new Date().getFullYear()} Qabalan Bakery. All rights reserved.</p>
+        <p>&copy; {new Date().getFullYear()} {t('qabalanBakery')}. {t('allRightsReserved')}</p>
       </div>
     </footer>
   );

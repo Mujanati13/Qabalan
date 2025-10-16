@@ -257,6 +257,37 @@ class SupportService {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
+
+  // Contact Messages Management
+  async getContactMessages(params = {}) {
+    try {
+      const response = await api.get('/settings/contact-messages', { params });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching contact messages:', error);
+      throw error;
+    }
+  }
+
+  async updateContactMessageStatus(messageId, status) {
+    try {
+      const response = await api.patch(`/settings/contact-messages/${messageId}`, { status });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating contact message status:', error);
+      throw error;
+    }
+  }
+
+  async deleteContactMessage(messageId) {
+    try {
+      const response = await api.delete(`/settings/contact-messages/${messageId}`);
+      return response.data;
+    } catch (error) {
+      console.error('Error deleting contact message:', error);
+      throw error;
+    }
+  }
 }
 
 export default new SupportService();

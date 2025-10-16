@@ -96,10 +96,17 @@
   color: #333;
 }
 
+.item-variants {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
 .item-variant {
   font-size: 0.9rem;
   color: #666;
-  margin-bottom: 0.5rem;
+  margin: 0;
 }
 
 .price-container {
