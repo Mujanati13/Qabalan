@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ordersAPI, paymentsAPI, getImageUrl } from '../services/api';
+import { useLanguage } from '../context/LanguageContext';
+import { useCart } from '../context/CartContext';
 import './OrderConfirmation.css';
 
 const OrderConfirmation = () => {
   const { orderId } = useParams();
   const navigate = useNavigate();
+  const { t, isArabic } = useLanguage();
+  const { clearCart } = useCart();
   const [order, setOrder] = useState(null);
   const [orderItems, setOrderItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,11 +25,15 @@ const OrderConfirmation = () => {
   };
 
   useEffect(() => {
+    // Clear cart when order confirmation page is loaded
+    clearCart();
+    console.log('🛒 Cart cleared on order confirmation');
+    
     if (orderId) {
       fetchOrderDetails();
       checkPaymentStatus();
     }
-  }, [orderId]);
+  }, [orderId, clearCart]);
 
   const fetchOrderDetails = async () => {
     try {
@@ -144,9 +152,9 @@ const OrderConfirmation = () => {
       <div className="order-confirmation-page">
         <div className="container">
           <div className="error-message">
-            <h2>Order Not Found</h2>
-            <p>We couldn't find the order you're looking for.</p>
-            <Link to="/shop" className="btn-primary">Continue Shopping</Link>
+            <h2>{t('error')}</h2>
+            <p>{t('somethingWentWrong')}</p>
+            <Link to="/shop" className="btn-primary">{t('continueShopping')}</Link>
           </div>
         </div>
       </div>
@@ -159,10 +167,10 @@ const OrderConfirmation = () => {
       return (
         <div className="payment-status cash">
           <div className="status-icon">💵</div>
-          <h3>Cash on Delivery</h3>
-          <p>Please prepare the exact amount: <strong>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</strong></p>
+          <h3>{t('cashOnDelivery')}</h3>
+          <p>{t('paymentAmount')}: <strong>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</strong></p>
           <p className="helper-text">
-            <i className="fa fa-info-circle"></i> Payment will be collected upon delivery or pickup
+            <i className="fa fa-info-circle"></i> {t('willBeCollectedUponDelivery')}
           </p>
         </div>
       );
@@ -175,29 +183,29 @@ const OrderConfirmation = () => {
       return (
         <div className="payment-status success">
           <div className="status-icon">✓</div>
-          <h3>Payment Successful</h3>
-          <p>Your payment has been processed successfully.</p>
+          <h3>{t('paymentSuccessful')}</h3>
+          <p>{t('paymentProcessedSuccessfully')}</p>
           {paymentStatus?.transaction_id && (
             <div className="transaction-details">
               <div className="transaction-row">
-                <span className="label">Transaction ID:</span>
+                <span className="label">{t('transactionId')}:</span>
                 <span className="value">{paymentStatus.transaction_id}</span>
               </div>
               {paymentStatus?.authorization_code && (
                 <div className="transaction-row">
-                  <span className="label">Authorization Code:</span>
+                  <span className="label">{t('authorizationCode')}:</span>
                   <span className="value">{paymentStatus.authorization_code}</span>
                 </div>
               )}
               {paymentStatus?.card_last4 && (
                 <div className="transaction-row">
-                  <span className="label">Card:</span>
+                  <span className="label">{t('cardLastFour')}:</span>
                   <span className="value">**** **** **** {paymentStatus.card_last4}</span>
                 </div>
               )}
               {paymentStatus?.payment_date && (
                 <div className="transaction-row">
-                  <span className="label">Payment Date:</span>
+                  <span className="label">{t('paymentDate')}:</span>
                   <span className="value">
                     {new Date(paymentStatus.payment_date).toLocaleString('en-US', {
                       year: 'numeric',
@@ -217,16 +225,16 @@ const OrderConfirmation = () => {
       return (
         <div className="payment-status failed">
           <div className="status-icon">✗</div>
-          <h3>Payment Failed</h3>
-          <p>Your payment could not be processed. Please try again.</p>
+          <h3>{t('paymentFailed')}</h3>
+          <p>{t('paymentCouldNotBeProcessed')}</p>
           {paymentStatus?.failure_reason && (
             <p className="failure-reason">
-              <strong>Reason:</strong> {paymentStatus.failure_reason}
+              <strong>{t('failureReason')}:</strong> {paymentStatus.failure_reason}
             </p>
           )}
           {order.payment_method === 'card' && (
             <button onClick={handleRetryPayment} className="retry-payment-btn">
-              🔄 Retry Payment
+              🔄 {t('retryPayment')}
             </button>
           )}
         </div>
@@ -235,14 +243,14 @@ const OrderConfirmation = () => {
       return (
         <div className="payment-status pending">
           <div className="status-icon">⏳</div>
-          <h3>Payment Pending</h3>
-          <p>We're processing your payment. This may take a few moments.</p>
+          <h3>{t('paymentPending')}</h3>
+          <p>{t('processingPayment')}</p>
           <p className="helper-text">
-            <i className="fa fa-info-circle"></i> Please do not refresh or close this page
+            <i className="fa fa-info-circle"></i> {t('doNotRefresh')}
           </p>
           {order.payment_method === 'card' && (
             <button onClick={handleRetryPayment} className="retry-payment-btn">
-              🔄 Retry Payment
+              🔄 {t('retryPayment')}
             </button>
           )}
         </div>
@@ -262,27 +270,27 @@ const OrderConfirmation = () => {
             </svg>
           </div>
 
-          <h1>Order Confirmed!</h1>
-          <p className="order-number">Order #{order.order_number || order.id}</p>
+          <h1>{t('orderSuccessful')}</h1>
+          <p className="order-number">{t('orderNumber_label')} #{order.order_number || order.id}</p>
 
           {/* Track My Order Info for Guest Users */}
           {(order.is_guest || order.isGuestOrder) && order.customer_phone && (
             <div className="track-order-info">
               <div className="track-icon">📦</div>
-              <h3>Track Your Order</h3>
-              <p className="track-description">Save these details to track your order:</p>
+              <h3>{t('trackYourOrder')}</h3>
+              <p className="track-description">{t('saveTheseDetails')}</p>
               <div className="tracking-details">
                 <div className="tracking-field">
-                  <label>Order Number:</label>
+                  <label>{t('orderNumber')}:</label>
                   <strong>{order.order_number || `#${order.id}`}</strong>
                 </div>
                 <div className="tracking-field">
-                  <label>Phone Number:</label>
+                  <label>{t('phoneNumber')}:</label>
                   <strong>{order.customer_phone}</strong>
                 </div>
               </div>
               <p className="track-helper">
-                <i className="fa fa-info-circle"></i> Use these details on our website to check your order status anytime
+                <i className="fa fa-info-circle"></i> {t('useTheseDetailsToCheckStatus')}
               </p>
             </div>
           )}
@@ -290,10 +298,10 @@ const OrderConfirmation = () => {
           {getPaymentStatusDisplay()}
 
           <div className="order-details">
-            <h2>Order Details</h2>
+            <h2>{t('orderDetails')}</h2>
             
             <div className="detail-row">
-              <span className="label">Order Date:</span>
+              <span className="label">{t('orderDate')}:</span>
               <span className="value">
                 {new Date(order.created_at).toLocaleDateString('en-US', {
                   year: 'numeric',
@@ -306,16 +314,16 @@ const OrderConfirmation = () => {
             </div>
 
             <div className="detail-row">
-              <span className="label">Delivery Method:</span>
+              <span className="label">{t('orderType')}:</span>
               <span className="value">
-                {order.order_type === 'delivery' ? 'Home Delivery' : 'In-Store Pickup'}
+                {order.order_type === 'delivery' ? `🚚 ${t('delivery')}` : `🏪 ${t('pickup')}`}
               </span>
             </div>
 
             <div className="detail-row">
-              <span className="label">Payment Method:</span>
+              <span className="label">{t('paymentMethod')}:</span>
               <span className="value">
-                {order.payment_method === 'cash' ? 'Cash on Delivery' : 'Credit/Debit Card'}
+                {order.payment_method === 'cash' ? `💵 ${t('cashOnDelivery')}` : `💳 ${t('creditCard')}`}
               </span>
             </div>
 
@@ -339,21 +347,21 @@ const OrderConfirmation = () => {
             {/* Customer Information */}
             {order.customer_name && (
               <div className="detail-row">
-                <span className="label">Customer Name:</span>
+                <span className="label">{t('customerInfo')}:</span>
                 <span className="value">{order.customer_name}</span>
               </div>
             )}
 
             {order.customer_phone && (
               <div className="detail-row">
-                <span className="label">Phone:</span>
+                <span className="label">{t('phoneNumber')}:</span>
                 <span className="value">{order.customer_phone}</span>
               </div>
             )}
 
             {order.customer_email && (
               <div className="detail-row">
-                <span className="label">Email:</span>
+                <span className="label">{t('email')}:</span>
                 <span className="value">{order.customer_email}</span>
               </div>
             )}
@@ -365,13 +373,13 @@ const OrderConfirmation = () => {
                   <>
                     {order.delivery_address.address_line && (
                       <div className="detail-row address-row">
-                        <span className="label">Street Address:</span>
+                        <span className="label">{t('streetAddress')}:</span>
                         <span className="value">{order.delivery_address.address_line}</span>
                       </div>
                     )}
                     {(order.delivery_address.area || order.delivery_address.area_ar) && (
                       <div className="detail-row">
-                        <span className="label">Area:</span>
+                        <span className="label">{t('area')}:</span>
                         <span className="value">
                           {order.delivery_address.area || order.delivery_address.area_ar}
                         </span>
@@ -379,7 +387,7 @@ const OrderConfirmation = () => {
                     )}
                     {(order.delivery_address.city || order.delivery_address.city_ar) && (
                       <div className="detail-row">
-                        <span className="label">City:</span>
+                        <span className="label">{t('city')}:</span>
                         <span className="value">
                           {order.delivery_address.city || order.delivery_address.city_ar}
                         </span>
@@ -387,7 +395,7 @@ const OrderConfirmation = () => {
                     )}
                     {(order.delivery_address.governorate || order.delivery_address.governorate_ar) && (
                       <div className="detail-row">
-                        <span className="label">Governorate:</span>
+                        <span className="label">{t('governorate')}:</span>
                         <span className="value">
                           {order.delivery_address.governorate || order.delivery_address.governorate_ar}
                         </span>
@@ -403,7 +411,7 @@ const OrderConfirmation = () => {
                 )}
                 {order.delivery_city && (
                   <div className="detail-row">
-                    <span className="label">City:</span>
+                    <span className="label">{t('city')}:</span>
                     <span className="value">{order.delivery_city}</span>
                   </div>
                 )}
@@ -429,7 +437,7 @@ const OrderConfirmation = () => {
             {/* Promo Code Information */}
             {order.promo_code && (
               <div className="detail-row promo-row">
-                <span className="label">Promo Code:</span>
+                <span className="label">{t('promoCode')}:</span>
                 <span className="value promo-code">
                   <i className="fa fa-ticket"></i> {order.promo_code}
                 </span>
@@ -438,29 +446,29 @@ const OrderConfirmation = () => {
           </div>
 
           <div className="order-summary">
-            <h2>Order Summary</h2>
+            <h2>{t('orderSummary')}</h2>
             
             <div className="summary-row">
-              <span>Subtotal</span>
+              <span>{t('subtotal')}</span>
               <span>{safeParseFloat(order.subtotal).toFixed(2)} JOD</span>
             </div>
 
             {safeParseFloat(order.delivery_fee) > 0 && (
               <div className="summary-row">
-                <span>Delivery Fee</span>
+                <span>{t('deliveryFee')}</span>
                 <span>{safeParseFloat(order.delivery_fee).toFixed(2)} JOD</span>
               </div>
             )}
 
             {safeParseFloat(order.discount || order.discount_amount) > 0 && (
               <div className="summary-row discount">
-                <span>Discount</span>
+                <span>{t('discount')}</span>
                 <span>-{safeParseFloat(order.discount || order.discount_amount).toFixed(2)} JOD</span>
               </div>
             )}
 
             <div className="summary-row total">
-              <span>Total</span>
+              <span>{t('total')}</span>
               <span>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</span>
             </div>
           </div>
@@ -475,7 +483,7 @@ const OrderConfirmation = () => {
           {/* Order Items */}
           {orderItems && orderItems.length > 0 && (
             <div className="order-items-section">
-              <h2>Order Items</h2>
+              <h2>{t('orderItems')}</h2>
               <div className="order-items-list">
                 {orderItems.map((item, index) => (
                   <div key={index} className="order-item">
@@ -520,14 +528,14 @@ const OrderConfirmation = () => {
 
                       {/* Unit Price */}
                       <div className="item-unit-price">
-                        Price: {safeParseFloat(item.unit_price).toFixed(2)} JOD
+                        {t('price')}: {safeParseFloat(item.unit_price).toFixed(2)} JOD
                       </div>
                     </div>
 
                     {/* Quantity and Total */}
                     <div className="item-quantity-price">
                       <div className="item-quantity">
-                        <span className="quantity-label">Qty:</span>
+                        <span className="quantity-label">{t('qty')}:</span>
                         <span className="quantity-value">{item.quantity}</span>
                       </div>
                       <div className="item-total-price">
@@ -542,22 +550,22 @@ const OrderConfirmation = () => {
 
           <div className="action-buttons">
             <Link to="/shop" className="btn-secondary">
-              Continue Shopping
+              {t('continueShopping')}
             </Link>
             {/* Only show "View All Orders" for logged-in users */}
             {!order.isGuestOrder && (
               <Link to="/account" state={{ activeTab: 'orders' }} className="btn-primary">
-                View All Orders
+                {t('viewAllOrders')}
               </Link>
             )}
           </div>
 
           <div className="confirmation-message">
             <p>
-              Thank you for your order! We've sent a confirmation email with your order details.
+              {t('confirmationEmailSent')}
               {order.order_type === 'delivery' 
-                ? ' Your order will be delivered to your address soon.'
-                : ' You can pick up your order from the selected branch.'}
+                ? ' ' + t('deliveryWillArriveSoon')
+                : ' ' + t('canPickupFromBranch')}
             </p>
           </div>
         </div>
