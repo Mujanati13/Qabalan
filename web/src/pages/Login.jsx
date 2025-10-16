@@ -15,7 +15,7 @@ const Login = () => {
   const [sendingCode, setSendingCode] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, user, loading: authLoading } = useAuth();
+  const { login, loginWithTokens, user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   // Redirect if already logged in
@@ -97,12 +97,14 @@ const Login = () => {
         const data = await response.json();
 
         if (data.success) {
-          // Store tokens
-          localStorage.setItem('accessToken', data.data.tokens.accessToken);
-          localStorage.setItem('refreshToken', data.data.tokens.refreshToken);
+          // Use the new loginWithTokens method to store tokens and fetch user
+          const result = await loginWithTokens(data.data.tokens);
           
-          // Navigate to home - AuthContext will pick up the user
-          navigate('/');
+          if (result.success) {
+            navigate('/');
+          } else {
+            setError(result.error || 'Failed to complete login');
+          }
           return;
         } else {
           setError(data.message || 'Login failed');

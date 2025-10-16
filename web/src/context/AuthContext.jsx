@@ -92,6 +92,26 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithTokens = async (tokens) => {
+    try {
+      // Store tokens
+      localStorage.setItem('accessToken', tokens.accessToken);
+      localStorage.setItem('refreshToken', tokens.refreshToken);
+      
+      // Fetch user data
+      const response = await authAPI.getCurrentUser();
+      setUser(response.data.data.user);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to fetch user after token login:', error);
+      return {
+        success: false,
+        error: error.response?.data?.message || 'Failed to fetch user data',
+      };
+    }
+  };
+
   const register = async (userData) => {
     try {
       const response = await authAPI.register(userData);
@@ -136,9 +156,11 @@ export const AuthProvider = ({ children }) => {
         user,
         loading,
         login,
+        loginWithTokens,
         register,
         logout,
         refreshAccessToken,
+        checkAuth,
         isAuthenticated: !!user,
       }}
     >
