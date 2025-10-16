@@ -391,9 +391,9 @@ router.get('/mpgs/payment/success', async (req, res) => {
         return;
       }
 
-      // Redirect to home with success message
+      // Redirect to order confirmation page with order ID
       const homeUrl = process.env.CLIENT_BASE_URL || 'http://localhost:3000';
-      res.redirect(`${homeUrl}/home?thanks=1&order_id=${orderId}`);
+      res.redirect(`${homeUrl}/order-confirmation/${orderId}`);
     } else if (!paymentVerified) {
       // Payment verification failed - show error page
       if (isMobile) {
