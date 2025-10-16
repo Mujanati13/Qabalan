@@ -1,7 +1,9 @@
 import { useState } from 'react';
+import { useLanguage } from '../context/LanguageContext';
 import './Contact.css';
 
 const Contact = () => {
+  const { t, isArabic } = useLanguage();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -38,13 +40,13 @@ const Contact = () => {
     
     // 3. Basic validation
     if (!formData.name || !formData.email || !formData.message) {
-      alert('Please fill in all required fields');
+      alert(t('pleaseFillRequired'));
       return;
     }
     
     // 4. Message length validation
     if (formData.message.length < 10) {
-      alert('Please write a message with at least 10 characters');
+      alert(t('pleaseEnterMessage10'));
       return;
     }
     
@@ -98,39 +100,39 @@ const Contact = () => {
   return (
     <div className="contact-page">
       <div className="contact-hero">
-        <h1>Contact Us</h1>
-        <p>We'd love to hear from you</p>
+        <h1>{t('contactUsTitle')}</h1>
+        <p>{t('wedLoveToHear')}</p>
       </div>
 
       <div className="container">
         <div className="contact-content">
           <div className="contact-info">
-            <h2>Get in Touch</h2>
+            <h2>{t('getInTouch')}</h2>
             <div className="info-item">
               <i className="fa fa-phone"></i>
               <div>
-                <h3>Phone</h3>
+                <h3>{t('phone')}</h3>
                 <p><a href="tel:+96279130170 7">+962 7 9130 1707</a></p>
               </div>
             </div>
             <div className="info-item">
               <i className="fa fa-envelope"></i>
               <div>
-                <h3>Email</h3>
+                <h3>{t('email')}</h3>
                 <p><a href="mailto:Info@qabalanbakery.com">Info@qabalanbakery.com</a></p>
               </div>
             </div>
             <div className="info-item">
               <i className="fa fa-clock-o"></i>
               <div>
-                <h3>Business Hours</h3>
-                <p>Open 24/7 to serve you anytime</p>
+                <h3>{t('businessHours')}</h3>
+                <p>{t('open24_7')}</p>
               </div>
             </div>
             <div className="info-item">
               <i className="fa fa-map-marker"></i>
               <div>
-                <h3>Our Branches in Amman</h3>
+                <h3>{t('ourBranches')}</h3>
                 <div style={{ marginBottom: '10px' }}>
                   <strong>Al Rabeih</strong>
                   <p>Jordan, Amman - Al-Sharif Naser Ben Jamil Str. Building No. 11</p>
@@ -151,7 +153,7 @@ const Contact = () => {
             <div className="info-item">
               <i className="fa fa-share-alt"></i>
               <div>
-                <h3>Follow Us</h3>
+                <h3>{t('followUs')}</h3>
                 <div className="social-links">
                   <a href="https://www.facebook.com/QabalanBakeries?mibextid=LQQJ4d" target="_blank" rel="noopener noreferrer">
                     <i className="fa fa-facebook"></i> Facebook
@@ -168,21 +170,21 @@ const Contact = () => {
           </div>
 
           <div className="contact-form-container">
-            <h2>Send us a Message</h2>
+            <h2>{t('sendUsMessage')}</h2>
             {submitted ? (
               <div className="success-confirmation">
                 <div className="success-icon">
                   <i className="fa fa-check-circle"></i>
                 </div>
-                <h3>Message Sent Successfully!</h3>
+                <h3>{t('messageSentSuccessfully')}</h3>
                 <p className="success-main-message">
-                  Thank you for contacting us, <strong>{formData.name}</strong>!
+                  {t('thankYouForContacting')}, <strong>{formData.name}</strong>!
                 </p>
                 <div className="success-details">
-                  <p>✓ Your message has been received</p>
-                  <p>✓ We'll respond to <strong>{formData.email}</strong></p>
-                  {formData.phone && <p>✓ Or call you at <strong>{formData.phone}</strong></p>}
-                  <p>✓ Our team typically responds within 24 hours</p>
+                  <p>✓ {t('yourMessageReceived')}</p>
+                  <p>✓ {t('wellRespondTo')} <strong>{formData.email}</strong></p>
+                  {formData.phone && <p>✓ {t('orCallYouAt')} <strong>{formData.phone}</strong></p>}
+                  <p>✓ {t('teamResponds24h')}</p>
                 </div>
                 <div className="success-actions">
                   <button 
@@ -199,17 +201,17 @@ const Contact = () => {
                     }}
                     className="btn-secondary"
                   >
-                    Send Another Message
+                    {t('sendAnotherMessage')}
                   </button>
                   <a href="/" className="btn-primary">
-                    Return to Home
+                    {t('returnToHome')}
                   </a>
                 </div>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="contact-form">
               <div className="form-group">
-                <label htmlFor="name">Name *</label>
+                <label htmlFor="name">{t('nameRequired')}</label>
                 <input
                   type="text"
                   id="name"
@@ -220,7 +222,7 @@ const Contact = () => {
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="email">Email *</label>
+                <label htmlFor="email">{t('emailRequired')}</label>
                 <input
                   type="email"
                   id="email"
@@ -231,7 +233,7 @@ const Contact = () => {
                 />
               </div>
               <div className="form-group">
-                <label htmlFor="phone">Phone</label>
+                <label htmlFor="phone">{t('phoneOptional')}</label>
                 <input
                   type="tel"
                   id="phone"
@@ -254,7 +256,7 @@ const Contact = () => {
               </div>
               
               <div className="form-group">
-                <label htmlFor="message">Message * (minimum 10 characters)</label>
+                <label htmlFor="message">{t('messageRequired')}</label>
                 <textarea
                   id="message"
                   name="message"
@@ -263,14 +265,14 @@ const Contact = () => {
                   onChange={handleChange}
                   required
                   minLength="10"
-                  placeholder="Please enter your message (at least 10 characters)"
+                  placeholder={t('enterYourMessage')}
                 ></textarea>
                 <small style={{ color: formData.message.length < 10 ? '#d9534f' : '#5cb85c' }}>
-                  {formData.message.length} / 10 characters minimum
+                  {formData.message.length} / 10 {t('charactersMinimum')}
                 </small>
               </div>
               <button type="submit" className="submit-button">
-                Send Message
+                {t('sendMessage')}
               </button>
             </form>
             )}

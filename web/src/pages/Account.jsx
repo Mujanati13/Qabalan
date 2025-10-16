@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { authAPI, addressesAPI, ordersAPI, paymentsAPI } from '../services/api';
 import './Account.css';
 
 const Account = () => {
   const { user, logout, loading: authLoading } = useAuth();
+  const { t, isArabic } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
   const [activeTab, setActiveTab] = useState(location.state?.activeTab || 'profile');
@@ -126,7 +128,7 @@ const Account = () => {
     return (
       <div className="account-page">
         <div className="container">
-          <div className="loading-message">Loading...</div>
+          <div className="loading-message">{t('loading')}</div>
         </div>
       </div>
     );
@@ -136,9 +138,9 @@ const Account = () => {
     <div className="account-page">
       <div className="container">
         <div className="account-header">
-          <h1>My Account</h1>
+          <h1>{t('myAccount')}</h1>
           <button onClick={handleLogout} className="logout-btn">
-            Logout
+            {t('logout')}
           </button>
         </div>
 
@@ -148,46 +150,46 @@ const Account = () => {
               className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}
               onClick={() => setActiveTab('profile')}
             >
-              <i className="fa fa-user"></i> Profile
+              <i className="fa fa-user"></i> {t('profile')}
             </button>
             <button
               className={`tab-btn ${activeTab === 'orders' ? 'active' : ''}`}
               onClick={() => setActiveTab('orders')}
             >
-              <i className="fa fa-shopping-bag"></i> My Orders
+              <i className="fa fa-shopping-bag"></i> {t('myOrders')}
             </button>
             <button
               className={`tab-btn ${activeTab === 'addresses' ? 'active' : ''}`}
               onClick={() => setActiveTab('addresses')}
             >
-              <i className="fa fa-map-marker"></i> Addresses
+              <i className="fa fa-map-marker"></i> {t('addresses')}
             </button>
           </div>
 
           <div className="account-main">
             {loading ? (
-              <div className="loading">Loading...</div>
+              <div className="loading">{t('loading')}</div>
             ) : (
               <>
                 {activeTab === 'profile' && (
                   <div className="profile-section">
-                    <h2>Profile Information</h2>
+                    <h2>{t('profileInformation')}</h2>
                     <div className="profile-info">
                       <div className="info-row">
-                        <label>First Name:</label>
+                        <label>{t('firstName')}:</label>
                         <span>{profileData.first_name}</span>
                       </div>
                       <div className="info-row">
-                        <label>Last Name:</label>
+                        <label>{t('lastName')}:</label>
                         <span>{profileData.last_name}</span>
                       </div>
                       <div className="info-row">
-                        <label>Email:</label>
+                        <label>{t('email')}:</label>
                         <span>{profileData.email}</span>
                       </div>
                       <div className="info-row">
-                        <label>Phone:</label>
-                        <span>{profileData.phone || 'Not provided'}</span>
+                        <label>{t('phone')}:</label>
+                        <span>{profileData.phone || t('notProvided')}</span>
                       </div>
                     </div>
                   </div>
@@ -195,12 +197,12 @@ const Account = () => {
 
                 {activeTab === 'orders' && (
                   <div className="orders-section">
-                    <h2>Order History</h2>
+                    <h2>{t('orderHistory')}</h2>
                     {orders.length === 0 ? (
                       <div className="empty-state">
-                        <p>No orders yet</p>
+                        <p>{t('noOrdersYet')}</p>
                         <button onClick={() => navigate('/shop')} className="shop-btn">
-                          Start Shopping
+                          {t('startShopping')}
                         </button>
                       </div>
                     ) : (
@@ -208,37 +210,37 @@ const Account = () => {
                         {orders.map(order => (
                           <div key={order.id} className="order-card">
                             <div className="order-header">
-                              <span className="order-number">Order #{order.order_number}</span>
+                              <span className="order-number">{t('order')} #{order.order_number}</span>
                               <span className={`order-status status-${order.order_status || order.status}`}>
                                 {(order.order_status || order.status || 'pending').toUpperCase()}
                               </span>
                             </div>
                             <div className="order-body">
                               <div className="order-info">
-                                <p><strong>Date:</strong> {new Date(order.created_at).toLocaleDateString('en-US', { 
+                                <p><strong>{t('date')}:</strong> {new Date(order.created_at).toLocaleDateString(isArabic ? 'ar-SA' : 'en-US', { 
                                   year: 'numeric', 
                                   month: 'long', 
                                   day: 'numeric',
                                   hour: '2-digit',
                                   minute: '2-digit'
                                 })}</p>
-                                <p><strong>Type:</strong> {order.order_type === 'delivery' ? '🚚 Delivery' : '🏪 Pickup'}</p>
-                                <p><strong>Payment:</strong> {order.payment_method === 'cash' ? '💵 Cash' : '💳 Card'} 
+                                <p><strong>{t('type')}:</strong> {order.order_type === 'delivery' ? `🚚 ${t('delivery')}` : `🏪 ${t('pickup')}`}</p>
+                                <p><strong>{t('payment')}:</strong> {order.payment_method === 'cash' ? `💵 ${t('cashOnDelivery')}` : `💳 ${t('creditCard')}`} 
                                   {order.payment_status && (
                                     <span className={`payment-status-badge ${order.payment_status}`}>
                                       {order.payment_status}
                                     </span>
                                   )}
                                 </p>
-                                <p><strong>Total:</strong> <span className="order-total">${parseFloat(order.total_amount || 0).toFixed(2)}</span></p>
-                                {order.items_count && <p><strong>Items:</strong> {order.items_count}</p>}
+                                <p><strong>{t('total')}:</strong> <span className="order-total">${parseFloat(order.total_amount || 0).toFixed(2)}</span></p>
+                                {order.items_count && <p><strong>{t('items')}:</strong> {order.items_count}</p>}
                               </div>
                               <div className="order-actions">
                                 <button 
                                   onClick={() => navigate(`/order-confirmation/${order.id}`)}
                                   className="view-order-btn"
                                 >
-                                  View Details
+                                  {t('viewDetails')}
                                 </button>
                                 {order.payment_method === 'card' && 
                                  (order.payment_status === 'failed' || order.payment_status === 'pending') && (
@@ -246,7 +248,7 @@ const Account = () => {
                                     onClick={() => handleRetryPayment(order.id)}
                                     className="retry-payment-btn"
                                   >
-                                    🔄 Retry Payment
+                                    🔄 {t('retryPayment')}
                                   </button>
                                 )}
                               </div>
@@ -260,12 +262,12 @@ const Account = () => {
 
                 {activeTab === 'addresses' && (
                   <div className="addresses-section">
-                    <h2>Saved Addresses</h2>
+                    <h2>{t('savedAddresses')}</h2>
                     {addresses.length === 0 ? (
                       <div className="empty-state">
-                        <p>No saved addresses</p>
+                        <p>{t('noSavedAddresses')}</p>
                         <button onClick={() => navigate('/checkout')} className="add-address-btn">
-                          Add Address
+                          {t('addAddress')}
                         </button>
                       </div>
                     ) : (
@@ -273,9 +275,9 @@ const Account = () => {
                         {addresses.map(address => (
                           <div key={address.id} className="address-card">
                             <div className="address-header">
-                              <h4>{address.name || 'Address'}</h4>
+                              <h4>{address.name || t('address')}</h4>
                               {address.is_default && (
-                                <span className="default-badge">Default</span>
+                                <span className="default-badge">{t('default')}</span>
                               )}
                             </div>
                             <div className="address-body">
@@ -283,16 +285,16 @@ const Account = () => {
                                 <p><i className="fa fa-phone"></i> {address.phone}</p>
                               )}
                               {address.building_no && (
-                                <p><i className="fa fa-building"></i> Building: {address.building_no}</p>
+                                <p><i className="fa fa-building"></i> {t('building')}: {address.building_no}</p>
                               )}
                               {address.floor_no && (
-                                <p>Floor: {address.floor_no}</p>
+                                <p>{t('floor')}: {address.floor_no}</p>
                               )}
                               {address.apartment_no && (
-                                <p>Apartment: {address.apartment_no}</p>
+                                <p>{t('apartment')}: {address.apartment_no}</p>
                               )}
                               {address.area_title_en && (
-                                <p><i className="fa fa-map-marker"></i> {address.area_title_en}, {address.city_title_en}</p>
+                                <p><i className="fa fa-map-marker"></i> {isArabic ? (address.area_title_ar || address.area_title_en) : address.area_title_en}, {isArabic ? (address.city_title_ar || address.city_title_en) : address.city_title_en}</p>
                               )}
                               {address.details && (
                                 <p className="address-details">{address.details}</p>

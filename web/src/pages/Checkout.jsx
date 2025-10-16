@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { ordersAPI, addressesAPI, branchesAPI, promosAPI, shippingAPI, paymentsAPI } from '../services/api';
 import LocationPicker from '../components/LocationPicker';
 import Toast from '../components/Toast';
@@ -11,6 +12,7 @@ const Checkout = () => {
   const navigate = useNavigate();
   const { cart, getCartTotal, clearCart } = useCart();
   const { user } = useAuth();
+  const { t, isArabic } = useLanguage();
   
   const [addresses, setAddresses] = useState([]);
   const [branches, setBranches] = useState([]);
@@ -418,7 +420,9 @@ const Checkout = () => {
             const unavailableItems = availabilityResponse.data.unavailable_items;
             const warnings = unavailableItems.map(item => {
               const cartItem = cart.find(c => c.id === item.product_id);
-              const productName = cartItem?.title || cartItem?.name || `Product #${item.product_id}`;
+              const productName = isArabic 
+                ? (cartItem?.title_ar || cartItem?.title_en || cartItem?.title || cartItem?.name || `${t('product')} #${item.product_id}`)
+                : (cartItem?.title_en || cartItem?.title_ar || cartItem?.title || cartItem?.name || `${t('product')} #${item.product_id}`);
               const variantName = item.variant_id && cartItem?.variant?.title 
                 ? ` (${cartItem.variant.title})` 
                 : '';
@@ -1057,7 +1061,7 @@ const Checkout = () => {
   return (
     <div className="checkout-page">
       <div className="container">
-        <h1>Checkout</h1>
+        <h1>{t('checkout')}</h1>
 
         {error && <div className="error-message">{error}</div>}
         
@@ -1066,17 +1070,17 @@ const Checkout = () => {
           <div className="stock-warning-banner">
             <div className="stock-warning-header">
               <i className="fa fa-exclamation-triangle"></i>
-              <strong>Items Not Available</strong>
+              <strong>{t('itemsNotAvailable')}</strong>
             </div>
             <div className="stock-warning-body">
-              <p>The following items are not available at the selected branch:</p>
+              <p>{t('followingItemsNotAvailable')}</p>
               <ul>
                 {stockWarnings.map((warning, index) => (
                   <li key={index}>{warning}</li>
                 ))}
               </ul>
               <p className="stock-warning-suggestion">
-                <i className="fa fa-lightbulb"></i> Try selecting a different branch or remove these items from your cart.
+                <i className="fa fa-lightbulb"></i> {t('tryDifferentBranch')}
               </p>
             </div>
           </div>
@@ -1088,12 +1092,12 @@ const Checkout = () => {
             {isGuestCheckout && (
               <section className="checkout-section">
                 <h2>
-                  <i className="fa fa-user"></i> Your Information
+                  <i className="fa fa-user"></i> {t('yourInformation')}
                 </h2>
                 <div className="guest-info-form">
                   <input
                     type="text"
-                    placeholder="Full Name *"
+                    placeholder={t('fullNameRequired')}
                     value={guestInfo.name}
                     onChange={(e) => setGuestInfo({ ...guestInfo, name: e.target.value })}
                     className="guest-input"
@@ -1101,7 +1105,7 @@ const Checkout = () => {
                   />
                   <input
                     type="tel"
-                    placeholder="Phone Number *"
+                    placeholder={t('phoneNumberRequired')}
                     value={guestInfo.phone}
                     onChange={(e) => setGuestInfo({ ...guestInfo, phone: e.target.value })}
                     className="guest-input"
@@ -1109,13 +1113,13 @@ const Checkout = () => {
                   />
                   <input
                     type="email"
-                    placeholder="Email (Optional)"
+                    placeholder={t('emailOptional')}
                     value={guestInfo.email}
                     onChange={(e) => setGuestInfo({ ...guestInfo, email: e.target.value })}
                     className="guest-input"
                   />
                   <p className="helper-text">
-                    <i className="fa fa-info-circle"></i> We'll use this information to contact you about your order
+                    <i className="fa fa-info-circle"></i> {isArabic ? 'سنستخدم هذه المعلومات للاتصال بك بخصوص طلبك' : "We'll use this information to contact you about your order"}
                   </p>
                 </div>
               </section>
@@ -1125,12 +1129,12 @@ const Checkout = () => {
             {!isGuestCheckout && (
               <section className="checkout-section">
                 <h2>
-                  <i className="fa fa-phone"></i> Contact Information
+                  <i className="fa fa-phone"></i> {t('contactInformation')}
                 </h2>
                 <div className="user-phone-form">
                   <input
                     type="tel"
-                    placeholder="Phone Number (e.g., 0791234567) *"
+                    placeholder={t('phoneNumberRequired')}
                     value={userPhone}
                     onChange={(e) => setUserPhone(e.target.value)}
                     className="guest-input"
@@ -1138,11 +1142,11 @@ const Checkout = () => {
                     pattern="[0-9]*"
                   />
                   <p className="helper-text">
-                    <i className="fa fa-info-circle"></i> Required to process and deliver your order
+                    <i className="fa fa-info-circle"></i> {t('requiredToProcessOrder')}
                   </p>
                   {!userPhone && (
                     <p className="warning-text">
-                      <i className="fa fa-exclamation-triangle"></i> Please enter your phone number to complete checkout
+                      <i className="fa fa-exclamation-triangle"></i> {t('enterPhoneToComplete')}
                     </p>
                   )}
                 </div>
@@ -1152,7 +1156,7 @@ const Checkout = () => {
             {/* Branch Selection - Always show for both pickup and delivery */}
             <section className="checkout-section">
               <h2>
-                <i className="fa fa-store"></i> Select Branch
+                <i className="fa fa-store"></i> {t('selectBranch')}
               </h2>
               {branches.length > 0 ? (
                 <div className="branch-selector">
@@ -1163,7 +1167,9 @@ const Checkout = () => {
                   >
                     {branches.map((branch) => {
                       const availability = branchAvailability[branch.id] || { label: '', tone: 'unknown' };
-                      const branchName = branch.title_en || branch.title_ar || branch.name || `Branch #${branch.id}`;
+                      const branchName = isArabic 
+                        ? (branch.title_ar || branch.title_en || branch.name || `${t('branch')} #${branch.id}`)
+                        : (branch.title_en || branch.title_ar || branch.name || `${t('branch')} #${branch.id}`);
                       const statusLabel = availability.label ? ` - ${availability.label}` : '';
                       
                       return (
@@ -1173,7 +1179,7 @@ const Checkout = () => {
                           disabled={availability.tone === 'unavailable' || availability.tone === 'inactive'}
                         >
                           {branchName}{statusLabel}
-                          {deliveryMethod === 'delivery' && branch.delivery_fee && ` - Delivery: $${branch.delivery_fee}`}
+                          {deliveryMethod === 'delivery' && branch.delivery_fee && ` - ${t('delivery')}: $${branch.delivery_fee}`}
                         </option>
                       );
                     })}
@@ -1192,25 +1198,25 @@ const Checkout = () => {
                       <span>{branchAvailability[parseInt(selectedBranch)].label}</span>
                       {branchAvailability[parseInt(selectedBranch)].minRemaining !== null && 
                        branchAvailability[parseInt(selectedBranch)].minRemaining <= 2 && (
-                        <span> - Only {branchAvailability[parseInt(selectedBranch)].minRemaining} left in stock</span>
+                        <span> - {t('onlyLeftInStock').replace('{count}', branchAvailability[parseInt(selectedBranch)].minRemaining)}</span>
                       )}
                     </div>
                   )}
                   
                   {deliveryMethod === 'delivery' && (
                     <p className="helper-text">
-                      <i className="fa fa-info-circle"></i> Delivery fee will be calculated based on distance
+                      <i className="fa fa-info-circle"></i> {t('deliveryFeeCalculated')}
                     </p>
                   )}
                 </div>
               ) : (
-                <p>Loading branches...</p>
+                <p>{t('loadingBranches')}</p>
               )}
             </section>
 
             {/* Delivery Method */}
             <section className="checkout-section">
-              <h2>Delivery Method</h2>
+              <h2>{t('deliveryMethod')}</h2>
               <div className="delivery-methods">
                 <label className={`method-option ${deliveryMethod === 'delivery' ? 'active' : ''}`}>
                   <input
@@ -1220,7 +1226,7 @@ const Checkout = () => {
                     onChange={(e) => setDeliveryMethod(e.target.value)}
                   />
                   <i className="fa fa-bicycle"></i>
-                  <span>Home Delivery</span>
+                  <span>{t('homeDelivery')}</span>
                 </label>
                 <label className={`method-option ${deliveryMethod === 'pickup' ? 'active' : ''}`}>
                   <input
@@ -1230,7 +1236,7 @@ const Checkout = () => {
                     onChange={(e) => setDeliveryMethod(e.target.value)}
                   />
                   <i className="fa fa-store"></i>
-                  <span>Pickup from Branch</span>
+                  <span>{t('pickupFromBranch')}</span>
                 </label>
               </div>
             </section>
@@ -1238,7 +1244,7 @@ const Checkout = () => {
             {/* Address or Branch Selection */}
             {deliveryMethod === 'delivery' ? (
               <section className="checkout-section">
-                <h2>Delivery Address</h2>
+                <h2>{t('deliveryAddress')}</h2>
                 {isGuestCheckout ? (
                   <div className="guest-address-form">
                     <button
@@ -1246,7 +1252,7 @@ const Checkout = () => {
                       onClick={() => setShowGuestLocationPicker(!showGuestLocationPicker)}
                       className="pick-location-btn"
                     >
-                      <i className="fa fa-map-marker-alt"></i> {showGuestLocationPicker ? 'Hide Map' : 'Pick Location on Map'}
+                      <i className="fa fa-map-marker-alt"></i> {showGuestLocationPicker ? t('hideMap') : t('pickLocationOnMap')}
                     </button>
 
                     {showGuestLocationPicker && (
@@ -1255,12 +1261,12 @@ const Checkout = () => {
 
                     {guestInfo.latitude && guestInfo.longitude && (
                       <div className="location-selected">
-                        <i className="fa fa-check-circle"></i> Location selected: {guestInfo.latitude.toFixed(6)}, {guestInfo.longitude.toFixed(6)}
+                        <i className="fa fa-check-circle"></i> {t('locationSelected')}: {guestInfo.latitude.toFixed(6)}, {guestInfo.longitude.toFixed(6)}
                       </div>
                     )}
 
                     <textarea
-                      placeholder="Enter your full delivery address *"
+                      placeholder={t('enterFullAddress')}
                       value={guestInfo.address}
                       onChange={(e) => setGuestInfo({ ...guestInfo, address: e.target.value })}
                       className="guest-address-textarea"
@@ -1268,7 +1274,7 @@ const Checkout = () => {
                       required
                     />
                     <p className="helper-text">
-                      <i className="fa fa-map-marker"></i> Include street, building number, floor, and any landmarks
+                      <i className="fa fa-map-marker"></i> {t('includeStreetBuilding')}
                     </p>
                   </div>
                 ) : addresses.length > 0 ? (
@@ -1280,7 +1286,7 @@ const Checkout = () => {
                     >
                       {addresses.map((address) => (
                         <option key={address.id} value={address.id}>
-                          {address.name || 'Address'} - {address.building_no || ''} {address.area_title_en || address.city_title_en || ''}
+                          {address.name || t('address')} - {address.building_no || ''} {isArabic ? (address.area_title_ar || address.area_title_en || address.city_title_ar || address.city_title_en || '') : (address.area_title_en || address.city_title_en || '')}
                         </option>
                       ))}
                     </select>
@@ -1288,17 +1294,17 @@ const Checkout = () => {
                       onClick={() => setShowNewAddressForm(!showNewAddressForm)}
                       className="add-address-btn"
                     >
-                      {showNewAddressForm ? 'Cancel' : '+ Add New Address'}
+                      {showNewAddressForm ? t('cancel') : t('addNewAddress')}
                     </button>
                   </>
                 ) : (
                   <>
-                    <p>No saved addresses</p>
+                    <p>{t('noSavedAddresses')}</p>
                     <button
                       onClick={() => setShowNewAddressForm(!showNewAddressForm)}
                       className="add-address-btn"
                     >
-                      {showNewAddressForm ? 'Cancel' : '+ Add New Address'}
+                      {showNewAddressForm ? t('cancel') : t('addNewAddress')}
                     </button>
                   </>
                 )}
@@ -1310,7 +1316,7 @@ const Checkout = () => {
                       onClick={() => setShowLocationPicker(!showLocationPicker)}
                       className="pick-location-btn"
                     >
-                      <i className="fa fa-map-marker"></i> {showLocationPicker ? 'Hide Map' : 'Pick Location on Map'}
+                      <i className="fa fa-map-marker"></i> {showLocationPicker ? t('hideMap') : t('pickLocationOnMap')}
                     </button>
 
                     {showLocationPicker && (
@@ -1319,42 +1325,42 @@ const Checkout = () => {
 
                     <input
                       type="text"
-                      placeholder="Street"
+                      placeholder={t('street')}
                       value={newAddress.street}
                       onChange={(e) => setNewAddress({ ...newAddress, street: e.target.value })}
                       required
                     />
                     <input
                       type="text"
-                      placeholder="City"
+                      placeholder={t('city')}
                       value={newAddress.city}
                       onChange={(e) => setNewAddress({ ...newAddress, city: e.target.value })}
                       required
                     />
                     <input
                       type="text"
-                      placeholder="Building"
+                      placeholder={t('building')}
                       value={newAddress.building}
                       onChange={(e) => setNewAddress({ ...newAddress, building: e.target.value })}
                     />
                     <input
                       type="text"
-                      placeholder="Floor"
+                      placeholder={t('floor')}
                       value={newAddress.floor}
                       onChange={(e) => setNewAddress({ ...newAddress, floor: e.target.value })}
                     />
                     <input
                       type="text"
-                      placeholder="Apartment"
+                      placeholder={t('apartment')}
                       value={newAddress.apartment}
                       onChange={(e) => setNewAddress({ ...newAddress, apartment: e.target.value })}
                     />
                     {newAddress.latitude && newAddress.longitude && (
                       <div className="location-selected">
-                        <i className="fa fa-check-circle"></i> Location selected: {newAddress.latitude.toFixed(6)}, {newAddress.longitude.toFixed(6)}
+                        <i className="fa fa-check-circle"></i> {t('locationSelected')}: {newAddress.latitude.toFixed(6)}, {newAddress.longitude.toFixed(6)}
                       </div>
                     )}
-                    <button type="submit" className="submit-address-btn">Save Address</button>
+                    <button type="submit" className="submit-address-btn">{t('saveAddress')}</button>
                   </form>
                 )}
               </section>
@@ -1362,7 +1368,7 @@ const Checkout = () => {
 
             {/* Payment Method */}
             <section className="checkout-section">
-              <h2>Payment Method</h2>
+              <h2>{t('paymentMethod')}</h2>
               <div className="payment-methods">
                 <label className={`method-option ${paymentMethod === 'cash' ? 'active' : ''}`}>
                   <input
@@ -1372,7 +1378,7 @@ const Checkout = () => {
                     onChange={(e) => setPaymentMethod(e.target.value)}
                   />
                   <i className="fa fa-money"></i>
-                  <span>Cash on Delivery</span>
+                  <span>{t('cashOnDelivery')}</span>
                 </label>
                 <label className={`method-option ${paymentMethod === 'card' ? 'active' : ''}`}>
                   <input
@@ -1382,14 +1388,14 @@ const Checkout = () => {
                     onChange={(e) => setPaymentMethod(e.target.value)}
                   />
                   <i className="fa fa-credit-card"></i>
-                  <span>Credit/Debit Card</span>
+                  <span>{t('creditCard')}</span>
                 </label>
               </div>
             </section>
 
             {/* Order Notes */}
             <section className="checkout-section">
-              <h2>Order Notes (Optional)</h2>
+              <h2>{t('orderNotesOptional')}</h2>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
@@ -1403,7 +1409,7 @@ const Checkout = () => {
           {/* Order Summary */}
           <div className="checkout-sidebar">
             <div className="order-summary">
-              <h2>Order Summary</h2>
+              <h2>{t('orderSummary')}</h2>
               
               <div className="summary-items">
                 {cart.map((item) => {
@@ -1494,7 +1500,7 @@ const Checkout = () => {
                   <>
                     <input
                       type="text"
-                      placeholder="Enter Promo Code"
+                      placeholder={t('enterPromoCode')}
                       value={promoCode}
                       onChange={(e) => setPromoCode(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleApplyPromo()}
@@ -1506,7 +1512,7 @@ const Checkout = () => {
                       className="apply-promo-btn"
                       disabled={loading || !promoCode.trim()}
                     >
-                      {loading ? 'Validating...' : 'Apply'}
+                      {loading ? t('validating') : t('apply')}
                     </button>
                   </>
                 )}
@@ -1514,41 +1520,41 @@ const Checkout = () => {
 
               <div className="summary-totals">
                 <div className="summary-row">
-                  <span>Subtotal</span>
+                  <span>{t('subtotal')}</span>
                   <span>{(orderCalculation?.subtotal || getCartTotal()).toFixed(2)} JOD</span>
                 </div>
                 {deliveryMethod === 'delivery' && (
                   <div className="summary-row">
                     <span>
-                      Delivery Fee
+                      {t('deliveryFee')}
                       {orderCalculation?.delivery_calculation_method && ` (${orderCalculation.delivery_calculation_method})`}
-                      {loading && ' (Calculating...)'}
+                      {loading && ` (${t('calculating')})`}
                     </span>
                     <span>{(orderCalculation?.delivery_fee || 0).toFixed(2)} JOD</span>
                   </div>
                 )}
                 {orderCalculation?.tax_amount > 0 && (
                   <div className="summary-row">
-                    <span>Tax</span>
+                    <span>{t('tax')}</span>
                     <span>{orderCalculation.tax_amount.toFixed(2)} JOD</span>
                   </div>
                 )}
                 {/* Show discount line only for non-free-shipping promos */}
                 {(orderCalculation?.discount_amount > 0 || (appliedPromo && appliedPromo.discount_type !== 'free_shipping')) && orderCalculation?.discount_amount > 0 && (
                   <div className="summary-row discount">
-                    <span>Discount {appliedPromo && `(${appliedPromo.code})`}</span>
+                    <span>{t('discount')} {appliedPromo && `(${appliedPromo.code})`}</span>
                     <span>-{(orderCalculation?.discount_amount || 0).toFixed(2)} JOD</span>
                   </div>
                 )}
                 {/* Show shipping discount for free shipping promos */}
                 {orderCalculation?.shipping_discount_amount > 0 && (
                   <div className="summary-row discount">
-                    <span>Shipping Discount {appliedPromo && appliedPromo.discount_type === 'free_shipping' && `(${appliedPromo.code})`}</span>
+                    <span>{t('shippingDiscount')} {appliedPromo && appliedPromo.discount_type === 'free_shipping' && `(${appliedPromo.code})`}</span>
                     <span>-{orderCalculation.shipping_discount_amount.toFixed(2)} JOD</span>
                   </div>
                 )}
                 <div className="summary-row total">
-                  <span>Total</span>
+                  <span>{t('total')}</span>
                   <span>{calculateTotal().toFixed(2)} JOD</span>
                 </div>
               </div>
@@ -1559,26 +1565,26 @@ const Checkout = () => {
                   <i className="fa fa-info-circle"></i>
                   <span>
                     {stockWarnings.length > 0
-                      ? 'Please resolve stock availability issues before placing your order'
+                      ? t('resolveStockIssues')
                       : isGuestCheckout && (!guestInfo.name || !guestInfo.phone)
-                      ? 'Please provide your name and phone number'
+                      ? t('provideNameAndPhone')
                       : !isGuestCheckout && (!userPhone || userPhone.trim() === '')
-                      ? 'Please provide your phone number'
+                      ? t('providePhoneNumber')
                       : isGuestCheckout && deliveryMethod === 'delivery' && (!guestInfo.latitude || !guestInfo.longitude)
-                      ? 'Please pick your delivery location on the map'
+                      ? t('pickDeliveryLocationOnMap')
                       : isGuestCheckout && deliveryMethod === 'delivery' && !guestInfo.address
-                      ? 'Please provide your delivery address'
+                      ? t('provideDeliveryAddress')
                       : deliveryMethod === 'delivery' && (!orderCalculation || orderCalculation.delivery_fee === null || orderCalculation.delivery_fee === undefined)
-                      ? 'Calculating delivery fee... Please wait'
+                      ? t('calculatingDeliveryFee')
                       : deliveryMethod === 'delivery' && !isGuestCheckout && !selectedAddress
-                      ? 'Please select a delivery address'
+                      ? t('selectDeliveryAddress')
                       : !selectedBranch
-                      ? 'Please select a branch'
+                      ? t('selectBranchRequired')
                       : selectedBranch && branchAvailability[parseInt(selectedBranch)] && 
                         (branchAvailability[parseInt(selectedBranch)].tone === 'unavailable' || 
                          branchAvailability[parseInt(selectedBranch)].tone === 'inactive')
-                      ? 'Selected branch is not available'
-                      : 'Please complete all required fields'}
+                      ? t('selectedBranchNotAvailable')
+                      : t('completeRequiredFields')}
                   </span>
                 </div>
               )}
@@ -1590,16 +1596,16 @@ const Checkout = () => {
                 title={
                   !isCheckoutValid() 
                     ? stockWarnings.length > 0
-                      ? 'Some items are not available at the selected branch'
+                      ? t('someItemsNotAvailable')
                       : deliveryMethod === 'delivery' && !selectedAddress
-                      ? 'Please select a delivery address'
+                      ? t('selectDeliveryAddress')
                       : !selectedBranch
-                      ? 'Please select a branch'
-                      : 'Please complete all required fields'
+                      ? t('selectBranchRequired')
+                      : t('completeRequiredFields')
                     : ''
                 }
               >
-                {loading ? 'Processing...' : 'Place Order'}
+                {loading ? t('processing') : t('placeOrder')}
               </button>
             </div>
           </div>

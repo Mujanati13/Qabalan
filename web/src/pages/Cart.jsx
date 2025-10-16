@@ -192,7 +192,7 @@ const Cart = () => {
                     </div>
                     {item.special_instructions && (
                       <p className="special-instructions">
-                        Note: {item.special_instructions}
+                        {t('note')}: {item.special_instructions}
                       </p>
                     )}
                   </div>
@@ -249,8 +249,8 @@ const Cart = () => {
               <span>{getCartTotal().toFixed(2)} JOD</span>
             </div>
             <div className="summary-row">
-              <span>{isArabic ? 'رسوم التوصيل' : 'Delivery Fee'}</span>
-              <span>{isArabic ? 'تحسب عند الدفع' : 'Calculated at checkout'}</span>
+              <span>{t('deliveryFee')}</span>
+              <span>{t('calculatedAtCheckout')}</span>
             </div>
             <div className="summary-row total">
               <span>{t('total')}</span>
@@ -260,7 +260,7 @@ const Cart = () => {
               {t('proceedToCheckout')}
             </Link>
             <button onClick={clearCart} className="clear-cart-btn">
-              {isArabic ? 'إفراغ السلة' : 'Clear Cart'}
+              {t('clearCart')}
             </button>
             <Link to="/shop" className="continue-shopping">
               {t('continueShopping')}
