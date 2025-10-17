@@ -25,15 +25,17 @@ const OrderConfirmation = () => {
   };
 
   useEffect(() => {
-    // Clear cart when order confirmation page is loaded
+    // Clear cart when order confirmation page is loaded (only once on mount)
     clearCart();
     console.log('🛒 Cart cleared on order confirmation');
-    
+  }, []); // Empty dependency array - only run once on mount
+
+  useEffect(() => {
     if (orderId) {
       fetchOrderDetails();
       checkPaymentStatus();
     }
-  }, [orderId, clearCart]);
+  }, [orderId]);
 
   const fetchOrderDetails = async () => {
     try {
@@ -168,7 +170,7 @@ const OrderConfirmation = () => {
         <div className="payment-status cash">
           <div className="status-icon">💵</div>
           <h3>{t('cashOnDelivery')}</h3>
-          <p>{t('paymentAmount')}: <strong>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</strong></p>
+          <p>{t('paymentAmount')}: <strong>{safeParseFloat(order.total_amount || order.total).toFixed(2)} {t('jod')}</strong></p>
           <p className="helper-text">
             <i className="fa fa-info-circle"></i> {t('willBeCollectedUponDelivery')}
           </p>
@@ -328,18 +330,18 @@ const OrderConfirmation = () => {
             </div>
 
             <div className="detail-row">
-              <span className="label">Status:</span>
+              <span className="label">{t('status')}:</span>
               <span className={`status-badge ${order.order_status || order.status}`}>
-                {(order.order_status || order.status || 'pending').charAt(0).toUpperCase() + (order.order_status || order.status || 'pending').slice(1)}
+                {t((order.order_status || order.status || 'pending').toLowerCase())}
               </span>
             </div>
 
             {/* Branch Information */}
             {(order.branch_title_en || order.branch_title_ar || order.branch_name) && (
               <div className="detail-row">
-                <span className="label">Branch:</span>
+                <span className="label">{t('branch')}:</span>
                 <span className="value">
-                  {order.branch_title_en || order.branch_title_ar || order.branch_name}
+                  {isArabic ? (order.branch_title_ar || order.branch_title_en || order.branch_name) : (order.branch_title_en || order.branch_title_ar || order.branch_name)}
                 </span>
               </div>
             )}
@@ -381,7 +383,7 @@ const OrderConfirmation = () => {
                       <div className="detail-row">
                         <span className="label">{t('area')}:</span>
                         <span className="value">
-                          {order.delivery_address.area || order.delivery_address.area_ar}
+                          {isArabic ? (order.delivery_address.area_ar || order.delivery_address.area) : (order.delivery_address.area || order.delivery_address.area_ar)}
                         </span>
                       </div>
                     )}
@@ -389,7 +391,7 @@ const OrderConfirmation = () => {
                       <div className="detail-row">
                         <span className="label">{t('city')}:</span>
                         <span className="value">
-                          {order.delivery_address.city || order.delivery_address.city_ar}
+                          {isArabic ? (order.delivery_address.city_ar || order.delivery_address.city) : (order.delivery_address.city || order.delivery_address.city_ar)}
                         </span>
                       </div>
                     )}
@@ -397,7 +399,7 @@ const OrderConfirmation = () => {
                       <div className="detail-row">
                         <span className="label">{t('governorate')}:</span>
                         <span className="value">
-                          {order.delivery_address.governorate || order.delivery_address.governorate_ar}
+                          {isArabic ? (order.delivery_address.governorate_ar || order.delivery_address.governorate) : (order.delivery_address.governorate || order.delivery_address.governorate_ar)}
                         </span>
                       </div>
                     )}
@@ -405,29 +407,23 @@ const OrderConfirmation = () => {
                 )}
                 {order.delivery_address && typeof order.delivery_address === 'string' && (
                   <div className="detail-row address-row">
-                    <span className="label">Delivery Address:</span>
+                    <span className="label">{t('deliveryAddress')}:</span>
                     <span className="value">{order.delivery_address}</span>
-                  </div>
-                )}
-                {order.delivery_city && (
-                  <div className="detail-row">
-                    <span className="label">{t('city')}:</span>
-                    <span className="value">{order.delivery_city}</span>
                   </div>
                 )}
                 {order.building_no && (
                   <div className="detail-row">
-                    <span className="label">Building:</span>
+                    <span className="label">{t('building')}:</span>
                     <span className="value">{order.building_no}</span>
                   </div>
                 )}
                 {(order.floor_no || order.apartment_no) && (
                   <div className="detail-row">
-                    <span className="label">Apt/Floor:</span>
+                    <span className="label">{t('aptFloor')}:</span>
                     <span className="value">
-                      {order.floor_no && `Floor ${order.floor_no}`}
+                      {order.floor_no && (isArabic ? `${order.floor_no} ${t('floor')}` : `${t('floor')} ${order.floor_no}`)}
                       {order.floor_no && order.apartment_no && ', '}
-                      {order.apartment_no && `Apt ${order.apartment_no}`}
+                      {order.apartment_no && (isArabic ? `${order.apartment_no} ${t('apartment')}` : `${t('apartment')} ${order.apartment_no}`)}
                     </span>
                   </div>
                 )}
@@ -450,26 +446,26 @@ const OrderConfirmation = () => {
             
             <div className="summary-row">
               <span>{t('subtotal')}</span>
-              <span>{safeParseFloat(order.subtotal).toFixed(2)} JOD</span>
+              <span>{safeParseFloat(order.subtotal).toFixed(2)} {t('jod')}</span>
             </div>
 
             {safeParseFloat(order.delivery_fee) > 0 && (
               <div className="summary-row">
                 <span>{t('deliveryFee')}</span>
-                <span>{safeParseFloat(order.delivery_fee).toFixed(2)} JOD</span>
+                <span>{safeParseFloat(order.delivery_fee).toFixed(2)} {t('jod')}</span>
               </div>
             )}
 
             {safeParseFloat(order.discount || order.discount_amount) > 0 && (
               <div className="summary-row discount">
                 <span>{t('discount')}</span>
-                <span>-{safeParseFloat(order.discount || order.discount_amount).toFixed(2)} JOD</span>
+                <span>-{safeParseFloat(order.discount || order.discount_amount).toFixed(2)} {t('jod')}</span>
               </div>
             )}
 
             <div className="summary-row total">
               <span>{t('total')}</span>
-              <span>{safeParseFloat(order.total_amount || order.total).toFixed(2)} JOD</span>
+              <span>{safeParseFloat(order.total_amount || order.total).toFixed(2)} {t('jod')}</span>
             </div>
           </div>
 
@@ -508,27 +504,33 @@ const OrderConfirmation = () => {
                     {/* Product Details */}
                     <div className="item-details">
                       <div className="item-name">
-                        {item.product_title_en || item.product_name_en || item.product_title_ar || item.product_name_ar || 'Product'}
+                        {isArabic 
+                          ? (item.product_title_ar || item.product_name_ar || item.product_title_en || item.product_name_en || t('product'))
+                          : (item.product_title_en || item.product_name_en || item.product_title_ar || item.product_name_ar || t('product'))
+                        }
                       </div>
                       
                       {/* Variant Information */}
                       {(item.variant_title_en || item.variant_title_ar || item.variant_name || item.variant_value) && (
                         <div className="item-variant">
                           <i className="fa fa-tag"></i>
-                          {item.variant_title_en || item.variant_title_ar || `${item.variant_name || ''}: ${item.variant_value || ''}`}
+                          {isArabic 
+                            ? (item.variant_title_ar || item.variant_title_en || `${item.variant_name || ''}: ${item.variant_value || ''}`)
+                            : (item.variant_title_en || item.variant_title_ar || `${item.variant_name || ''}: ${item.variant_value || ''}`)
+                          }
                         </div>
                       )}
 
                       {/* SKU */}
                       {item.product_sku && (
                         <div className="item-sku">
-                          <span className="sku-label">SKU:</span> {item.product_sku}
+                          <span className="sku-label">{t('sku')}:</span> {item.product_sku}
                         </div>
                       )}
 
                       {/* Unit Price */}
                       <div className="item-unit-price">
-                        {t('price')}: {safeParseFloat(item.unit_price).toFixed(2)} JOD
+                        {t('price')}: {safeParseFloat(item.unit_price).toFixed(2)} {t('jod')}
                       </div>
                     </div>
 
@@ -539,7 +541,7 @@ const OrderConfirmation = () => {
                         <span className="quantity-value">{item.quantity}</span>
                       </div>
                       <div className="item-total-price">
-                        {safeParseFloat(item.total_price).toFixed(2)} JOD
+                        {safeParseFloat(item.total_price).toFixed(2)} {t('jod')}
                       </div>
                     </div>
                   </div>

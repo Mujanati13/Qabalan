@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import './Login.css';
 
 const Login = () => {
@@ -16,6 +17,7 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { login, loginWithTokens, user, loading: authLoading } = useAuth();
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   // Redirect if already logged in
@@ -34,7 +36,7 @@ const Login = () => {
 
   const handleSendCode = async () => {
     if (!formData.phone) {
-      setError('Please enter your phone number');
+      setError(t('enterPhoneToComplete') || 'Please enter your phone number');
       return;
     }
 
@@ -57,10 +59,10 @@ const Login = () => {
         setSmsSent(true);
         setError(''); // Clear any previous errors
       } else {
-        setError(data.message || 'Failed to send verification code');
+        setError(data.message || t('somethingWentWrong'));
       }
     } catch (err) {
-      setError('Failed to send verification code. Please try again.');
+      setError(t('somethingWentWrong'));
     } finally {
       setSendingCode(false);
     }
@@ -77,7 +79,7 @@ const Login = () => {
       if (loginMethod === 'phone') {
         // SMS-based login
         if (!smsSent) {
-          setError('Please request a verification code first');
+          setError(t('enterPhoneToComplete') || 'Please request a verification code first');
           setLoading(false);
           return;
         }
@@ -125,7 +127,7 @@ const Login = () => {
         }
       }
     } catch (err) {
-      setError('Login failed. Please try again.');
+      setError(t('somethingWentWrong'));
     } finally {
       setLoading(false);
     }
@@ -142,7 +144,7 @@ const Login = () => {
         <div className="modal-content-wrapper">
           <div className="modal-content-box">
             <div className="t-a-c">
-              <p>Loading...</p>
+              <p>{t('loading')}</p>
             </div>
           </div>
         </div>
@@ -160,7 +162,7 @@ const Login = () => {
           
           <div className="t-a-c">
             <img src="/assets/images/1.png" className="img-class" alt="Qabalan Bakery" />
-            <h2 className="login-font">Welcome Back</h2>
+            <h2 className="login-font">{t('welcomeBack')}</h2>
 
             {error && (
               <div className="error-message">
@@ -178,18 +180,8 @@ const Login = () => {
                   setError('');
                   setSmsSent(false);
                 }}
-                style={{
-                  padding: '10px 20px',
-                  marginRight: '10px',
-                  border: '2px solid #c49a6c',
-                  background: loginMethod === 'phone' ? '#c49a6c' : 'transparent',
-                  color: loginMethod === 'phone' ? 'white' : '#c49a6c',
-                  cursor: 'pointer',
-                  borderRadius: '5px',
-                  fontWeight: '600',
-                }}
               >
-                Phone Number
+                {t('phoneNumberLogin')}
               </button>
               <button
                 type="button"
@@ -198,17 +190,8 @@ const Login = () => {
                   setLoginMethod('email');
                   setError('');
                 }}
-                style={{
-                  padding: '10px 20px',
-                  border: '2px solid #c49a6c',
-                  background: loginMethod === 'email' ? '#c49a6c' : 'transparent',
-                  color: loginMethod === 'email' ? 'white' : '#c49a6c',
-                  cursor: 'pointer',
-                  borderRadius: '5px',
-                  fontWeight: '600',
-                }}
               >
-                Email & Password
+                {t('emailPasswordLogin')}
               </button>
             </div>
 
@@ -217,7 +200,7 @@ const Login = () => {
                 <>
                   {/* Phone Number Login */}
                   <div className="form-group">
-                    <label className="login-lable">Phone Number</label>
+                    <label className="login-lable">{t('phoneNumber')}</label>
                     <input
                       type="tel"
                       className="login-select"
@@ -238,20 +221,20 @@ const Login = () => {
                         onClick={handleSendCode}
                         disabled={sendingCode || !formData.phone}
                       >
-                        {sendingCode ? 'Sending...' : 'Send Verification Code'}
+                        {sendingCode ? t('sending') : t('sendVerificationCode')}
                       </button>
                     </div>
                   ) : (
                     <>
                       <div className="form-group">
-                        <label className="login-lable">Verification Code</label>
+                        <label className="login-lable">{t('verificationCode')}</label>
                         <input
                           type="text"
                           className="login-select"
                           name="sms_code"
                           value={formData.sms_code}
                           onChange={handleChange}
-                          placeholder="Enter 6-digit code"
+                          placeholder={t('enter6DigitCode')}
                           required
                           maxLength="6"
                         />
@@ -259,25 +242,20 @@ const Login = () => {
 
                       <div className="form-actions">
                         <button type="submit" className="login-submit" disabled={loading}>
-                          {loading ? 'Signing in...' : 'Sign In'}
+                          {loading ? t('signingIn') : t('signIn')}
                         </button>
                       </div>
 
                       <div className="form-actions" style={{ marginTop: '10px' }}>
                         <button
                           type="button"
-                          className="login-submit"
+                          className="login-submit secondary-btn"
                           onClick={() => {
                             setSmsSent(false);
                             setFormData({ ...formData, sms_code: '' });
                           }}
-                          style={{
-                            background: 'transparent',
-                            color: '#c49a6c',
-                            border: '2px solid #c49a6c',
-                          }}
                         >
-                          Change Phone Number
+                          {t('changePhoneNumber')}
                         </button>
                       </div>
                     </>
@@ -287,34 +265,34 @@ const Login = () => {
                 <>
                   {/* Email/Password Login */}
                   <div className="form-group">
-                    <label className="login-lable">Email</label>
+                    <label className="login-lable">{t('email')}</label>
                     <input
                       type="email"
                       className="login-select"
                       name="email"
                       value={formData.email}
                       onChange={handleChange}
-                      placeholder="Enter your email"
+                      placeholder={t('email')}
                       required
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="login-lable">Password</label>
+                    <label className="login-lable">{t('password')}</label>
                     <input
                       type="password"
                       className="login-select"
                       name="password"
                       value={formData.password}
                       onChange={handleChange}
-                      placeholder="Enter your password"
+                      placeholder={t('password')}
                       required
                     />
                   </div>
 
                   <div className="form-actions">
                     <button type="submit" className="login-submit" disabled={loading}>
-                      {loading ? 'Signing in...' : 'Sign In'}
+                      {loading ? t('signingIn') : t('signIn')}
                     </button>
                   </div>
                 </>
@@ -323,9 +301,9 @@ const Login = () => {
 
             <div className="login-footer">
               <p>
-                Don't have an account?{' '}
+                {t('dontHaveAccount')}{' '}
                 <Link to="/register" className="register-link">
-                  Register Now
+                  {t('registerNow')}
                 </Link>
               </p>
             </div>

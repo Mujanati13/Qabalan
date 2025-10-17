@@ -50,6 +50,12 @@
   z-index: 10;
 }
 
+/* RTL Support */
+[dir="rtl"] .modal-close-btn {
+  right: auto;
+  left: 15px;
+}
+
 .modal-close-btn:hover {
   color: #000;
   transform: scale(1.1);
@@ -97,9 +103,19 @@
   text-align: left;
 }
 
+/* RTL Support */
+[dir="rtl"] .form-group {
+  text-align: right;
+}
+
 .login-form {
   text-align: start;
   margin: 0 5%;
+}
+
+/* RTL Support */
+[dir="rtl"] .login-form {
+  direction: rtl;
 }
 
 .login-lable {
@@ -175,6 +191,19 @@
   transform: none;
 }
 
+/* Secondary button variant */
+.login-submit.secondary-btn {
+  background: transparent;
+  color: #c49a6c;
+  border: 2px solid #c49a6c;
+  box-shadow: none;
+}
+
+.login-submit.secondary-btn:hover:not(:disabled) {
+  background: rgba(196, 154, 108, 0.1);
+  border-color: #c49a6c;
+}
+
 .login-footer {
   margin-top: 30px;
   padding-top: 20px;
@@ -197,6 +226,34 @@
 .register-link:hover {
   color: #0d7374;
   text-decoration: underline;
+}
+
+/* Toggle button styles */
+.toggle-btn {
+  padding: 10px 20px;
+  margin-right: 10px;
+  border: 2px solid #c49a6c;
+  background: transparent;
+  color: #c49a6c;
+  cursor: pointer;
+  border-radius: 5px;
+  font-weight: 600;
+  transition: all 0.3s;
+}
+
+.toggle-btn.active {
+  background: #c49a6c;
+  color: white;
+}
+
+.toggle-btn:hover {
+  transform: translateY(-1px);
+}
+
+/* RTL Support for toggle buttons */
+[dir="rtl"] .toggle-btn {
+  margin-right: 0;
+  margin-left: 10px;
 }
 
 /* Responsive adjustments */

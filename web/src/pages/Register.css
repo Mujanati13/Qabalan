@@ -29,6 +29,11 @@
   min-width: 0;
 }
 
+/* RTL Support */
+[dir="rtl"] .form-row {
+  direction: rtl;
+}
+
 /* Responsive: Stack on mobile */
 @media screen and (max-width: 768px) {
   .form-row {
